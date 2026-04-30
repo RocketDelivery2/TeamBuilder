@@ -32,6 +32,20 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
+      - name: Disable default CodeQL setup
+        shell: pwsh
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $result = gh api repos/{owner}/{repo}/code-scanning/default-setup `
+            --method PATCH -f state=not-configured 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not disable default CodeQL setup (may already be disabled or requires admin): $result"
+          } else {
+            Write-Output "Default CodeQL setup disabled successfully."
+          }
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
