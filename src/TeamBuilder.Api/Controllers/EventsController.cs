@@ -66,7 +66,8 @@ public class EventsController : ControllerBase
         try
         {
             var teamEvent = await _eventService.CreateAsync(createEventDto, hostId, cancellationToken);
-            _logger.LogInformation("Created event {EventId} with name {EventName}", teamEvent.Id, teamEvent.Name);
+            var safeEventName = SanitizeForLog(teamEvent.Name);
+            _logger.LogInformation("Created event {EventId} with name {EventName}", teamEvent.Id, safeEventName);
             return CreatedAtAction(nameof(GetById), new { id = teamEvent.Id }, teamEvent);
         }
         catch (Exception ex)
@@ -121,5 +122,12 @@ public class EventsController : ControllerBase
 
         _logger.LogInformation("Deleted event {EventId}", id);
         return NoContent();
+    }
+
+    private static string SanitizeForLog(string? value)
+    {
+        return string.IsNullOrEmpty(value)
+            ? string.Empty
+            : value.Replace("\r", string.Empty).Replace("\n", string.Empty);
     }
 }
