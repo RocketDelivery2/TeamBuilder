@@ -122,4 +122,32 @@ public class TeamsController : ControllerBase
         _logger.LogInformation("Deleted team {TeamId}", id);
         return NoContent();
     }
+
+    [HttpPost("{teamId}/members/{playerId}/leave")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> LeaveTeam(
+        Guid teamId,
+        Guid playerId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _teamService.RemoveMemberAsync(teamId, playerId, cancellationToken);
+            if (!result)
+            {
+                _logger.LogInformation("Team member not found: TeamId={TeamId}, PlayerId={PlayerId}", teamId, playerId);
+                return NotFound();
+            }
+
+            _logger.LogInformation("Player {PlayerId} left team {TeamId}", playerId, teamId);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing player {PlayerId} from team {TeamId}", playerId, teamId);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
 }

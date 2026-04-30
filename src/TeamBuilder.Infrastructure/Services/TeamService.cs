@@ -126,6 +126,34 @@ public class TeamService : ITeamService
         return true;
     }
 
+    public async Task<bool> RemoveMemberAsync(Guid teamId, Guid playerId, CancellationToken cancellationToken = default)
+    {
+        var teamMember = await _context.TeamMembers
+            .FirstOrDefaultAsync(tm => tm.TeamId == teamId && tm.PlayerId == playerId && tm.IsActive, cancellationToken);
+
+        if (teamMember == null) return false;
+
+        // Mark as inactive instead of deleting
+        teamMember.IsActive = false;
+
+        // Decrement current member count
+        var team = await _context.Teams.FindAsync([teamId], cancellationToken);
+        if (team != null && team.CurrentMemberCount > 0)
+        {
+            team.CurrentMemberCount--;
+
+            // If team was full and now has space, change status to Recruiting
+            if (team.Status == TeamStatus.Full && team.CurrentMemberCount < team.MaxMembers)
+            {
+                team.Status = TeamStatus.Recruiting;
+            }
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return true;
+    }
+
     private static TeamDto MapToDto(Team team)
     {
         return new TeamDto

@@ -17,6 +17,7 @@ builder.Services.AddScoped<ITeamService, TeamService>();
 builder.Services.AddScoped<IPlayerService, PlayerService>();
 builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
+builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
 // Add controllers
 builder.Services.AddControllers();

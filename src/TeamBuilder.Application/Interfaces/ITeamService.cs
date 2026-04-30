@@ -11,4 +11,5 @@ public interface ITeamService
     Task<TeamDto> CreateAsync(CreateTeamDto createTeamDto, Guid ownerId, CancellationToken cancellationToken = default);
     Task<TeamDto?> UpdateAsync(Guid id, UpdateTeamDto updateTeamDto, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<bool> RemoveMemberAsync(Guid teamId, Guid playerId, CancellationToken cancellationToken = default);
 }
