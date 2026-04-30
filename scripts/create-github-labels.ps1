@@ -77,19 +77,24 @@ $labels = @(
 $targetRepo = "$Owner/$Repo"
 Write-Host "Creating or updating labels for $targetRepo..." -ForegroundColor Cyan
 
+# Load all existing label names once to avoid N individual API calls.
+# 'gh label view' is not a supported command; use 'gh label list --json name' instead.
+$existingLabelsJson = gh label list --repo "$targetRepo" --limit 1000 --json name 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to fetch existing labels from $targetRepo. Ensure 'gh auth login' has been run."
+    exit 1
+}
+$existingNames = ($existingLabelsJson | ConvertFrom-Json) | ForEach-Object { $_.name }
+
 $successCount = 0
 $failureCount = 0
 
 foreach ($label in $labels) {
     try {
-        # Use 'gh label view' exit code to check existence reliably
-        # (Select-String on 'gh label list' fails for names containing colons)
-        gh label view "$($label.name)" --repo "$targetRepo" > $null 2>&1
-        $labelExists = $LASTEXITCODE -eq 0
+        $labelExists = $existingNames -contains $label.name
 
         if ($labelExists) {
             Write-Host "Updating label: $($label.name)" -ForegroundColor Yellow
-            # Name is a positional argument for 'gh label edit'
             gh label edit "$($label.name)" `
                 --repo "$targetRepo" `
                 --description "$($label.description)" `
@@ -97,7 +102,6 @@ foreach ($label in $labels) {
         }
         else {
             Write-Host "Creating label: $($label.name)" -ForegroundColor Green
-            # Name is a positional argument for 'gh label create'
             gh label create "$($label.name)" `
                 --repo "$targetRepo" `
                 --description "$($label.description)" `
