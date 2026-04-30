@@ -92,7 +92,7 @@ public class JoinRequestsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating join request");
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
@@ -131,7 +131,7 @@ public class JoinRequestsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing join request {JoinRequestId}", id);
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 }

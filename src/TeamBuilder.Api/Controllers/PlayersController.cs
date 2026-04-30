@@ -98,7 +98,7 @@ public class PlayersController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating player");
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
@@ -129,7 +129,7 @@ public class PlayersController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating player {PlayerId}", id);
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
