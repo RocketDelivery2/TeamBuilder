@@ -66,7 +66,8 @@ public class TeamsController : ControllerBase
         try
         {
             var team = await _teamService.CreateAsync(createTeamDto, ownerId, cancellationToken);
-            _logger.LogInformation("Created team {TeamId} with name {TeamName}", team.Id, team.Name);
+            var safeTeamName = SanitizeForLog(team.Name);
+            _logger.LogInformation("Created team {TeamId} with name {TeamName}", team.Id, safeTeamName);
             return CreatedAtAction(nameof(GetById), new { id = team.Id }, team);
         }
         catch (Exception ex)
@@ -121,5 +122,12 @@ public class TeamsController : ControllerBase
 
         _logger.LogInformation("Deleted team {TeamId}", id);
         return NoContent();
+    }
+
+    private static string SanitizeForLog(string? value)
+    {
+        return (value ?? string.Empty)
+            .Replace("\r", string.Empty)
+            .Replace("\n", string.Empty);
     }
 }
