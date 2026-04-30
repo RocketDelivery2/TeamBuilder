@@ -112,15 +112,15 @@ foreach ($label in $labels) {
     }
 }
 
-Write-Host ""
-Write-Host "Label synchronization complete!" -ForegroundColor Green
+Write-Host ''
+Write-Host 'Label synchronization complete!' -ForegroundColor Green
 Write-Host "Successfully processed: $successCount labels" -ForegroundColor Green
 if ($failureCount -gt 0) {
     Write-Host "Failed: $failureCount labels" -ForegroundColor Red
     exit 1
 }
 
-Write-Host ""
-Write-Host "IMPORTANT — Old labels to remove manually in GitHub UI (Settings > Labels):" -ForegroundColor Yellow
-Write-Host "  architecture, community, frontend, product, roster-language" -ForegroundColor Yellow
-Write-Host "These have been superseded by their area: prefixed equivalents." -ForegroundColor Yellow
+Write-Host ''
+Write-Host 'IMPORTANT - Old labels to remove manually in GitHub UI (Settings > Labels):' -ForegroundColor Yellow
+Write-Host '  architecture, community, frontend, product, roster-language' -ForegroundColor Yellow
+Write-Host 'These have been superseded by their area: prefixed equivalents.' -ForegroundColor Yellow
