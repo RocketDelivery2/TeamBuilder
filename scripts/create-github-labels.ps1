@@ -82,24 +82,24 @@ $failureCount = 0
 
 foreach ($label in $labels) {
     try {
-        # Try to get the label first
-        $labelExists = gh label list --repo "$targetRepo" --limit 1000 | Select-String "^$([regex]::Escape($label.name))\s" -Quiet
-        
+        # Use 'gh label view' exit code to check existence reliably
+        # (Select-String on 'gh label list' fails for names containing colons)
+        gh label view "$($label.name)" --repo "$targetRepo" > $null 2>&1
+        $labelExists = $LASTEXITCODE -eq 0
+
         if ($labelExists) {
             Write-Host "Updating label: $($label.name)" -ForegroundColor Yellow
-            # Update existing label
-            gh label edit `
+            # Name is a positional argument for 'gh label edit'
+            gh label edit "$($label.name)" `
                 --repo "$targetRepo" `
-                --name "$($label.name)" `
                 --description "$($label.description)" `
                 --color "$($label.color)"
         }
         else {
             Write-Host "Creating label: $($label.name)" -ForegroundColor Green
-            # Create new label
-            gh label create `
+            # Name is a positional argument for 'gh label create'
+            gh label create "$($label.name)" `
                 --repo "$targetRepo" `
-                --name "$($label.name)" `
                 --description "$($label.description)" `
                 --color "$($label.color)"
         }
@@ -119,3 +119,8 @@ if ($failureCount -gt 0) {
     Write-Host "Failed: $failureCount labels" -ForegroundColor Red
     exit 1
 }
+
+Write-Host ""
+Write-Host "IMPORTANT — Old labels to remove manually in GitHub UI (Settings > Labels):" -ForegroundColor Yellow
+Write-Host "  architecture, community, frontend, product, roster-language" -ForegroundColor Yellow
+Write-Host "These have been superseded by their area: prefixed equivalents." -ForegroundColor Yellow
