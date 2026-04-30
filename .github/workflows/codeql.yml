@@ -10,7 +10,6 @@ on:
 
 permissions:
   security-events: write
-  packages: read
   actions: read
   contents: read
 
@@ -39,11 +38,26 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: manual
 
+      - name: Locate solution file
+        shell: pwsh
+        run: |
+          $solutions = Get-ChildItem -Recurse -Include "*.sln","*.slnx"
+          $sln = ($solutions | Where-Object { $_.Extension -eq '.sln' } | Select-Object -First 1)
+          if (-not $sln) {
+            $sln = ($solutions | Where-Object { $_.Extension -eq '.slnx' } | Select-Object -First 1)
+          }
+          if (-not $sln) {
+            Write-Error "No .sln or .slnx file found in the repository."
+            exit 1
+          }
+          Write-Output "Found solution: $($sln.FullName)"
+          "SOLUTION_PATH=$($sln.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Restore dependencies
-        run: dotnet restore TeamBuilder.sln
+        run: dotnet restore "${{ env.SOLUTION_PATH }}"
 
       - name: Build solution
-        run: dotnet build TeamBuilder.sln --configuration Release --no-restore
+        run: dotnet build "${{ env.SOLUTION_PATH }}" --configuration Release --no-restore
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
