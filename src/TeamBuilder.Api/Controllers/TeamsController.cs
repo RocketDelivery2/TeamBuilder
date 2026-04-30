@@ -73,7 +73,7 @@ public class TeamsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating team");
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
@@ -104,7 +104,7 @@ public class TeamsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating team {TeamId}", id);
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
@@ -148,7 +148,7 @@ public class TeamsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error removing player {PlayerId} from team {TeamId}", playerId, teamId);
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
