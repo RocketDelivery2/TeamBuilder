@@ -23,6 +23,8 @@ area:database:
       - any-glob-to-any-file:
           - src/TeamBuilder.Infrastructure/**/Migrations/**
           - src/TeamBuilder.Infrastructure/**/Persistence/**
+          - src/TeamBuilder.Infrastructure/**/Data/**
+          - src/TeamBuilder.Infrastructure/**/*Configuration.cs
 
 area:tests:
   - changed-files:
