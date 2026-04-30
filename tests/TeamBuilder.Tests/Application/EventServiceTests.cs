@@ -381,6 +381,31 @@ public class EventServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_ShouldNotUpdateName_WhenWhitespaceProvided()
+    {
+        // Arrange
+        var teamEvent = new TeamEvent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Original Name",
+            EventDateUtc = DateTime.UtcNow.AddDays(5),
+            Status = EventStatus.Planned,
+            MaxParticipants = 10,
+            CurrentParticipantCount = 0
+        };
+        _context.Events.Add(teamEvent);
+        await _context.SaveChangesAsync();
+
+        var updateDto = new UpdateEventDto { Name = "   " }; // whitespace — should be skipped
+
+        // Act
+        var result = await _eventService.UpdateAsync(teamEvent.Id, updateDto);
+
+        // Assert
+        result!.Name.Should().Be("Original Name");
+    }
+
+    [Fact]
     public async Task UpdateAsync_ShouldOnlyUpdateProvidedFields()
     {
         // Arrange
