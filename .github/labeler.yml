@@ -85,3 +85,10 @@ area:community:
           - docs/community/**
           - docs/contributing/**
           - CONTRIBUTING.md
+
+area:community:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/community/**
+          - docs/contributing/**
+          - CONTRIBUTING.md
