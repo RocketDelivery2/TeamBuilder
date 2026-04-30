@@ -176,6 +176,176 @@ public class TeamServiceTests : IDisposable
         result.HasPreviousPage.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task GetAllAsync_ShouldReturnSecondPage_Correctly()
+    {
+        // Arrange
+        for (int i = 0; i < 15; i++)
+        {
+            _context.Teams.Add(new Team
+            {
+                Id = Guid.NewGuid(),
+                Name = $"Team {i:D2}",
+                MaxMembers = 10,
+                Status = TeamStatus.Active,
+                CurrentMemberCount = 0
+            });
+        }
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.GetAllAsync(page: 2, pageSize: 10);
+
+        // Assert
+        result.Items.Should().HaveCount(5);
+        result.Page.Should().Be(2);
+        result.HasPreviousPage.Should().BeTrue();
+        result.HasNextPage.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldFilterByCategory()
+    {
+        // Arrange
+        _context.Teams.AddRange(
+            new Team { Id = Guid.NewGuid(), Name = "Gaming Team", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Category = "Gaming" },
+            new Team { Id = Guid.NewGuid(), Name = "Sports Team", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Category = "Sports" },
+            new Team { Id = Guid.NewGuid(), Name = "Gaming Team 2", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Category = "Gaming" }
+        );
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.GetAllAsync(1, 20, category: "Gaming");
+
+        // Assert
+        result.Items.Should().HaveCount(2);
+        result.Items.Should().OnlyContain(t => t.Category == "Gaming");
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldFilterByRegion()
+    {
+        // Arrange
+        _context.Teams.AddRange(
+            new Team { Id = Guid.NewGuid(), Name = "NA Team", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Region = "NA" },
+            new Team { Id = Guid.NewGuid(), Name = "EU Team", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Region = "EU" }
+        );
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.GetAllAsync(1, 20, region: "NA");
+
+        // Assert
+        result.Items.Should().HaveCount(1);
+        result.Items.First().Region.Should().Be("NA");
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldFilterByStatus()
+    {
+        // Arrange
+        _context.Teams.AddRange(
+            new Team { Id = Guid.NewGuid(), Name = "Recruiting Team", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting },
+            new Team { Id = Guid.NewGuid(), Name = "Full Team", MaxMembers = 5, CurrentMemberCount = 5, Status = TeamStatus.Full },
+            new Team { Id = Guid.NewGuid(), Name = "Active Team", MaxMembers = 5, CurrentMemberCount = 2, Status = TeamStatus.Active }
+        );
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.GetAllAsync(1, 20, status: TeamStatus.Recruiting);
+
+        // Assert
+        result.Items.Should().HaveCount(1);
+        result.Items.First().Status.Should().Be(TeamStatus.Recruiting);
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldReturnEmpty_WhenNoTeamsMatch()
+    {
+        // Arrange
+        _context.Teams.Add(new Team { Id = Guid.NewGuid(), Name = "NA Team", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Active, Region = "NA" });
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.GetAllAsync(1, 20, region: "SEA");
+
+        // Assert
+        result.Items.Should().BeEmpty();
+        result.TotalCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ShouldReturnNull_WhenNotExists()
+    {
+        // Arrange
+        var updateDto = new UpdateTeamDto { Name = "Ghost Team" };
+
+        // Act
+        var result = await _teamService.UpdateAsync(Guid.NewGuid(), updateDto);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ShouldOnlyUpdateProvidedFields()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Original Name",
+            Description = "Original Description",
+            MaxMembers = 10,
+            Status = TeamStatus.Recruiting,
+            CurrentMemberCount = 0,
+            Region = "NA",
+            Category = "Gaming"
+        };
+        _context.Teams.Add(team);
+        await _context.SaveChangesAsync();
+
+        var updateDto = new UpdateTeamDto
+        {
+            Name = "Updated Name"
+            // All other fields null - should not change
+        };
+
+        // Act
+        var result = await _teamService.UpdateAsync(team.Id, updateDto);
+
+        // Assert
+        result!.Name.Should().Be("Updated Name");
+        result.Description.Should().Be("Original Description");
+        result.Status.Should().Be(TeamStatus.Recruiting);
+        result.Region.Should().Be("NA");
+        result.Category.Should().Be("Gaming");
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ShouldReturnFalse_WhenNotExists()
+    {
+        // Act
+        var result = await _teamService.DeleteAsync(Guid.NewGuid());
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateAsync_ShouldDefaultStatus_ToRecruiting()
+    {
+        // Arrange
+        var createDto = new CreateTeamDto { Name = "New Team", MaxMembers = 5 };
+
+        // Act
+        var result = await _teamService.CreateAsync(createDto, Guid.NewGuid());
+
+        // Assert
+        result.Status.Should().Be(TeamStatus.Recruiting);
+        result.CurrentMemberCount.Should().Be(0);
+    }
+
     public void Dispose()
     {
         _context.Dispose();
