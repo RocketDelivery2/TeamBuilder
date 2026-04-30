@@ -32,7 +32,8 @@ public class TeamMembershipTests : IDisposable
             Name = "Test Team",
             MaxMembers = 5,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Active
+            Status = TeamStatus.Active,
+            RowVersion = []
         };
         var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
         _context.Teams.Add(team);
@@ -75,7 +76,7 @@ public class TeamMembershipTests : IDisposable
             CurrentMemberCount = 3,
             Status = TeamStatus.Full
         };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
+        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer", RowVersion = [] };
         _context.Teams.Add(team);
         _context.Players.Add(player);
 
@@ -111,7 +112,8 @@ public class TeamMembershipTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Test Team",
             MaxMembers = 5,
-            CurrentMemberCount = 3
+            CurrentMemberCount = 3,
+            RowVersion = []
         };
         _context.Teams.Add(team);
         await _context.SaveChangesAsync();
@@ -134,9 +136,10 @@ public class TeamMembershipTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Test Team",
             MaxMembers = 5,
-            CurrentMemberCount = 2
+            CurrentMemberCount = 2,
+            RowVersion = []
         };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
+        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer", RowVersion = [] };
         _context.Teams.Add(team);
         _context.Players.Add(player);
 
@@ -169,10 +172,11 @@ public class TeamMembershipTests : IDisposable
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Full
+            Status = TeamStatus.Full,
+            RowVersion = []
         };
-        var leavingPlayer = new Player { Id = Guid.NewGuid(), Username = "LeavingPlayer" };
-        var newPlayer = new Player { Id = Guid.NewGuid(), Username = "NewPlayer" };
+        var leavingPlayer = new Player { Id = Guid.NewGuid(), Username = "LeavingPlayer", RowVersion = [] };
+        var newPlayer = new Player { Id = Guid.NewGuid(), Username = "NewPlayer", RowVersion = [] };
 
         _context.Teams.Add(team);
         _context.Players.AddRange(leavingPlayer, newPlayer);
@@ -227,5 +231,6 @@ public class TeamMembershipTests : IDisposable
     public void Dispose()
     {
         _context.Dispose();
+        GC.SuppressFinalize(this);
     }
 }
