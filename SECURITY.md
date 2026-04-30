@@ -2,7 +2,14 @@
 
 ## Supported Versions
 
-TeamBuilder is currently under active development. Security fixes will target the latest version on the `main` branch unless release branches are introduced later.
+TeamBuilder is currently under active development.
+
+| Version | Supported |
+| ------- | --------- |
+| `main` branch | Yes |
+| Older commits / non-`main` revisions | No |
+
+Security fixes are applied to the latest code on the `main` branch only. Fixes are not currently backported to older commits or other revisions unless dedicated release branches are introduced in the future.
 
 ## Reporting a Vulnerability
 
