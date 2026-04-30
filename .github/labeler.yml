@@ -1,0 +1,52 @@
+area:api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/TeamBuilder.Api/**
+
+area:application:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/TeamBuilder.Application/**
+
+area:domain:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/TeamBuilder.Domain/**
+
+area:infrastructure:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/TeamBuilder.Infrastructure/**
+
+area:tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - tests/**
+
+area:docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - README.md
+          - SECURITY.md
+          - CONTRIBUTING.md
+          - .github/copilot-instructions.md
+
+area:github-actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/**
+          - .github/dependabot.yml
+          - .github/labeler.yml
+
+area:devops:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - docs/deployment.md
+
+area:database:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/TeamBuilder.Infrastructure/**/Migrations/**
+          - src/TeamBuilder.Infrastructure/**/Persistence/**
