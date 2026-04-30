@@ -453,6 +453,40 @@ public class JoinRequestServiceTests : IDisposable
         result.Items.Should().OnlyContain(jr => jr.Status == RequestStatus.Pending);
     }
 
+    [Fact]
+    public async Task GetByTeamIdAsync_ShouldReturnPaginatedResults()
+    {
+        // Arrange
+        var team = new Team { Id = Guid.NewGuid(), Name = "Test Team", MaxMembers = 20 };
+        _context.Teams.Add(team);
+
+        for (int i = 0; i < 7; i++)
+        {
+            var player = new Player { Id = Guid.NewGuid(), Username = $"PlayerT{i}" };
+            _context.Players.Add(player);
+            _context.JoinRequests.Add(new JoinRequest
+            {
+                Id = Guid.NewGuid(),
+                TeamId = team.Id,
+                PlayerId = player.Id,
+                Status = RequestStatus.Pending,
+                RequestedAtUtc = DateTime.UtcNow.AddMinutes(-i)
+            });
+        }
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _joinRequestService.GetByTeamIdAsync(team.Id, 1, 5);
+
+        // Assert
+        result.Items.Should().HaveCount(5);
+        result.TotalCount.Should().Be(7);
+        result.TotalPages.Should().Be(2);
+        result.HasNextPage.Should().BeTrue();
+        result.HasPreviousPage.Should().BeFalse();
+        result.Items.Should().OnlyContain(jr => jr.TeamId == team.Id);
+    }
+
     public void Dispose()
     {
         _context.Dispose();
