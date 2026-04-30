@@ -41,10 +41,39 @@ public class PlayerServiceTests : IDisposable
         result.Should().NotBeNull();
         result.Username.Should().Be("TestPlayer");
         result.Email.Should().Be("test@example.com");
+        result.DisplayName.Should().Be("Test Player");
+        result.Region.Should().Be("NA");
 
         var playerInDb = await _context.Players.FindAsync(result.Id);
         playerInDb.Should().NotBeNull();
         playerInDb!.Username.Should().Be("TestPlayer");
+    }
+
+    [Fact]
+    public async Task CreateAsync_ShouldMapAllFields_WhenProvided()
+    {
+        // Arrange
+        var createDto = new CreatePlayerDto
+        {
+            Username = "FullPlayer",
+            Email = "full@example.com",
+            DisplayName = "Full Player",
+            Bio = "My bio",
+            Region = "EU",
+            AvatarUrl = "https://example.com/avatar.png"
+        };
+
+        // Act
+        var result = await _playerService.CreateAsync(createDto);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Username.Should().Be("FullPlayer");
+        result.Email.Should().Be("full@example.com");
+        result.DisplayName.Should().Be("Full Player");
+        result.Bio.Should().Be("My bio");
+        result.Region.Should().Be("EU");
+        result.AvatarUrl.Should().Be("https://example.com/avatar.png");
     }
 
     [Fact]
@@ -56,6 +85,7 @@ public class PlayerServiceTests : IDisposable
             Id = Guid.NewGuid(),
             Username = "ExistingPlayer"
         };
+
         _context.Players.Add(existingPlayer);
         await _context.SaveChangesAsync();
 
@@ -81,6 +111,7 @@ public class PlayerServiceTests : IDisposable
             Id = Guid.NewGuid(),
             Username = "TestUser"
         };
+
         _context.Players.Add(player);
         await _context.SaveChangesAsync();
 
@@ -93,6 +124,161 @@ public class PlayerServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetByUsernameAsync_ShouldReturnNull_WhenNotExists()
+    {
+        // Act
+        var result = await _playerService.GetByUsernameAsync("ghost_user");
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_ShouldReturnPlayer_WhenExists()
+    {
+        // Arrange
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "LookupPlayer",
+            Email = "lookup@example.com",
+            Region = "EU"
+        };
+
+        _context.Players.Add(player);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _playerService.GetByIdAsync(player.Id);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(player.Id);
+        result.Username.Should().Be("LookupPlayer");
+        result.Email.Should().Be("lookup@example.com");
+        result.Region.Should().Be("EU");
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_ShouldReturnNull_WhenNotExists()
+    {
+        // Act
+        var result = await _playerService.GetByIdAsync(Guid.NewGuid());
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldReturnPaginatedResults()
+    {
+        // Arrange
+        for (var i = 0; i < 15; i++)
+        {
+            _context.Players.Add(new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = $"Player{i:D2}"
+            });
+        }
+
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _playerService.GetAllAsync(page: 1, pageSize: 10);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Items.Should().HaveCount(10);
+        result.TotalCount.Should().Be(15);
+        result.TotalPages.Should().Be(2);
+        result.HasNextPage.Should().BeTrue();
+        result.HasPreviousPage.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldReturnSecondPage_Correctly()
+    {
+        // Arrange
+        for (var i = 0; i < 15; i++)
+        {
+            _context.Players.Add(new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = $"Player{i:D2}"
+            });
+        }
+
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _playerService.GetAllAsync(page: 2, pageSize: 10);
+
+        // Assert
+        result.Items.Should().HaveCount(5);
+        result.Page.Should().Be(2);
+        result.HasPreviousPage.Should().BeTrue();
+        result.HasNextPage.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldFilterByRegion()
+    {
+        // Arrange
+        _context.Players.AddRange(
+            new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = "NAPlayer1",
+                Region = "NA"
+            },
+            new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = "EUPlayer1",
+                Region = "EU"
+            },
+            new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = "NAPlayer2",
+                Region = "NA"
+            }
+        );
+
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _playerService.GetAllAsync(1, 20, region: "NA");
+
+        // Assert
+        result.Items.Should().HaveCount(2);
+        result.TotalCount.Should().Be(2);
+        result.Items.Should().OnlyContain(p => p.Region == "NA");
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldReturnEmpty_WhenNoPlayersInRegion()
+    {
+        // Arrange
+        _context.Players.Add(new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "NAPlayer",
+            Region = "NA"
+        });
+
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _playerService.GetAllAsync(1, 20, region: "SEA");
+
+        // Assert
+        result.Items.Should().BeEmpty();
+        result.TotalCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task UpdateAsync_ShouldUpdatePlayer_Successfully()
     {
         // Arrange
@@ -102,6 +288,7 @@ public class PlayerServiceTests : IDisposable
             Username = "TestUser",
             Email = "old@example.com"
         };
+
         _context.Players.Add(player);
         await _context.SaveChangesAsync();
 
@@ -121,83 +308,63 @@ public class PlayerServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetByIdAsync_ShouldReturnPlayer_WhenExists()
+    public async Task UpdateAsync_ShouldReturnNull_WhenNotFound()
     {
         // Arrange
-        var player = new Player { Id = Guid.NewGuid(), Username = "LookupPlayer" };
+        var updateDto = new UpdatePlayerDto
+        {
+            Email = "ghost@example.com"
+        };
+
+        // Act
+        var result = await _playerService.UpdateAsync(Guid.NewGuid(), updateDto);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ShouldOnlyUpdateProvidedFields()
+    {
+        // Arrange
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "TestUser",
+            Email = "original@example.com",
+            Bio = "Original bio",
+            Region = "NA"
+        };
+
         _context.Players.Add(player);
         await _context.SaveChangesAsync();
 
+        var updateDto = new UpdatePlayerDto
+        {
+            DisplayName = "Only This Changes"
+        };
+
         // Act
-        var result = await _playerService.GetByIdAsync(player.Id);
+        var result = await _playerService.UpdateAsync(player.Id, updateDto);
 
         // Assert
         result.Should().NotBeNull();
-        result!.Id.Should().Be(player.Id);
-        result.Username.Should().Be("LookupPlayer");
-    }
-
-    [Fact]
-    public async Task GetByIdAsync_ShouldReturnNull_WhenNotExists()
-    {
-        // Act
-        var result = await _playerService.GetByIdAsync(Guid.NewGuid());
-
-        // Assert
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetByUsernameAsync_ShouldReturnNull_WhenNotExists()
-    {
-        // Act
-        var result = await _playerService.GetByUsernameAsync("ghost_user");
-
-        // Assert
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetAllAsync_ShouldReturnPaginatedResults()
-    {
-        // Arrange
-        for (int i = 0; i < 15; i++)
-            _context.Players.Add(new Player { Id = Guid.NewGuid(), Username = $"Player{i}" });
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _playerService.GetAllAsync(page: 1, pageSize: 10);
-
-        // Assert
-        result.Items.Should().HaveCount(10);
-        result.TotalCount.Should().Be(15);
-        result.TotalPages.Should().Be(2);
-        result.HasNextPage.Should().BeTrue();
-        result.HasPreviousPage.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task GetAllAsync_ShouldFilterByRegion()
-    {
-        // Arrange
-        _context.Players.Add(new Player { Id = Guid.NewGuid(), Username = "NaPlayer1", Region = "NA" });
-        _context.Players.Add(new Player { Id = Guid.NewGuid(), Username = "EuPlayer1", Region = "EU" });
-        _context.Players.Add(new Player { Id = Guid.NewGuid(), Username = "NaPlayer2", Region = "NA" });
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _playerService.GetAllAsync(1, 10, region: "NA");
-
-        // Assert
-        result.TotalCount.Should().Be(2);
-        result.Items.Should().OnlyContain(p => p.Region == "NA");
+        result!.DisplayName.Should().Be("Only This Changes");
+        result.Email.Should().Be("original@example.com");
+        result.Bio.Should().Be("Original bio");
+        result.Region.Should().Be("NA");
     }
 
     [Fact]
     public async Task DeleteAsync_ShouldDeletePlayer_Successfully()
     {
         // Arrange
-        var player = new Player { Id = Guid.NewGuid(), Username = "DeleteMe" };
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "PlayerToDelete"
+        };
+
         _context.Players.Add(player);
         await _context.SaveChangesAsync();
 
@@ -206,8 +373,9 @@ public class PlayerServiceTests : IDisposable
 
         // Assert
         result.Should().BeTrue();
-        var deleted = await _context.Players.FindAsync(player.Id);
-        deleted.Should().BeNull();
+
+        var deletedPlayer = await _context.Players.FindAsync(player.Id);
+        deletedPlayer.Should().BeNull();
     }
 
     [Fact]
@@ -218,19 +386,6 @@ public class PlayerServiceTests : IDisposable
 
         // Assert
         result.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task UpdateAsync_ShouldReturnNull_WhenNotFound()
-    {
-        // Arrange
-        var updateDto = new UpdatePlayerDto { Email = "ghost@example.com" };
-
-        // Act
-        var result = await _playerService.UpdateAsync(Guid.NewGuid(), updateDto);
-
-        // Assert
-        result.Should().BeNull();
     }
 
     public void Dispose()
