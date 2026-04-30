@@ -72,7 +72,7 @@ public class RosterImportsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating roster import");
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
@@ -107,7 +107,7 @@ public class RosterImportsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing roster import {RosterImportId}", id);
-            return BadRequest(new { error = ex.Message });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
         }
     }
 
