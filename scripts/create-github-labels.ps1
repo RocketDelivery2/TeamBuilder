@@ -57,21 +57,21 @@ $labels = @(
     # Area labels
     @{ name = 'area:api'; description = 'Changes related to the ASP.NET Core Web API layer'; color = '1f6feb' },
     @{ name = 'area:application'; description = 'Changes related to application services and use cases'; color = '1f6feb' },
-    @{ name = 'area:architecture'; description = 'Architecture, solution structure, design patterns, or technical direction'; color = '1f6feb' },
-    @{ name = 'area:community'; description = 'Discussions, contributor experience, community process, or open-source coordination'; color = '1f6feb' },
+    @{ name = 'area:architecture'; description = 'Architecture, solution structure, design patterns, or technical direction'; color = '2B44A1' },
+    @{ name = 'area:community'; description = 'Discussions, contributor experience, community process, or open-source coordination'; color = '4E3AA0' },
     @{ name = 'area:database'; description = 'Azure SQL, EF Core migrations, schema, indexes, or persistence'; color = '1f6feb' },
     @{ name = 'area:devops'; description = 'CI/CD, deployment planning, environments, or release process'; color = '1f6feb' },
     @{ name = 'area:docs'; description = 'Documentation, README, guides, or discussion content'; color = '1f6feb' },
     @{ name = 'area:domain'; description = 'Changes related to domain models, rules, and entities'; color = '1f6feb' },
-    @{ name = 'area:frontend'; description = 'Frontend clients, UI examples, static web clients, mobile clients, or client integrations'; color = '1f6feb' },
+    @{ name = 'area:frontend'; description = 'Frontend clients, UI examples, static web clients, mobile clients, or client integrations'; color = '6A0352' },
     @{ name = 'area:github-actions'; description = 'GitHub Actions, workflows, Dependabot, or automation'; color = '1f6feb' },
     @{ name = 'area:infrastructure'; description = 'Changes related to persistence, EF Core, and external services'; color = '1f6feb' },
-    @{ name = 'area:product'; description = 'Product vision, feature planning, user workflows, or TeamBuilder use cases'; color = '1f6feb' },
-    @{ name = 'area:roster-language'; description = 'Common roster language, roster imports, roster schema, and interoperability'; color = '1f6feb' },
+    @{ name = 'area:product'; description = 'Product vision, feature planning, user workflows, or TeamBuilder use cases'; color = '5DDB93' },
+    @{ name = 'area:roster-language'; description = 'Common roster language, roster imports, roster schema, and interoperability'; color = '67A243' },
     @{ name = 'area:tests'; description = 'Changes related to unit, integration, or test infrastructure'; color = '1f6feb' },
 
     # Planning labels
-    @{ name = 'roadmap'; description = 'Roadmap planning, milestones, and future direction'; color = 'ffc274' }
+    @{ name = 'roadmap'; description = 'Roadmap planning, milestones, and future direction'; color = '16DBB7' }
 )
 
 $targetRepo = "$Owner/$Repo"
@@ -79,11 +79,7 @@ Write-Host "Creating or updating labels for $targetRepo..." -ForegroundColor Cya
 
 # Load all existing label names once to avoid N individual API calls.
 # 'gh label view' is not a supported command; use 'gh label list --json name' instead.
-$existingLabelsJson = gh label list --repo "$targetRepo" --limit 1000 --json name 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to fetch existing labels from $targetRepo. Ensure 'gh auth login' has been run."
-    exit 1
-}
+$existingLabelsJson = gh label list --repo "$targetRepo" --limit 1000 --json name
 $existingNames = ($existingLabelsJson | ConvertFrom-Json) | ForEach-Object { $_.name }
 
 $successCount = 0
