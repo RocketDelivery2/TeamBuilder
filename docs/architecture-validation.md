@@ -163,7 +163,7 @@ database instances per test class.
 
 ### M1 — No authentication or authorization middleware ❌
 
-#### Severity: Critical
+#### Severity: Critical before public production deployment
 
 The API has no authentication. `app.UseAuthentication()` is absent from
 `Program.cs`. The `X-User-Id` custom header is accepted as-is from any
