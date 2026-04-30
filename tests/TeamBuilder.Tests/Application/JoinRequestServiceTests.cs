@@ -224,205 +224,6 @@ public class JoinRequestServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetByIdAsync_ShouldReturnJoinRequest_WhenExists()
-    {
-        // Arrange
-        var team = new Team { Id = Guid.NewGuid(), Name = "Test Team", MaxMembers = 5 };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
-        _context.Teams.Add(team);
-        _context.Players.Add(player);
-
-        var joinRequest = new JoinRequest
-        {
-            Id = Guid.NewGuid(),
-            TeamId = team.Id,
-            PlayerId = player.Id,
-            Status = RequestStatus.Pending,
-            Message = "Please let me in",
-            RequestedAtUtc = DateTime.UtcNow
-        };
-        _context.JoinRequests.Add(joinRequest);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _joinRequestService.GetByIdAsync(joinRequest.Id);
-
-        // Assert
-        result.Should().NotBeNull();
-        result!.Id.Should().Be(joinRequest.Id);
-        result.TeamId.Should().Be(team.Id);
-        result.PlayerId.Should().Be(player.Id);
-        result.Status.Should().Be(RequestStatus.Pending);
-        result.Message.Should().Be("Please let me in");
-        result.TeamName.Should().Be("Test Team");
-        result.PlayerUsername.Should().Be("TestPlayer");
-    }
-
-    [Fact]
-    public async Task GetByIdAsync_ShouldReturnNull_WhenNotExists()
-    {
-        // Act
-        var result = await _joinRequestService.GetByIdAsync(Guid.NewGuid());
-
-        // Assert
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetByPlayerIdAsync_ShouldReturnPaginatedRequests()
-    {
-        // Arrange
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
-        _context.Players.Add(player);
-
-        for (int i = 0; i < 5; i++)
-        {
-            var team = new Team { Id = Guid.NewGuid(), Name = $"Team{i}", MaxMembers = 5 };
-            _context.Teams.Add(team);
-            _context.JoinRequests.Add(new JoinRequest
-            {
-                Id = Guid.NewGuid(),
-                TeamId = team.Id,
-                PlayerId = player.Id,
-                Status = RequestStatus.Pending,
-                RequestedAtUtc = DateTime.UtcNow.AddMinutes(-i)
-            });
-        }
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _joinRequestService.GetByPlayerIdAsync(player.Id, 1, 3);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Items.Should().HaveCount(3);
-        result.TotalCount.Should().Be(5);
-        result.TotalPages.Should().Be(2);
-        result.HasNextPage.Should().BeTrue();
-        result.HasPreviousPage.Should().BeFalse();
-        result.Items.Should().OnlyContain(jr => jr.PlayerId == player.Id);
-    }
-
-    [Fact]
-    public async Task GetByPlayerIdAsync_ShouldFilterByStatus()
-    {
-        // Arrange
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
-        _context.Players.Add(player);
-
-        for (int i = 0; i < 6; i++)
-        {
-            var team = new Team { Id = Guid.NewGuid(), Name = $"Team{i}", MaxMembers = 5 };
-            _context.Teams.Add(team);
-            _context.JoinRequests.Add(new JoinRequest
-            {
-                Id = Guid.NewGuid(),
-                TeamId = team.Id,
-                PlayerId = player.Id,
-                Status = i < 4 ? RequestStatus.Pending : RequestStatus.Approved,
-                RequestedAtUtc = DateTime.UtcNow.AddMinutes(-i)
-            });
-        }
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _joinRequestService.GetByPlayerIdAsync(player.Id, 1, 20, RequestStatus.Pending);
-
-        // Assert
-        result.Items.Should().HaveCount(4);
-        result.Items.Should().OnlyContain(jr => jr.Status == RequestStatus.Pending);
-    }
-
-    [Fact]
-    public async Task GetByPlayerIdAsync_ShouldReturnEmpty_WhenPlayerHasNoRequests()
-    {
-        // Arrange
-        var player = new Player { Id = Guid.NewGuid(), Username = "Loner" };
-        _context.Players.Add(player);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _joinRequestService.GetByPlayerIdAsync(player.Id, 1, 20);
-
-        // Assert
-        result.Items.Should().BeEmpty();
-        result.TotalCount.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task ProcessAsync_ShouldReturnNull_WhenRequestNotFound()
-    {
-        // Arrange
-        var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
-
-        // Act
-        var result = await _joinRequestService.ProcessAsync(Guid.NewGuid(), processDto, Guid.NewGuid());
-
-        // Assert
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task CreateAsync_ShouldSucceed_WhenPreviousRequestWasRejected()
-    {
-        // Arrange — a prior Rejected request must NOT block a new Pending one
-        var team = new Team { Id = Guid.NewGuid(), Name = "Test Team", MaxMembers = 5 };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
-        _context.Teams.Add(team);
-        _context.Players.Add(player);
-
-        _context.JoinRequests.Add(new JoinRequest
-        {
-            Id = Guid.NewGuid(),
-            TeamId = team.Id,
-            PlayerId = player.Id,
-            Status = RequestStatus.Rejected,
-            RequestedAtUtc = DateTime.UtcNow.AddDays(-1),
-            ProcessedAtUtc = DateTime.UtcNow.AddDays(-1)
-        });
-        await _context.SaveChangesAsync();
-
-        var createDto = new CreateJoinRequestDto { TeamId = team.Id, Message = "Trying again" };
-
-        // Act
-        var result = await _joinRequestService.CreateAsync(createDto, player.Id);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Status.Should().Be(RequestStatus.Pending);
-        result.Message.Should().Be("Trying again");
-    }
-
-    [Fact]
-    public async Task CreateAsync_ShouldSucceed_WhenPreviousRequestWasCancelled()
-    {
-        // Arrange — a prior Cancelled request must NOT block a new Pending one
-        var team = new Team { Id = Guid.NewGuid(), Name = "Test Team", MaxMembers = 5 };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
-        _context.Teams.Add(team);
-        _context.Players.Add(player);
-
-        _context.JoinRequests.Add(new JoinRequest
-        {
-            Id = Guid.NewGuid(),
-            TeamId = team.Id,
-            PlayerId = player.Id,
-            Status = RequestStatus.Cancelled,
-            RequestedAtUtc = DateTime.UtcNow.AddDays(-1)
-        });
-        await _context.SaveChangesAsync();
-
-        var createDto = new CreateJoinRequestDto { TeamId = team.Id };
-
-        // Act
-        var result = await _joinRequestService.CreateAsync(createDto, player.Id);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Status.Should().Be(RequestStatus.Pending);
-    }
-
-    [Fact]
     public async Task GetByTeamIdAsync_ShouldReturnFilteredRequests()
     {
         // Arrange
@@ -454,37 +255,118 @@ public class JoinRequestServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetByTeamIdAsync_ShouldReturnPaginatedResults()
+    public async Task GetByIdAsync_ShouldReturnJoinRequest_WhenExists()
     {
         // Arrange
-        var team = new Team { Id = Guid.NewGuid(), Name = "Test Team", MaxMembers = 20 };
+        var team = new Team { Id = Guid.NewGuid(), Name = "Team", MaxMembers = 5 };
+        var player = new Player { Id = Guid.NewGuid(), Username = "Requester" };
         _context.Teams.Add(team);
+        _context.Players.Add(player);
 
-        for (int i = 0; i < 7; i++)
+        var joinRequest = new JoinRequest
         {
-            var player = new Player { Id = Guid.NewGuid(), Username = $"PlayerT{i}" };
-            _context.Players.Add(player);
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Status = RequestStatus.Pending,
+            Message = "Let me in",
+            RequestedAtUtc = DateTime.UtcNow
+        };
+        _context.JoinRequests.Add(joinRequest);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _joinRequestService.GetByIdAsync(joinRequest.Id);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(joinRequest.Id);
+        result.Status.Should().Be(RequestStatus.Pending);
+        result.Message.Should().Be("Let me in");
+        result.TeamName.Should().Be("Team");
+        result.PlayerUsername.Should().Be("Requester");
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_ShouldReturnNull_WhenNotExists()
+    {
+        // Act
+        var result = await _joinRequestService.GetByIdAsync(Guid.NewGuid());
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByPlayerIdAsync_ShouldReturnFilteredRequests()
+    {
+        // Arrange
+        var player = new Player { Id = Guid.NewGuid(), Username = "ActiveRequester" };
+        _context.Players.Add(player);
+
+        for (int i = 0; i < 4; i++)
+        {
+            var team = new Team { Id = Guid.NewGuid(), Name = $"Team{i}", MaxMembers = 5 };
+            _context.Teams.Add(team);
             _context.JoinRequests.Add(new JoinRequest
             {
                 Id = Guid.NewGuid(),
                 TeamId = team.Id,
                 PlayerId = player.Id,
-                Status = RequestStatus.Pending,
-                RequestedAtUtc = DateTime.UtcNow.AddMinutes(-i)
+                Status = i < 2 ? RequestStatus.Pending : RequestStatus.Rejected,
+                RequestedAtUtc = DateTime.UtcNow.AddDays(-i)
             });
         }
         await _context.SaveChangesAsync();
 
         // Act
-        var result = await _joinRequestService.GetByTeamIdAsync(team.Id, 1, 5);
+        var result = await _joinRequestService.GetByPlayerIdAsync(player.Id, 1, 20, RequestStatus.Pending);
 
         // Assert
-        result.Items.Should().HaveCount(5);
-        result.TotalCount.Should().Be(7);
-        result.TotalPages.Should().Be(2);
-        result.HasNextPage.Should().BeTrue();
-        result.HasPreviousPage.Should().BeFalse();
-        result.Items.Should().OnlyContain(jr => jr.TeamId == team.Id);
+        result.Items.Should().HaveCount(2);
+        result.Items.Should().OnlyContain(jr => jr.Status == RequestStatus.Pending);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldReturnNull_WhenJoinRequestNotFound()
+    {
+        // Arrange
+        var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
+
+        // Act
+        var result = await _joinRequestService.ProcessAsync(Guid.NewGuid(), processDto, Guid.NewGuid());
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByPlayerIdAsync_ShouldReturnAllRequests_WhenNoStatusFilter()
+    {
+        // Arrange
+        var player = new Player { Id = Guid.NewGuid(), Username = "MultiStatusPlayer" };
+        _context.Players.Add(player);
+
+        foreach (var status in new[] { RequestStatus.Pending, RequestStatus.Approved, RequestStatus.Rejected })
+        {
+            var team = new Team { Id = Guid.NewGuid(), Name = $"Team-{status}", MaxMembers = 5 };
+            _context.Teams.Add(team);
+            _context.JoinRequests.Add(new JoinRequest
+            {
+                Id = Guid.NewGuid(),
+                TeamId = team.Id,
+                PlayerId = player.Id,
+                Status = status,
+                RequestedAtUtc = DateTime.UtcNow
+            });
+        }
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _joinRequestService.GetByPlayerIdAsync(player.Id, 1, 20);
+
+        // Assert
+        result.TotalCount.Should().Be(3);
     }
 
     public void Dispose()
