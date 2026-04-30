@@ -35,7 +35,14 @@ public class TeamMembershipTests : IDisposable
             Status = TeamStatus.Active,
             RowVersion = []
         };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer" };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "TestPlayer",
+            RowVersion = []
+        };
+
         _context.Teams.Add(team);
         _context.Players.Add(player);
 
@@ -48,6 +55,7 @@ public class TeamMembershipTests : IDisposable
             JoinedAtUtc = DateTime.UtcNow.AddDays(-10),
             IsActive = true
         };
+
         _context.TeamMembers.Add(teamMember);
         await _context.SaveChangesAsync();
 
@@ -74,9 +82,17 @@ public class TeamMembershipTests : IDisposable
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Full
+            Status = TeamStatus.Full,
+            RowVersion = []
         };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer", RowVersion = [] };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "TestPlayer",
+            RowVersion = []
+        };
+
         _context.Teams.Add(team);
         _context.Players.Add(player);
 
@@ -89,6 +105,7 @@ public class TeamMembershipTests : IDisposable
             JoinedAtUtc = DateTime.UtcNow,
             IsActive = true
         };
+
         _context.TeamMembers.Add(teamMember);
         await _context.SaveChangesAsync();
 
@@ -115,6 +132,7 @@ public class TeamMembershipTests : IDisposable
             CurrentMemberCount = 3,
             RowVersion = []
         };
+
         _context.Teams.Add(team);
         await _context.SaveChangesAsync();
 
@@ -139,7 +157,14 @@ public class TeamMembershipTests : IDisposable
             CurrentMemberCount = 2,
             RowVersion = []
         };
-        var player = new Player { Id = Guid.NewGuid(), Username = "TestPlayer", RowVersion = [] };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "TestPlayer",
+            RowVersion = []
+        };
+
         _context.Teams.Add(team);
         _context.Players.Add(player);
 
@@ -150,8 +175,9 @@ public class TeamMembershipTests : IDisposable
             PlayerId = player.Id,
             Role = TeamRole.Member,
             JoinedAtUtc = DateTime.UtcNow.AddDays(-10),
-            IsActive = false // Already inactive
+            IsActive = false
         };
+
         _context.TeamMembers.Add(teamMember);
         await _context.SaveChangesAsync();
 
@@ -165,7 +191,7 @@ public class TeamMembershipTests : IDisposable
     [Fact]
     public async Task RefillScenario_JoinAfterLeave_ShouldWork()
     {
-        // Arrange - Create a full team
+        // Arrange
         var team = new Team
         {
             Id = Guid.NewGuid(),
@@ -175,8 +201,20 @@ public class TeamMembershipTests : IDisposable
             Status = TeamStatus.Full,
             RowVersion = []
         };
-        var leavingPlayer = new Player { Id = Guid.NewGuid(), Username = "LeavingPlayer", RowVersion = [] };
-        var newPlayer = new Player { Id = Guid.NewGuid(), Username = "NewPlayer", RowVersion = [] };
+
+        var leavingPlayer = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "LeavingPlayer",
+            RowVersion = []
+        };
+
+        var newPlayer = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "NewPlayer",
+            RowVersion = []
+        };
 
         _context.Teams.Add(team);
         _context.Players.AddRange(leavingPlayer, newPlayer);
@@ -190,19 +228,20 @@ public class TeamMembershipTests : IDisposable
             JoinedAtUtc = DateTime.UtcNow,
             IsActive = true
         };
+
         _context.TeamMembers.Add(teamMember);
         await _context.SaveChangesAsync();
 
-        // Act - Player leaves
+        // Act
         var leaveResult = await _teamService.RemoveMemberAsync(team.Id, leavingPlayer.Id);
 
-        // Assert - Team should be recruiting again
+        // Assert
         leaveResult.Should().BeTrue();
+
         var teamAfterLeave = await _context.Teams.FindAsync(team.Id);
         teamAfterLeave!.Status.Should().Be(TeamStatus.Recruiting);
         teamAfterLeave.CurrentMemberCount.Should().Be(2);
 
-        // Act - New player can now join (via join request processing)
         var joinRequest = new JoinRequest
         {
             Id = Guid.NewGuid(),
@@ -211,20 +250,27 @@ public class TeamMembershipTests : IDisposable
             Status = RequestStatus.Pending,
             RequestedAtUtc = DateTime.UtcNow
         };
+
         _context.JoinRequests.Add(joinRequest);
         await _context.SaveChangesAsync();
 
         var joinRequestService = new JoinRequestService(_context);
-        var processDto = new TeamBuilder.Application.DTOs.ProcessJoinRequestDto { Status = RequestStatus.Approved };
+        var processDto = new TeamBuilder.Application.DTOs.ProcessJoinRequestDto
+        {
+            Status = RequestStatus.Approved
+        };
+
         await joinRequestService.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid());
 
-        // Assert - New member should be added
         var teamAfterRefill = await _context.Teams.FindAsync(team.Id);
         teamAfterRefill!.CurrentMemberCount.Should().Be(3);
         teamAfterRefill.Status.Should().Be(TeamStatus.Full);
 
-        var newMember = await _context.TeamMembers
-            .FirstOrDefaultAsync(tm => tm.PlayerId == newPlayer.Id && tm.TeamId == team.Id && tm.IsActive);
+        var newMember = await _context.TeamMembers.FirstOrDefaultAsync(tm =>
+            tm.PlayerId == newPlayer.Id &&
+            tm.TeamId == team.Id &&
+            tm.IsActive);
+
         newMember.Should().NotBeNull();
     }
 

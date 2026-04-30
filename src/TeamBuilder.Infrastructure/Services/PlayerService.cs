@@ -7,38 +7,44 @@ using TeamBuilder.Infrastructure.Data;
 
 namespace TeamBuilder.Infrastructure.Services;
 
-public class PlayerService : IPlayerService
+public class PlayerService(TeamBuilderDbContext context) : IPlayerService
 {
-    private readonly TeamBuilderDbContext _context;
+    private readonly TeamBuilderDbContext _context = context;
 
-    public PlayerService(TeamBuilderDbContext context)
-    {
-        _context = context;
-    }
-
-    public async Task<PlayerDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<PlayerDto?> GetByIdAsync(
+        Guid id,
+        CancellationToken cancellationToken = default)
     {
         var player = await _context.Players.FindAsync([id], cancellationToken);
+
         return player == null ? null : MapToDto(player);
     }
 
-    public async Task<PlayerDto?> GetByUsernameAsync(string username, CancellationToken cancellationToken = default)
+    public async Task<PlayerDto?> GetByUsernameAsync(
+        string username,
+        CancellationToken cancellationToken = default)
     {
         var player = await _context.Players
             .FirstOrDefaultAsync(p => p.Username == username, cancellationToken);
+
         return player == null ? null : MapToDto(player);
     }
 
     public async Task<PaginatedResult<PlayerDto>> GetAllAsync(
-        int page, 
-        int pageSize, 
-        string? region = null, 
+        int page,
+        int pageSize,
+        string? region = null,
         CancellationToken cancellationToken = default)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
         var query = _context.Players.AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(region))
+        {
             query = query.Where(p => p.Region == region);
+        }
 
         var totalCount = await query.CountAsync(cancellationToken);
 
@@ -57,13 +63,20 @@ public class PlayerService : IPlayerService
         };
     }
 
-    public async Task<PlayerDto> CreateAsync(CreatePlayerDto createPlayerDto, CancellationToken cancellationToken = default)
+    public async Task<PlayerDto> CreateAsync(
+        CreatePlayerDto createPlayerDto,
+        CancellationToken cancellationToken = default)
     {
         var existingPlayer = await _context.Players
-            .FirstOrDefaultAsync(p => p.Username == createPlayerDto.Username, cancellationToken);
+            .FirstOrDefaultAsync(
+                p => p.Username == createPlayerDto.Username,
+                cancellationToken);
 
         if (existingPlayer != null)
-            throw new InvalidOperationException($"Player with username '{createPlayerDto.Username}' already exists.");
+        {
+            throw new InvalidOperationException(
+                $"Player with username '{createPlayerDto.Username}' already exists.");
+        }
 
         var player = new Player
         {
@@ -82,35 +95,58 @@ public class PlayerService : IPlayerService
         return MapToDto(player);
     }
 
-    public async Task<PlayerDto?> UpdateAsync(Guid id, UpdatePlayerDto updatePlayerDto, CancellationToken cancellationToken = default)
+    public async Task<PlayerDto?> UpdateAsync(
+        Guid id,
+        UpdatePlayerDto updatePlayerDto,
+        CancellationToken cancellationToken = default)
     {
         var player = await _context.Players.FindAsync([id], cancellationToken);
-        if (player == null) return null;
+
+        if (player == null)
+        {
+            return null;
+        }
 
         if (updatePlayerDto.Email != null)
+        {
             player.Email = updatePlayerDto.Email;
+        }
 
         if (updatePlayerDto.DisplayName != null)
+        {
             player.DisplayName = updatePlayerDto.DisplayName;
+        }
 
         if (updatePlayerDto.Bio != null)
+        {
             player.Bio = updatePlayerDto.Bio;
+        }
 
         if (updatePlayerDto.Region != null)
+        {
             player.Region = updatePlayerDto.Region;
+        }
 
         if (updatePlayerDto.AvatarUrl != null)
+        {
             player.AvatarUrl = updatePlayerDto.AvatarUrl;
+        }
 
         await _context.SaveChangesAsync(cancellationToken);
 
         return MapToDto(player);
     }
 
-    public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteAsync(
+        Guid id,
+        CancellationToken cancellationToken = default)
     {
         var player = await _context.Players.FindAsync([id], cancellationToken);
-        if (player == null) return false;
+
+        if (player == null)
+        {
+            return false;
+        }
 
         _context.Players.Remove(player);
         await _context.SaveChangesAsync(cancellationToken);
