@@ -275,6 +275,25 @@ public class TeamServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetAllAsync_ShouldCombineFilters_CategoryAndRegion()
+    {
+        // Arrange
+        _context.Teams.AddRange(
+            new Team { Id = Guid.NewGuid(), Name = "Gaming NA", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Category = "Gaming", Region = "NA" },
+            new Team { Id = Guid.NewGuid(), Name = "Gaming EU", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Category = "Gaming", Region = "EU" },
+            new Team { Id = Guid.NewGuid(), Name = "Sports NA", MaxMembers = 5, CurrentMemberCount = 0, Status = TeamStatus.Recruiting, Category = "Sports", Region = "NA" }
+        );
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.GetAllAsync(1, 20, category: "Gaming", region: "NA");
+
+        // Assert
+        result.Items.Should().HaveCount(1);
+        result.Items.First().Name.Should().Be("Gaming NA");
+    }
+
+    [Fact]
     public async Task UpdateAsync_ShouldReturnNull_WhenNotExists()
     {
         // Arrange

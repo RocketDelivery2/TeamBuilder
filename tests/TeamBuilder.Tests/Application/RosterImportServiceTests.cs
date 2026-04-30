@@ -136,6 +136,31 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetAllAsync_ShouldFilterByUnprocessedStatus()
+    {
+        // Arrange
+        for (int i = 0; i < 10; i++)
+        {
+            _context.RosterImports.Add(new RosterImport
+            {
+                Id = Guid.NewGuid(),
+                SourceName = $"Source{i}",
+                SourceType = "CSV",
+                RawData = "test",
+                IsProcessed = i < 3
+            });
+        }
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _rosterImportService.GetAllAsync(1, 20, isProcessed: false);
+
+        // Assert
+        result.Items.Should().HaveCount(7);
+        result.Items.Should().OnlyContain(ri => !ri.IsProcessed);
+    }
+
+    [Fact]
     public async Task ProcessAsync_ShouldMarkAsProcessed_AndCreatePlayers()
     {
         // Arrange
