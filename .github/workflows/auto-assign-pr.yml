@@ -1,4 +1,4 @@
-name: Auto Assign Pull Requests
+name: Auto Assign and Review Pull Requests
 
 on:
   pull_request:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   assign:
-    name: Assign PR to maintainer
+    name: Assign and request review
     runs-on: ubuntu-latest
 
     steps:
@@ -24,4 +24,5 @@ jobs:
         run: |
           gh pr edit "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
-            --add-assignee "RocketDelivery2"
+            --add-assignee "RocketDelivery2" \
+            --add-reviewer "RocketDelivery2"
