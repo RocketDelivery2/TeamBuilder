@@ -63,7 +63,10 @@ public class RosterImportsController : ControllerBase
         try
         {
             var rosterImport = await _rosterImportService.CreateAsync(createRosterImportDto, importedByUserId, cancellationToken);
-            _logger.LogInformation("Created roster import {RosterImportId} from source {SourceName}", rosterImport.Id, rosterImport.SourceName);
+            var safeSourceName = (rosterImport.SourceName ?? string.Empty)
+                .Replace("\r", string.Empty)
+                .Replace("\n", string.Empty);
+            _logger.LogInformation("Created roster import {RosterImportId} from source {SourceName}", rosterImport.Id, safeSourceName);
             return CreatedAtAction(nameof(GetById), new { id = rosterImport.Id }, rosterImport);
         }
         catch (Exception ex)
