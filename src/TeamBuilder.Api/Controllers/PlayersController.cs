@@ -1,3 +1,4 @@
+using System;
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
@@ -40,11 +41,22 @@ public class PlayersController : ControllerBase
         var player = await _playerService.GetByUsernameAsync(username, cancellationToken);
         if (player == null)
         {
-            _logger.LogInformation("Player with username {Username} not found", username);
+            _logger.LogInformation("Player with username {Username} not found", SanitizeForLog(username));
             return NotFound();
         }
 
         return Ok(player);
+    }
+
+    private static string SanitizeForLog(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        return value
+            .Replace(Environment.NewLine, string.Empty)
+            .Replace("\n", string.Empty)
+            .Replace("\r", string.Empty);
     }
 
     [HttpGet]
@@ -75,12 +87,12 @@ public class PlayersController : ControllerBase
         try
         {
             var player = await _playerService.CreateAsync(createPlayerDto, cancellationToken);
-            _logger.LogInformation("Created player {PlayerId} with username {Username}", player.Id, player.Username);
+            _logger.LogInformation("Created player {PlayerId} with username {Username}", player.Id, SanitizeForLog(player.Username));
             return CreatedAtAction(nameof(GetById), new { id = player.Id }, player);
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "Failed to create player with username {Username}", createPlayerDto.Username);
+            _logger.LogWarning(ex, "Failed to create player with username {Username}", SanitizeForLog(createPlayerDto.Username));
             return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
