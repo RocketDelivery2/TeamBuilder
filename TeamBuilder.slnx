@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TeamBuilder.Api/TeamBuilder.Api.csproj" />
+    <Project Path="src/TeamBuilder.Application/TeamBuilder.Application.csproj" />
+    <Project Path="src/TeamBuilder.Domain/TeamBuilder.Domain.csproj" />
+    <Project Path="src/TeamBuilder.Infrastructure/TeamBuilder.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TeamBuilder.Tests/TeamBuilder.Tests.csproj" />
+  </Folder>
+</Solution>
