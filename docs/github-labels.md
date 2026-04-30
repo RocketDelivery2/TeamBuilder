@@ -78,7 +78,7 @@ The `.github/labeler.yml` file defines rules that automatically apply area label
 | area:application | `src/TeamBuilder.Application/**` |
 | area:domain | `src/TeamBuilder.Domain/**` |
 | area:infrastructure | `src/TeamBuilder.Infrastructure/**` |
-| area:database | `src/TeamBuilder.Infrastructure/**/Migrations/**`<br>`src/TeamBuilder.Infrastructure/**/Persistence/**` |
+| area:database | `src/TeamBuilder.Infrastructure/**/Migrations/**`<br>`src/TeamBuilder.Infrastructure/**/Persistence/**`<br>`src/TeamBuilder.Infrastructure/**/Data/**`<br>`src/TeamBuilder.Infrastructure/**/*Configuration.cs` |
 | area:tests | `tests/**` |
 | area:docs | `docs/**`, `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `.github/copilot-instructions.md` |
 | area:github-actions | `.github/workflows/**`, `.github/dependabot.yml`, `.github/labeler.yml` |
@@ -107,7 +107,7 @@ The script:
 - Creates missing labels with standardized descriptions and colors
 - Updates existing label descriptions and colors
 - Is idempotent and safe to rerun
-- Uses `gh label view` for reliable existence detection (handles names with `:` correctly)
+- Uses `gh label list --json name` for reliable existence detection (handles names with `:` correctly)
 - Requires GitHub CLI (`gh`) to be installed and authenticated
 
 ### Prerequisites
