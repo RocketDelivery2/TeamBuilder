@@ -8,9 +8,9 @@ public class Player : BaseEntity
     public string? Bio { get; set; }
     public string? Region { get; set; }
     public string? AvatarUrl { get; set; }
-    public ICollection<TeamMember> TeamMemberships { get; set; } = new List<TeamMember>();
-    public ICollection<Team> OwnedTeams { get; set; } = new List<Team>();
-    public ICollection<TeamEvent> HostedEvents { get; set; } = new List<TeamEvent>();
-    public ICollection<RosterEntry> RosterEntries { get; set; } = new List<RosterEntry>();
-    public ICollection<JoinRequest> JoinRequests { get; set; } = new List<JoinRequest>();
+    public ICollection<TeamMember> TeamMemberships { get; set; } = [];
+    public ICollection<Team> OwnedTeams { get; set; } = [];
+    public ICollection<TeamEvent> HostedEvents { get; set; } = [];
+    public ICollection<RosterEntry> RosterEntries { get; set; } = [];
+    public ICollection<JoinRequest> JoinRequests { get; set; } = [];
 }
