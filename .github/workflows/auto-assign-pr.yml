@@ -1,0 +1,27 @@
+name: Auto Assign Pull Requests
+
+on:
+  pull_request:
+    types:
+      - opened
+      - ready_for_review
+      - reopened
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
+jobs:
+  assign:
+    name: Assign PR to maintainer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Assign PR to RocketDelivery2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --add-assignee "RocketDelivery2"
