@@ -1,0 +1,22 @@
+# CODEOWNERS
+# Lines beginning with '#' are comments.
+# Each line specifies a pattern and one or more owners.
+# Owners are notified automatically when a pull request touches matching files.
+# The last matching pattern takes precedence.
+# See: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything in the repository
+* @RocketDelivery2
+
+# CI/CD and dependency management
+.github/ @RocketDelivery2
+
+# Application source code
+src/ @RocketDelivery2
+
+# Tests
+tests/ @RocketDelivery2
+
+# Documentation
+*.md @RocketDelivery2
+docs/ @RocketDelivery2
