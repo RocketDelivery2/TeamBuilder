@@ -30,12 +30,12 @@ public class EventServiceTests : IDisposable
         var hostId = Guid.NewGuid();
         var createDto = new CreateEventDto
         {
-            Name = "Test Event",
-            Description = "A test event",
-            EventDateUtc = DateTime.UtcNow.AddDays(7),
+            Name = "Grand Tournament",
+            Description = "Annual championship",
+            EventDateUtc = DateTime.UtcNow.AddDays(30),
             Category = "Gaming",
             Region = "NA",
-            MaxParticipants = 20
+            MaxParticipants = 64
         };
 
         // Act
@@ -43,30 +43,38 @@ public class EventServiceTests : IDisposable
 
         // Assert
         result.Should().NotBeNull();
-        result.Name.Should().Be("Test Event");
-        result.Description.Should().Be("A test event");
+        result.Name.Should().Be("Grand Tournament");
+        result.Description.Should().Be("Annual championship");
         result.Status.Should().Be(EventStatus.Planned);
         result.HostId.Should().Be(hostId);
         result.CurrentParticipantCount.Should().Be(0);
-        result.MaxParticipants.Should().Be(20);
+        result.MaxParticipants.Should().Be(64);
 
         var eventInDb = await _context.Events.FindAsync(result.Id);
         eventInDb.Should().NotBeNull();
-        eventInDb!.Name.Should().Be("Test Event");
+        eventInDb!.Name.Should().Be("Grand Tournament");
     }
 
     [Fact]
     public async Task CreateAsync_ShouldLinkToTeam_WhenTeamIdProvided()
     {
         // Arrange
-        var team = new Team { Id = Guid.NewGuid(), Name = "Test Team", MaxMembers = 10, CurrentMemberCount = 0 };
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Alpha Squad",
+            MaxMembers = 10,
+            CurrentMemberCount = 0
+        };
+
         _context.Teams.Add(team);
         await _context.SaveChangesAsync();
 
         var createDto = new CreateEventDto
         {
-            Name = "Team Event",
-            EventDateUtc = DateTime.UtcNow.AddDays(5),
+            Name = "Team Scrim",
+            EventDateUtc = DateTime.UtcNow.AddDays(7),
+            MaxParticipants = 10,
             TeamId = team.Id
         };
 
@@ -85,11 +93,12 @@ public class EventServiceTests : IDisposable
         {
             Id = Guid.NewGuid(),
             Name = "Existing Event",
-            EventDateUtc = DateTime.UtcNow.AddDays(3),
+            EventDateUtc = DateTime.UtcNow.AddDays(5),
             Status = EventStatus.Open,
-            MaxParticipants = 10,
+            MaxParticipants = 20,
             CurrentParticipantCount = 0
         };
+
         _context.Events.Add(teamEvent);
         await _context.SaveChangesAsync();
 
@@ -117,8 +126,20 @@ public class EventServiceTests : IDisposable
     public async Task GetByIdAsync_ShouldIncludeTeamAndHost_WhenPresent()
     {
         // Arrange
-        var team = new Team { Id = Guid.NewGuid(), Name = "Event Team", MaxMembers = 5, CurrentMemberCount = 0 };
-        var host = new Player { Id = Guid.NewGuid(), Username = "HostPlayer" };
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Event Team",
+            MaxMembers = 5,
+            CurrentMemberCount = 0
+        };
+
+        var host = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "HostPlayer"
+        };
+
         _context.Teams.Add(team);
         _context.Players.Add(host);
 
@@ -133,6 +154,7 @@ public class EventServiceTests : IDisposable
             TeamId = team.Id,
             HostId = host.Id
         };
+
         _context.Events.Add(teamEvent);
         await _context.SaveChangesAsync();
 
@@ -152,6 +174,7 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         var baseDate = DateTime.UtcNow;
+
         for (int i = 0; i < 15; i++)
         {
             _context.Events.Add(new TeamEvent
@@ -164,6 +187,7 @@ public class EventServiceTests : IDisposable
                 CurrentParticipantCount = 0
             });
         }
+
         await _context.SaveChangesAsync();
 
         // Act
@@ -183,6 +207,7 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         var baseDate = DateTime.UtcNow;
+
         for (int i = 0; i < 15; i++)
         {
             _context.Events.Add(new TeamEvent
@@ -195,6 +220,7 @@ public class EventServiceTests : IDisposable
                 CurrentParticipantCount = 0
             });
         }
+
         await _context.SaveChangesAsync();
 
         // Act
@@ -212,10 +238,35 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Gaming Event", EventDateUtc = DateTime.UtcNow.AddDays(1), Status = EventStatus.Planned, MaxParticipants = 10, Category = "Gaming" },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Sports Event", EventDateUtc = DateTime.UtcNow.AddDays(2), Status = EventStatus.Planned, MaxParticipants = 10, Category = "Sports" },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Gaming Event 2", EventDateUtc = DateTime.UtcNow.AddDays(3), Status = EventStatus.Planned, MaxParticipants = 10, Category = "Gaming" }
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Gaming Event",
+                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Category = "Gaming"
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Sports Event",
+                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Category = "Sports"
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Gaming Event 2",
+                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Category = "Gaming"
+            }
         );
+
         await _context.SaveChangesAsync();
 
         // Act
@@ -232,10 +283,35 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent { Id = Guid.NewGuid(), Name = "NA Event", EventDateUtc = DateTime.UtcNow.AddDays(1), Status = EventStatus.Planned, MaxParticipants = 10, Region = "NA" },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "EU Event", EventDateUtc = DateTime.UtcNow.AddDays(2), Status = EventStatus.Planned, MaxParticipants = 10, Region = "EU" },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "NA Event 2", EventDateUtc = DateTime.UtcNow.AddDays(3), Status = EventStatus.Planned, MaxParticipants = 10, Region = "NA" }
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "NA Event",
+                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Region = "NA"
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "EU Event",
+                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Region = "EU"
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "NA Event 2",
+                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Region = "NA"
+            }
         );
+
         await _context.SaveChangesAsync();
 
         // Act
@@ -251,10 +327,32 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Open Event", EventDateUtc = DateTime.UtcNow.AddDays(1), Status = EventStatus.Open, MaxParticipants = 10 },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Planned Event", EventDateUtc = DateTime.UtcNow.AddDays(2), Status = EventStatus.Planned, MaxParticipants = 10 },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Cancelled Event", EventDateUtc = DateTime.UtcNow.AddDays(3), Status = EventStatus.Cancelled, MaxParticipants = 10 }
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Open Event",
+                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                Status = EventStatus.Open,
+                MaxParticipants = 10
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Planned Event",
+                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Cancelled Event",
+                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                Status = EventStatus.Cancelled,
+                MaxParticipants = 10
+            }
         );
+
         await _context.SaveChangesAsync();
 
         // Act
@@ -270,18 +368,43 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         var baseDate = DateTime.UtcNow;
+
         _context.Events.AddRange(
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Third", EventDateUtc = baseDate.AddDays(3), Status = EventStatus.Planned, MaxParticipants = 10 },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "First", EventDateUtc = baseDate.AddDays(1), Status = EventStatus.Planned, MaxParticipants = 10 },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Second", EventDateUtc = baseDate.AddDays(2), Status = EventStatus.Planned, MaxParticipants = 10 }
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Third",
+                EventDateUtc = baseDate.AddDays(3),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "First",
+                EventDateUtc = baseDate.AddDays(1),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Second",
+                EventDateUtc = baseDate.AddDays(2),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10
+            }
         );
+
         await _context.SaveChangesAsync();
 
         // Act
         var result = await _eventService.GetAllAsync(1, 20);
 
         // Assert
-        result.Items.Select(e => e.Name).Should().ContainInOrder("First", "Second", "Third");
+        result.Items.Select(e => e.Name)
+            .Should()
+            .ContainInOrder("First", "Second", "Third");
     }
 
     [Fact]
@@ -289,14 +412,46 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Gaming NA", EventDateUtc = DateTime.UtcNow.AddDays(1), Status = EventStatus.Planned, MaxParticipants = 10, Category = "Gaming", Region = "NA" },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Gaming EU", EventDateUtc = DateTime.UtcNow.AddDays(2), Status = EventStatus.Planned, MaxParticipants = 10, Category = "Gaming", Region = "EU" },
-            new TeamEvent { Id = Guid.NewGuid(), Name = "Sports NA", EventDateUtc = DateTime.UtcNow.AddDays(3), Status = EventStatus.Planned, MaxParticipants = 10, Category = "Sports", Region = "NA" }
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Gaming NA",
+                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Category = "Gaming",
+                Region = "NA"
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Gaming EU",
+                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Category = "Gaming",
+                Region = "EU"
+            },
+            new TeamEvent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Sports NA",
+                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10,
+                Category = "Sports",
+                Region = "NA"
+            }
         );
+
         await _context.SaveChangesAsync();
 
         // Act
-        var result = await _eventService.GetAllAsync(1, 20, category: "Gaming", region: "NA");
+        var result = await _eventService.GetAllAsync(
+            1,
+            20,
+            category: "Gaming",
+            region: "NA");
 
         // Assert
         result.Items.Should().HaveCount(1);
@@ -316,6 +471,7 @@ public class EventServiceTests : IDisposable
             MaxParticipants = 10,
             Region = "NA"
         });
+
         await _context.SaveChangesAsync();
 
         // Act
@@ -339,6 +495,7 @@ public class EventServiceTests : IDisposable
             MaxParticipants = 10,
             CurrentParticipantCount = 0
         };
+
         _context.Events.Add(teamEvent);
         await _context.SaveChangesAsync();
 
@@ -393,10 +550,11 @@ public class EventServiceTests : IDisposable
             MaxParticipants = 10,
             CurrentParticipantCount = 0
         };
+
         _context.Events.Add(teamEvent);
         await _context.SaveChangesAsync();
 
-        var updateDto = new UpdateEventDto { Name = "   " }; // whitespace — should be skipped
+        var updateDto = new UpdateEventDto { Name = "   " };
 
         // Act
         var result = await _eventService.UpdateAsync(teamEvent.Id, updateDto);
@@ -420,13 +578,13 @@ public class EventServiceTests : IDisposable
             MaxParticipants = 10,
             CurrentParticipantCount = 0
         };
+
         _context.Events.Add(teamEvent);
         await _context.SaveChangesAsync();
 
         var updateDto = new UpdateEventDto
         {
             Name = "Updated Name"
-            // All other fields left null - should not change
         };
 
         // Act
@@ -452,6 +610,7 @@ public class EventServiceTests : IDisposable
             MaxParticipants = 10,
             CurrentParticipantCount = 3
         };
+
         _context.Events.Add(teamEvent);
         await _context.SaveChangesAsync();
 
@@ -477,6 +636,7 @@ public class EventServiceTests : IDisposable
             MaxParticipants = 10,
             CurrentParticipantCount = 0
         };
+
         _context.Events.Add(teamEvent);
         await _context.SaveChangesAsync();
 
