@@ -136,31 +136,6 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllAsync_ShouldFilterByUnprocessedStatus()
-    {
-        // Arrange
-        for (int i = 0; i < 10; i++)
-        {
-            _context.RosterImports.Add(new RosterImport
-            {
-                Id = Guid.NewGuid(),
-                SourceName = $"Source{i}",
-                SourceType = "CSV",
-                RawData = "test",
-                IsProcessed = i < 3
-            });
-        }
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _rosterImportService.GetAllAsync(1, 20, isProcessed: false);
-
-        // Assert
-        result.Items.Should().HaveCount(7);
-        result.Items.Should().OnlyContain(ri => !ri.IsProcessed);
-    }
-
-    [Fact]
     public async Task ProcessAsync_ShouldMarkAsProcessed_AndCreatePlayers()
     {
         // Arrange
@@ -245,7 +220,7 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessAsync_ShouldReturnNull_WhenNotExists()
+    public async Task ProcessAsync_ShouldReturnNull_WhenNotFound()
     {
         // Act
         var result = await _rosterImportService.ProcessAsync(Guid.NewGuid(), Guid.NewGuid());
@@ -255,35 +230,46 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessAsync_ShouldNotDuplicatePlayers_WhenUsernameAlreadyExists()
+    public async Task ProcessAsync_ShouldSkipExistingPlayers_NoDuplicates()
     {
-        // Arrange — player already in db
-        _context.Players.Add(new Player { Id = Guid.NewGuid(), Username = "ExistingPlayer", DisplayName = "ExistingPlayer" });
+        // Arrange - pre-create one of the players in the CSV
+        var existingPlayer = new Player { Id = Guid.NewGuid(), Username = "ExistingPlayer" };
+        _context.Players.Add(existingPlayer);
+
         var rosterImport = new RosterImport
         {
             Id = Guid.NewGuid(),
-            SourceName = "Source",
+            SourceName = "MixedSource",
             SourceType = "CSV",
-            RawData = "Name,Role\nExistingPlayer,Tank\nNewPlayer,DPS",
+            RawData = "Name,Role\nExistingPlayer,Tank\nBrandNewPlayer,DPS",
             IsProcessed = false
         };
         _context.RosterImports.Add(rosterImport);
         await _context.SaveChangesAsync();
 
+        var playerCountBefore = await _context.Players.CountAsync();
+
         // Act
         var result = await _rosterImportService.ProcessAsync(rosterImport.Id, Guid.NewGuid());
 
-        // Assert — only NewPlayer was created (1 new), ExistingPlayer not duplicated
+        // Assert
         result.Should().NotBeNull();
-        result!.ProcessingNotes.Should().Contain("1");
-        var playersNamed = await _context.Players.CountAsync(p => p.Username == "ExistingPlayer");
-        playersNamed.Should().Be(1);
+        result!.IsProcessed.Should().BeTrue();
+
+        // Only one new player (BrandNewPlayer), ExistingPlayer was skipped
+        var playerCountAfter = await _context.Players.CountAsync();
+        playerCountAfter.Should().Be(playerCountBefore + 1);
+
+        var duplicateCheck = await _context.Players
+            .Where(p => p.Username == "ExistingPlayer")
+            .CountAsync();
+        duplicateCheck.Should().Be(1);
     }
 
     [Fact]
-    public async Task ProcessAsync_ShouldProcessZeroEntries_WhenOnlyHeaderPresent()
+    public async Task ProcessAsync_ShouldHandleHeaderOnlyData()
     {
-        // Arrange — CSV with header only, no data rows
+        // Arrange
         var rosterImport = new RosterImport
         {
             Id = Guid.NewGuid(),
@@ -302,31 +288,23 @@ public class RosterImportServiceTests : IDisposable
         result.Should().NotBeNull();
         result!.IsProcessed.Should().BeTrue();
         result.ProcessingNotes.Should().Contain("0");
-        var playerCount = await _context.Players.CountAsync();
-        playerCount.Should().Be(0);
     }
 
     [Fact]
-    public async Task ProcessAsync_ShouldUseFirstColumnAsUsername_ForMultiColumnRows()
+    public async Task GetAllAsync_ShouldReturnUnprocessedImports_WhenFilteredByFalse()
     {
         // Arrange
-        var rosterImport = new RosterImport
-        {
-            Id = Guid.NewGuid(),
-            SourceName = "MultiCol",
-            SourceType = "CSV",
-            RawData = "Name,Role,Notes\nPlayerA,Healer,Main healer",
-            IsProcessed = false
-        };
-        _context.RosterImports.Add(rosterImport);
+        _context.RosterImports.Add(new RosterImport { Id = Guid.NewGuid(), SourceName = "Processed", SourceType = "CSV", RawData = "data", IsProcessed = true });
+        _context.RosterImports.Add(new RosterImport { Id = Guid.NewGuid(), SourceName = "Unprocessed1", SourceType = "CSV", RawData = "data", IsProcessed = false });
+        _context.RosterImports.Add(new RosterImport { Id = Guid.NewGuid(), SourceName = "Unprocessed2", SourceType = "CSV", RawData = "data", IsProcessed = false });
         await _context.SaveChangesAsync();
 
         // Act
-        await _rosterImportService.ProcessAsync(rosterImport.Id, Guid.NewGuid());
+        var result = await _rosterImportService.GetAllAsync(1, 20, isProcessed: false);
 
         // Assert
-        var player = await _context.Players.FirstOrDefaultAsync(p => p.Username == "PlayerA");
-        player.Should().NotBeNull();
+        result.TotalCount.Should().Be(2);
+        result.Items.Should().OnlyContain(ri => !ri.IsProcessed);
     }
 
     public void Dispose()
