@@ -8,7 +8,12 @@ TeamBuilder is currently under active development. Security fixes will target th
 
 Please do not open a public GitHub issue for security vulnerabilities.
 
-Report security concerns privately using GitHub private vulnerability reporting, or contact the maintainer directly.
+Report security concerns privately using GitHub's private vulnerability reporting form:
+https://github.com/OWNER/REPOSITORY/security/advisories/new
+
+If that form is unavailable, contact the maintainer directly at: security@example.com
+
+If you are unsure which route to use, use the private vulnerability reporting form first and fall back to the security email above.
 
 Include:
 
