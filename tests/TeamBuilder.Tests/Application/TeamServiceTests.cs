@@ -346,6 +346,59 @@ public class TeamServiceTests : IDisposable
         result.CurrentMemberCount.Should().Be(0);
     }
 
+    [Fact]
+    public async Task GetByIdAsync_ShouldIncludeOwnerUsername_WhenOwnerExists()
+    {
+        // Arrange
+        var owner = new Player { Id = Guid.NewGuid(), Username = "TeamOwner" };
+        _context.Players.Add(owner);
+
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Owned Team",
+            MaxMembers = 5,
+            Status = TeamStatus.Recruiting,
+            CurrentMemberCount = 0,
+            OwnerId = owner.Id,
+            Owner = owner
+        };
+        _context.Teams.Add(team);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.GetByIdAsync(team.Id);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.OwnerUsername.Should().Be("TeamOwner");
+        result.OwnerId.Should().Be(owner.Id);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ShouldNotUpdateName_WhenWhitespaceProvided()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Original Name",
+            MaxMembers = 5,
+            Status = TeamStatus.Recruiting,
+            CurrentMemberCount = 0
+        };
+        _context.Teams.Add(team);
+        await _context.SaveChangesAsync();
+
+        var updateDto = new UpdateTeamDto { Name = "   " }; // whitespace — should be skipped
+
+        // Act
+        var result = await _teamService.UpdateAsync(team.Id, updateDto);
+
+        // Assert
+        result!.Name.Should().Be("Original Name");
+    }
+
     public void Dispose()
     {
         _context.Dispose();
