@@ -11,6 +11,7 @@ Please do not open a public GitHub issue for security vulnerabilities.
 Report security concerns privately using GitHub private vulnerability reporting, or contact the maintainer directly.
 
 Include:
+
 - A clear description of the issue
 - Steps to reproduce
 - Affected files, endpoints, or configuration
