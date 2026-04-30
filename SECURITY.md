@@ -18,9 +18,9 @@ Please do not open a public GitHub issue for security vulnerabilities.
 Report security concerns privately using the repository's **Security** tab and submit a private vulnerability report. For guidance, see GitHub's documentation:
 https://docs.github.com/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability
 
-If private vulnerability reporting is unavailable, contact the maintainer directly at: security@example.com
+If private vulnerability reporting is unavailable, do not open a public issue containing vulnerability details. Wait until private reporting is available again or use another non-public maintainer contact channel only if one is explicitly documented by this project.
 
-If you are unsure which route to use, use private vulnerability reporting first and fall back to the security email above.
+If you are unsure which route to use, use private vulnerability reporting first.
 
 Include:
 
