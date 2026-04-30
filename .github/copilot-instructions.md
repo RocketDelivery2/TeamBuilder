@@ -1,8 +1,10 @@
 # TeamBuilder Copilot Instructions
 
-TeamBuilder is an API-first, frontend-agnostic .NET platform for building, hosting, joining, maintaining, and refilling teams.
+TeamBuilder is an API-first, frontend-agnostic .NET platform for building,
+hosting, joining, maintaining, and refilling teams.
 
-The ASP.NET Core Web API is the middle layer between any client-side frontend and the backend data platform.
+The ASP.NET Core Web API is the middle layer between any client-side
+frontend and the backend data platform.
 
 The backend direction is:
 
