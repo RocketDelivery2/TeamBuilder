@@ -286,6 +286,33 @@ public class PlayerServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateAsync_ShouldMapAllFields_WhenProvided()
+    {
+        // Arrange
+        var createDto = new CreatePlayerDto
+        {
+            Username = "FullPlayer",
+            Email = "full@example.com",
+            DisplayName = "Full Player",
+            Bio = "My bio",
+            Region = "EU",
+            AvatarUrl = "https://example.com/avatar.png"
+        };
+
+        // Act
+        var result = await _playerService.CreateAsync(createDto);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Username.Should().Be("FullPlayer");
+        result.Email.Should().Be("full@example.com");
+        result.DisplayName.Should().Be("Full Player");
+        result.Bio.Should().Be("My bio");
+        result.Region.Should().Be("EU");
+        result.AvatarUrl.Should().Be("https://example.com/avatar.png");
+    }
+
+    [Fact]
     public async Task DeleteAsync_ShouldDeletePlayer_Successfully()
     {
         // Arrange
