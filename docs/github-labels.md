@@ -4,11 +4,9 @@ This document describes the standardized label system for the TeamBuilder reposi
 
 ## Label Categories
 
-Labels are organized by category to support automatic PR labeling and consistent issue classification.
-
 ### Type Labels
 
-Used to categorize the nature of an issue or pull request:
+Type labels categorize issues and pull requests by their purpose:
 
 - **bug** - Something is not working
 - **enhancement** - New feature or request
@@ -20,18 +18,19 @@ Used to categorize the nature of an issue or pull request:
 
 ### Contributor Labels
 
-Used to identify issues suitable for contribution:
+Contributor labels help contributors find issues suitable for their expertise level:
 
-- **good first issue** - Good for newcomers
-- **help wanted** - Extra attention is needed
+- **good first issue** - Good for newcomers; ideal starting point for new contributors
+- **help wanted** - Extra attention is needed; contributions are welcome
 
 ### Area Labels
 
-Labels prefixed with `area:` identify which part of the system is affected. This enables:
-- **Automatic PR labeling** - PRs are labeled based on changed files via `.github/labeler.yml`
-- **Filtering and navigation** - Issues and PRs can be grouped by area
-- **Ownership clarity** - Clear ownership boundaries between components
-- **Focused discussions** - Targeted conversations within each domain
+Area labels use the `area:` prefix to indicate which part of the codebase is affected. This standardized prefix provides several benefits:
+
+- **Consistency**: All architectural layers and domains use the same naming convention
+- **Automation**: PR labelers can automatically apply area labels based on changed files
+- **Navigation**: Developers can quickly filter issues and PRs by area of interest
+- **Scope Clarity**: Area labels make it easy to understand the scope and impact of changes
 
 #### Core Architecture Areas
 
@@ -40,128 +39,111 @@ Labels prefixed with `area:` identify which part of the system is affected. This
 - **area:domain** - Changes related to domain models, rules, and entities (`src/TeamBuilder.Domain/**`)
 - **area:infrastructure** - Changes related to persistence, EF Core, and external services (`src/TeamBuilder.Infrastructure/**`)
 
-#### Database & Infrastructure
+#### Cross-Cutting Concerns
 
 - **area:database** - Azure SQL, EF Core migrations, schema, indexes, or persistence
-- **area:devops** - CI/CD, deployment planning, environments, or release process
+- **area:tests** - Changes related to unit, integration, or test infrastructure
+- **area:docs** - Documentation, README, guides, or discussion content
 - **area:github-actions** - GitHub Actions, workflows, Dependabot, or automation
 
-#### Testing & Documentation
-
-- **area:tests** - Changes related to unit, integration, or test infrastructure (`tests/**`)
-- **area:docs** - Documentation, README, guides, or discussion content
-
-#### Domain-Specific
+#### Domain Specific Areas
 
 - **area:frontend** - Frontend clients, UI examples, static web clients, mobile clients, or client integrations
 - **area:roster-language** - Common roster language, roster imports, roster schema, and interoperability
-
-#### Strategy & Direction
-
-- **area:architecture** - Architecture, solution structure, design patterns, or technical direction
 - **area:product** - Product vision, feature planning, user workflows, or TeamBuilder use cases
+
+#### Platform and Process Areas
+
+- **area:devops** - CI/CD, deployment planning, environments, or release process
+- **area:architecture** - Architecture, solution structure, design patterns, or technical direction
 - **area:community** - Discussions, contributor experience, community process, or open-source coordination
 
 ### Planning Labels
 
-Used for roadmap and milestone planning:
-
 - **roadmap** - Roadmap planning, milestones, and future direction
 
-## Automatic Labeling
+## Automatic Label Application
 
-The `.github/labeler.yml` configuration automatically applies `area:*` labels to pull requests based on the files they modify. This happens via the GitHub Actions `labeler` action on every PR.
+The `.github/labeler.yml` file defines rules that automatically apply area labels to pull requests based on which files were changed. This automation:
 
-### Label Mapping
+- Reduces manual label application work
+- Ensures consistent labeling across all PRs
+- Helps reviewers quickly understand the scope of changes
 
-The following file patterns are automatically matched:
+### Label Automation Rules
 
-| Label | File Pattern |
-|-------|--------------|
+| Area Label | File Patterns |
+|---|---|
 | area:api | `src/TeamBuilder.Api/**` |
 | area:application | `src/TeamBuilder.Application/**` |
 | area:domain | `src/TeamBuilder.Domain/**` |
 | area:infrastructure | `src/TeamBuilder.Infrastructure/**` |
-| area:database | `src/TeamBuilder.Infrastructure/**/Migrations/**` or `**/Persistence/**` |
+| area:database | `src/TeamBuilder.Infrastructure/**/Migrations/**`<br>`src/TeamBuilder.Infrastructure/**/Persistence/**` |
 | area:tests | `tests/**` |
 | area:docs | `docs/**`, `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `.github/copilot-instructions.md` |
 | area:github-actions | `.github/workflows/**`, `.github/dependabot.yml`, `.github/labeler.yml` |
 | area:devops | `.github/**`, `docs/deployment.md` |
 | area:frontend | `frontend/**`, `web/**`, `clients/**`, `samples/frontend/**` |
-| area:architecture | `docs/architecture/**` |
-| area:roster-language | `docs/roster-schema/**`, `docs/roster-imports/**`, `docs/common-roster-language/**` |
-| area:product | `docs/roadmap/**`, `docs/product/**`, `docs/use-cases/**` |
-| area:community | `docs/community/**`, `docs/contributing/**`, `CONTRIBUTING.md` |
+| area:architecture | `docs/architecture/**`, `docs/design/**` |
+| area:roster-language | `docs/roster/**`, `src/**/Roster/**` |
+| area:product | `docs/product/**`, `docs/roadmap/**` |
 
-## Managing Labels
+## Creating or Updating Labels
 
-### Creating or Updating Labels
-
-The repository includes a PowerShell script to create and update all labels with standardized descriptions and colors:
+Use the provided PowerShell script to create or update all labels:
 
 ```powershell
 .\scripts\create-github-labels.ps1
 ```
 
-**Requirements:**
-- GitHub CLI (`gh`) installed and authenticated
-- PowerShell Core or Windows PowerShell 5.1+
-- Repository write access
+Or target a different repository:
 
-**What it does:**
-- Creates missing labels
-- Updates descriptions and colors for existing labels
-- Maintains color consistency across related labels
-- Is safe to rerun
+```powershell
+.\scripts\create-github-labels.ps1 -Owner myorg -Repo myrepo
+```
 
-### Manual Label Management
+The script:
+- Creates missing labels with standardized descriptions and colors
+- Updates existing label descriptions and colors
+- Is idempotent and safe to rerun
+- Requires GitHub CLI (`gh`) to be installed
 
-To manually manage labels via the GitHub UI:
+### Prerequisites
 
-1. Go to the repository **Settings** → **Labels**
-2. Create new labels or edit existing ones
-3. Use the standardized names and descriptions from the lists above
+Install GitHub CLI: https://cli.github.com/
 
-### Migrating Old Labels
+### Running the Script
 
-If the repository has old label names (without the `area:` prefix), they should be:
+```bash
+# Make script executable (Linux/macOS)
+chmod +x ./scripts/create-github-labels.ps1
 
-1. **Renamed** to match the new standardized names, or
-2. **Deleted** if they are no longer needed
+# Run the script
+./scripts/create-github-labels.ps1
+```
 
-The GitHub UI allows you to rename labels in bulk or individually via Settings → Labels.
+## Migrating from Old Labels
+
+If your repository has old labels without the `area:` prefix (e.g., `architecture`, `community`, `frontend`, `product`, `roster-language`), follow these steps:
+
+1. Run the label creation script to create the new standardized labels
+2. Update existing issues and PRs to use the new area labels
+3. Delete the old labels through the GitHub UI:
+   - Go to Settings → Labels
+   - Click the ⋯ menu next to each old label
+   - Select "Delete" and confirm
+
+Alternatively, you can rename labels directly in the GitHub UI if you prefer to preserve issue history with the old label names.
 
 ## Best Practices
 
-### When Creating Issues
+- Apply **exactly one type label** to every issue and PR
+- Apply **area labels** to clarify which parts of the codebase are affected
+- Use **contributor labels** to encourage participation from newcomers
+- Use **planning labels** for roadmap and milestone discussions
+- Combine labels to tell a complete story (e.g., `bug` + `area:api` + `help wanted`)
 
-- Choose one or more `area:*` labels that match the affected component(s)
-- Add type labels (`bug`, `enhancement`, `documentation`, etc.)
-- Add contributor labels (`good first issue`, `help wanted`) if applicable
-- Avoid creating custom labels; use the standardized set
+## Further Reading
 
-### When Creating Pull Requests
-
-- Don't manually apply `area:*` labels; they are added automatically based on changed files
-- Type labels and contributor labels should be applied manually if relevant
-- If a PR touches multiple areas, all applicable area labels will be added automatically
-
-### Label Queries
-
-Filter issues and PRs by label in GitHub's issue list:
-
-```
-# Find all API-related issues
-is:open label:area:api
-
-# Find good first issues needing help
-is:open label:"good first issue" label:"help wanted"
-
-# Find all database work in current sprint
-is:open label:area:database milestone:"Sprint 5"
-```
-
-## Color Scheme
-
-All `area:*` labels use a consistent blue color scheme (`#0366d6`) to visually group them as a related set, making them easy to distinguish from type labels, contributor labels, and planning labels.
-
+- [GitHub Labels Documentation](https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels)
+- [Pull Request Labeling with GitHub Actions](https://github.com/actions/labeler)
