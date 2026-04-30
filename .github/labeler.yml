@@ -63,20 +63,19 @@ area:architecture:
   - changed-files:
       - any-glob-to-any-file:
           - docs/architecture/**
+          - docs/design/**
 
 area:roster-language:
   - changed-files:
       - any-glob-to-any-file:
-          - docs/roster-schema/**
-          - docs/roster-imports/**
-          - docs/common-roster-language/**
+          - docs/roster/**
+          - src/**/Roster/**
 
 area:product:
   - changed-files:
       - any-glob-to-any-file:
-          - docs/roadmap/**
           - docs/product/**
-          - docs/use-cases/**
+          - docs/roadmap/**
 
 area:community:
   - changed-files:
