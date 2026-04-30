@@ -18,6 +18,12 @@ area:infrastructure:
       - any-glob-to-any-file:
           - src/TeamBuilder.Infrastructure/**
 
+area:database:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/TeamBuilder.Infrastructure/**/Migrations/**
+          - src/TeamBuilder.Infrastructure/**/Persistence/**
+
 area:tests:
   - changed-files:
       - any-glob-to-any-file:
@@ -45,8 +51,36 @@ area:devops:
           - .github/**
           - docs/deployment.md
 
-area:database:
+area:frontend:
   - changed-files:
       - any-glob-to-any-file:
-          - src/TeamBuilder.Infrastructure/**/Migrations/**
-          - src/TeamBuilder.Infrastructure/**/Persistence/**
+          - frontend/**
+          - web/**
+          - clients/**
+          - samples/frontend/**
+
+area:architecture:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/architecture/**
+
+area:roster-language:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/roster-schema/**
+          - docs/roster-imports/**
+          - docs/common-roster-language/**
+
+area:product:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/roadmap/**
+          - docs/product/**
+          - docs/use-cases/**
+
+area:community:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/community/**
+          - docs/contributing/**
+          - CONTRIBUTING.md
