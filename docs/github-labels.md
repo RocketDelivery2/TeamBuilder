@@ -87,6 +87,7 @@ The `.github/labeler.yml` file defines rules that automatically apply area label
 | area:architecture | `docs/architecture/**`, `docs/design/**` |
 | area:roster-language | `docs/roster/**`, `src/**/Roster/**` |
 | area:product | `docs/product/**`, `docs/roadmap/**` |
+| area:community | `docs/community/**`, `docs/contributing/**`, `CONTRIBUTING.md` |
 
 ## Creating or Updating Labels
 
@@ -106,34 +107,46 @@ The script:
 - Creates missing labels with standardized descriptions and colors
 - Updates existing label descriptions and colors
 - Is idempotent and safe to rerun
-- Requires GitHub CLI (`gh`) to be installed
+- Uses `gh label view` for reliable existence detection (handles names with `:` correctly)
+- Requires GitHub CLI (`gh`) to be installed and authenticated
 
 ### Prerequisites
 
 Install GitHub CLI: https://cli.github.com/
 
+Authenticate before running:
+
+```powershell
+gh auth login
+```
+
 ### Running the Script
 
-```bash
-# Make script executable (Linux/macOS)
-chmod +x ./scripts/create-github-labels.ps1
-
-# Run the script
-./scripts/create-github-labels.ps1
+```powershell
+# From the repository root
+.\scripts\create-github-labels.ps1
 ```
+
+After the script completes, follow the **Migrating from Old Labels** section below to remove the superseded labels.
 
 ## Migrating from Old Labels
 
-If your repository has old labels without the `area:` prefix (e.g., `architecture`, `community`, `frontend`, `product`, `roster-language`), follow these steps:
+The following old labels exist in the repository and must be **manually renamed or deleted** in the GitHub UI after the standardized `area:` labels have been created by the script:
 
-1. Run the label creation script to create the new standardized labels
-2. Update existing issues and PRs to use the new area labels
-3. Delete the old labels through the GitHub UI:
-   - Go to Settings → Labels
-   - Click the ⋯ menu next to each old label
-   - Select "Delete" and confirm
+| Old label | Replaced by |
+|---|---|
+| `architecture` | `area:architecture` |
+| `community` | `area:community` |
+| `frontend` | `area:frontend` |
+| `product` | `area:product` |
+| `roster-language` | `area:roster-language` |
 
-Alternatively, you can rename labels directly in the GitHub UI if you prefer to preserve issue history with the old label names.
+Steps to remove old labels:
+
+1. Run `.\scripts\create-github-labels.ps1` to ensure all new labels exist.
+2. Open **Settings → Labels** in the GitHub repository.
+3. For each old label in the table above, click the **⋯** menu and select **Delete** (or **Edit** to rename it directly to the `area:` version, which preserves label history on existing issues).
+4. Confirm the deletion or rename.
 
 ## Best Practices
 
