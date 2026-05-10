@@ -8,9 +8,10 @@ middle layer between any client-side frontend and the backend data platform.
 
 - **Base path:** `api/v1`
 - **Format:** JSON (request and response)
-- **Authentication:** Not currently implemented. The `X-User-Id` header is used
-  as a provisional caller identity on write endpoints. See
-  [Known Limitations](#known-limitations).
+- **Authentication:** Not currently implemented. The `X-User-Id` header is
+  read by specific endpoints that need caller identity (such as creating a
+  team, submitting a join request, or processing a roster import). Some write
+  endpoints do not use it. See [Known Limitations](#known-limitations).
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
 - **Health endpoint:** `GET /health`
 
@@ -105,7 +106,7 @@ All list endpoints return a `PaginatedResult<T>` envelope:
 
 | Scenario                          | Status | Body                                    |
 |-----------------------------------|--------|-----------------------------------------|
-| Model validation failure          | `400`  | ASP.NET Core `ValidationProblemDetails` |
+| Model validation failure          | `400`  | `ModelState` errors serialized as `{ "FieldName": ["error"] }` |
 | Duplicate / conflict (service)    | `400`  | `{ "error": "<message>" }`              |
 | Resource not found                | `404`  | Empty body                              |
 | Already-processed resource        | `400`  | `{ "error": "<message>" }`              |
@@ -667,8 +668,9 @@ Deletes a roster import record.
 
 #### `GET /health`
 
-ASP.NET Core health check endpoint. Checks connectivity to the SQL Server
-database named `TeamBuilderDb`.
+ASP.NET Core health check endpoint. The check is registered under the name
+`TeamBuilderDb` and verifies database connectivity using the configured
+`TeamBuilderSql` connection string.
 
 **Response `200`:** Healthy.  
 **Response `503`:** Unhealthy (database unreachable).
