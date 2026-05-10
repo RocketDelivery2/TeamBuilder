@@ -420,6 +420,63 @@ public class JoinRequestServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessAsync_ShouldCancel_WithoutCreatingTeamMember()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test Team",
+            MaxMembers = 5,
+            CurrentMemberCount = 1
+        };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "CancelPlayer"
+        };
+
+        _context.Teams.Add(team);
+        _context.Players.Add(player);
+
+        var joinRequest = new JoinRequest
+        {
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Status = RequestStatus.Pending,
+            RequestedAtUtc = DateTime.UtcNow
+        };
+
+        _context.JoinRequests.Add(joinRequest);
+        await _context.SaveChangesAsync();
+
+        var processDto = new ProcessJoinRequestDto
+        {
+            Status = RequestStatus.Cancelled
+        };
+
+        // Act
+        var result = await _joinRequestService.ProcessAsync(
+            joinRequest.Id,
+            processDto,
+            Guid.NewGuid());
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Status.Should().Be(RequestStatus.Cancelled);
+
+        var teamMember = await _context.TeamMembers
+            .FirstOrDefaultAsync(tm => tm.TeamId == team.Id && tm.PlayerId == player.Id);
+
+        teamMember.Should().BeNull();
+
+        var updatedTeam = await _context.Teams.FindAsync(team.Id);
+        updatedTeam!.CurrentMemberCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task GetByIdAsync_ShouldReturnJoinRequest_WhenExists()
     {
         // Arrange
