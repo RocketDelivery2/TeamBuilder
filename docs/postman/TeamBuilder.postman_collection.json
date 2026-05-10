@@ -1,0 +1,496 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "TeamBuilder API",
+    "description": "TeamBuilder API v1 — import alongside TeamBuilder.local.postman_environment.json.\n\nUpdate {{baseUrl}} in the environment to match your local API port before use.\nReplace placeholder GUIDs with real IDs from your local database.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Players",
+      "item": [
+        {
+          "name": "Get Player by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/players/{{playerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "players", "{{playerId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Player by Username",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/players/username/striker99",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "players", "username", "striker99"]
+            }
+          }
+        },
+        {
+          "name": "Get All Players",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/players?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "players"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "region", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Player",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/players",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "players"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"striker99\",\n  \"email\": \"striker99@example.com\",\n  \"displayName\": \"Striker\",\n  \"bio\": \"Competitive FPS player\",\n  \"region\": \"NA\",\n  \"avatarUrl\": \"https://example.com/avatar.png\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Player",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/players/{{playerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "players", "{{playerId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new@example.com\",\n  \"displayName\": \"Striker Updated\",\n  \"bio\": \"Updated bio\",\n  \"region\": \"EU\",\n  \"avatarUrl\": \"https://example.com/new-avatar.png\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Player",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/players/{{playerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "players", "{{playerId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Teams",
+      "item": [
+        {
+          "name": "Get Team by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "teams", "{{teamId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get All Teams",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/teams?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "teams"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "category", "value": "", "disabled": true },
+                { "key": "region", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Team",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/teams",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "teams"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Alpha Squad\",\n  \"description\": \"Competitive FPS team\",\n  \"maxMembers\": 10,\n  \"region\": \"NA\",\n  \"category\": \"FPS\",\n  \"tags\": \"fps,competitive\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Team",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "teams", "{{teamId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Alpha Squad Revised\",\n  \"description\": \"Updated description\",\n  \"status\": \"Active\",\n  \"maxMembers\": 12,\n  \"region\": \"EU\",\n  \"category\": \"FPS\",\n  \"tags\": \"fps,competitive,ranked\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Team",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "teams", "{{teamId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Team Membership",
+      "item": [
+        {
+          "name": "Leave Team (Remove Member)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}/members/{{playerId}}/leave",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "teams", "{{teamId}}", "members", "{{playerId}}", "leave"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Join Requests",
+      "item": [
+        {
+          "name": "Get Join Request by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Join Requests by Team",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/joinrequests/teams/{{teamId}}?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "joinrequests", "teams", "{{teamId}}"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Join Requests by Player",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/joinrequests/players/{{playerId}}?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "joinrequests", "players", "{{playerId}}"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Join Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/joinrequests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "joinrequests"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"teamId\": \"{{teamId}}\",\n  \"message\": \"I'd love to join!\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Process Join Request (Approve)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}", "process"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Approved\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Process Join Request (Reject)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}", "process"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Rejected\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Process Join Request (Cancel)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}", "process"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Cancelled\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "Get Event by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/events/{{eventId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "events", "{{eventId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get All Events",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/events?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "events"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "category", "value": "", "disabled": true },
+                { "key": "region", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "events"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Spring Championship\",\n  \"description\": \"Annual spring tournament\",\n  \"eventDateUtc\": \"2025-04-01T18:00:00Z\",\n  \"category\": \"FPS\",\n  \"tags\": \"fps,tournament\",\n  \"location\": \"Online\",\n  \"region\": \"NA\",\n  \"maxParticipants\": 64,\n  \"teamId\": \"{{teamId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Event",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/events/{{eventId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "events", "{{eventId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Spring Championship 2025\",\n  \"status\": \"Open\",\n  \"maxParticipants\": 128\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Event",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/events/{{eventId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "events", "{{eventId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Roster Imports",
+      "item": [
+        {
+          "name": "Get Roster Import by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "rosterimports", "{{rosterImportId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get All Roster Imports",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rosterimports?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "rosterimports"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "isProcessed", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Roster Import",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rosterimports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "rosterimports"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sourceName\": \"TeamSpreadsheet\",\n  \"sourceType\": \"CSV\",\n  \"rawData\": \"Name,Role\\nstriker99,Tank\\ngoalie01,Support\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Process Roster Import",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "rosterimports", "{{rosterImportId}}", "process"]
+            }
+          }
+        },
+        {
+          "name": "Delete Roster Import",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "rosterimports", "{{rosterImportId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
