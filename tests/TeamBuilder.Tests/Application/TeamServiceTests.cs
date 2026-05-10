@@ -521,6 +521,37 @@ public class TeamServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_ShouldClearDescription_WhenEmptyStringProvided()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Team With Description",
+            Description = "Original description",
+            MaxMembers = 5,
+            Status = TeamStatus.Recruiting,
+            CurrentMemberCount = 0
+        };
+
+        _context.Teams.Add(team);
+        await _context.SaveChangesAsync();
+
+        // Description is not null (empty string), so the service should overwrite it
+        var updateDto = new UpdateTeamDto
+        {
+            Description = ""
+        };
+
+        // Act
+        var result = await _teamService.UpdateAsync(team.Id, updateDto);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Description.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task DeleteAsync_ShouldDeleteTeam_Successfully()
     {
         // Arrange

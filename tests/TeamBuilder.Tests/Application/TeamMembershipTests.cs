@@ -189,6 +189,53 @@ public class TeamMembershipTests : IDisposable
     }
 
     [Fact]
+    public async Task RemoveMemberAsync_ShouldNotChangeStatus_WhenTeamIsActive()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Active Team",
+            MaxMembers = 5,
+            CurrentMemberCount = 3,
+            Status = TeamStatus.Active,
+            RowVersion = []
+        };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "LeavingPlayer",
+            RowVersion = []
+        };
+
+        _context.Teams.Add(team);
+        _context.Players.Add(player);
+
+        _context.TeamMembers.Add(new TeamMember
+        {
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Role = TeamRole.Member,
+            JoinedAtUtc = DateTime.UtcNow.AddDays(-5),
+            IsActive = true
+        });
+
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _teamService.RemoveMemberAsync(team.Id, player.Id);
+
+        // Assert
+        result.Should().BeTrue();
+
+        var updatedTeam = await _context.Teams.FindAsync(team.Id);
+        updatedTeam!.CurrentMemberCount.Should().Be(2);
+        updatedTeam.Status.Should().Be(TeamStatus.Active);
+    }
+
+    [Fact]
     public async Task RefillScenario_JoinAfterLeave_ShouldWork()
     {
         // Arrange
