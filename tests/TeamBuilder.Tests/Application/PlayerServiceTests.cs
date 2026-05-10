@@ -388,6 +388,52 @@ public class PlayerServiceTests : IDisposable
         result.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task GetAllAsync_ShouldTreatPageLessThanOne_AsPageOne()
+    {
+        // Arrange
+        for (var i = 0; i < 3; i++)
+        {
+            _context.Players.Add(new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = $"ClampPlayer{i}"
+            });
+        }
+
+        await _context.SaveChangesAsync();
+
+        // Act — page 0 should be clamped to 1
+        var result = await _playerService.GetAllAsync(page: 0, pageSize: 10);
+
+        // Assert
+        result.Page.Should().Be(1);
+        result.Items.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldClampPageSize_WhenPageSizeExceedsMaximum()
+    {
+        // Arrange
+        for (var i = 0; i < 5; i++)
+        {
+            _context.Players.Add(new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = $"MaxPagePlayer{i}"
+            });
+        }
+
+        await _context.SaveChangesAsync();
+
+        // Act — pageSize 200 should be clamped to 100
+        var result = await _playerService.GetAllAsync(page: 1, pageSize: 200);
+
+        // Assert
+        result.PageSize.Should().Be(100);
+        result.Items.Should().HaveCount(5);
+    }
+
     public void Dispose()
     {
         _context.Dispose();
