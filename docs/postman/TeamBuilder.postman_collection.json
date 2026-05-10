@@ -13,22 +13,14 @@
           "name": "Get Player by ID",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/players/{{playerId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "players", "{{playerId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/players/{{playerId}}"
           }
         },
         {
           "name": "Get Player by Username",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/players/username/striker99",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "players", "username", "striker99"]
-            }
+            "url": "{{baseUrl}}/api/v1/players/username/striker99"
           }
         },
         {
@@ -37,8 +29,6 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/v1/players?page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "players"],
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "pageSize", "value": "20" },
@@ -54,11 +44,7 @@
             "header": [
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/players",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "players"]
-            },
+            "url": "{{baseUrl}}/api/v1/players",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"striker99\",\n  \"email\": \"striker99@example.com\",\n  \"displayName\": \"Striker\",\n  \"bio\": \"Competitive FPS player\",\n  \"region\": \"NA\",\n  \"avatarUrl\": \"https://example.com/avatar.png\"\n}"
@@ -72,11 +58,7 @@
             "header": [
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/players/{{playerId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "players", "{{playerId}}"]
-            },
+            "url": "{{baseUrl}}/api/v1/players/{{playerId}}",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"new@example.com\",\n  \"displayName\": \"Striker Updated\",\n  \"bio\": \"Updated bio\",\n  \"region\": \"EU\",\n  \"avatarUrl\": \"https://example.com/new-avatar.png\"\n}"
@@ -87,11 +69,7 @@
           "name": "Delete Player",
           "request": {
             "method": "DELETE",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/players/{{playerId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "players", "{{playerId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/players/{{playerId}}"
           }
         }
       ]
@@ -103,11 +81,7 @@
           "name": "Get Team by ID",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "teams", "{{teamId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/teams/{{teamId}}"
           }
         },
         {
@@ -116,8 +90,6 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/v1/teams?page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "teams"],
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "pageSize", "value": "20" },
@@ -136,11 +108,7 @@
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/teams",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "teams"]
-            },
+            "url": "{{baseUrl}}/api/v1/teams",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Alpha Squad\",\n  \"description\": \"Competitive FPS team\",\n  \"maxMembers\": 10,\n  \"region\": \"NA\",\n  \"category\": \"FPS\",\n  \"tags\": \"fps,competitive\"\n}"
@@ -154,11 +122,7 @@
             "header": [
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "teams", "{{teamId}}"]
-            },
+            "url": "{{baseUrl}}/api/v1/teams/{{teamId}}",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Alpha Squad Revised\",\n  \"description\": \"Updated description\",\n  \"status\": \"Active\",\n  \"maxMembers\": 12,\n  \"region\": \"EU\",\n  \"category\": \"FPS\",\n  \"tags\": \"fps,competitive,ranked\"\n}"
@@ -169,11 +133,7 @@
           "name": "Delete Team",
           "request": {
             "method": "DELETE",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "teams", "{{teamId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/teams/{{teamId}}"
           }
         }
       ]
@@ -185,11 +145,7 @@
           "name": "Leave Team (Remove Member)",
           "request": {
             "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/teams/{{teamId}}/members/{{playerId}}/leave",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "teams", "{{teamId}}", "members", "{{playerId}}", "leave"]
-            }
+            "url": "{{baseUrl}}/api/v1/teams/{{teamId}}/members/{{playerId}}/leave"
           }
         }
       ]
@@ -201,11 +157,7 @@
           "name": "Get Join Request by ID",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}"
           }
         },
         {
@@ -214,8 +166,6 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/v1/joinrequests/teams/{{teamId}}?page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "joinrequests", "teams", "{{teamId}}"],
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "pageSize", "value": "20" },
@@ -230,8 +180,6 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/v1/joinrequests/players/{{playerId}}?page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "joinrequests", "players", "{{playerId}}"],
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "pageSize", "value": "20" },
@@ -248,11 +196,7 @@
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/joinrequests",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "joinrequests"]
-            },
+            "url": "{{baseUrl}}/api/v1/joinrequests",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"teamId\": \"{{teamId}}\",\n  \"message\": \"I'd love to join!\"\n}"
@@ -267,11 +211,7 @@
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}", "process"]
-            },
+            "url": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"Approved\"\n}"
@@ -286,11 +226,7 @@
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}", "process"]
-            },
+            "url": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"Rejected\"\n}"
@@ -305,11 +241,7 @@
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "joinrequests", "{{joinRequestId}}", "process"]
-            },
+            "url": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"Cancelled\"\n}"
@@ -325,11 +257,7 @@
           "name": "Get Event by ID",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/events/{{eventId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "events", "{{eventId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/events/{{eventId}}"
           }
         },
         {
@@ -338,8 +266,6 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/v1/events?page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "events"],
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "pageSize", "value": "20" },
@@ -358,11 +284,7 @@
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/events",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "events"]
-            },
+            "url": "{{baseUrl}}/api/v1/events",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Spring Championship\",\n  \"description\": \"Annual spring tournament\",\n  \"eventDateUtc\": \"2025-04-01T18:00:00Z\",\n  \"category\": \"FPS\",\n  \"tags\": \"fps,tournament\",\n  \"location\": \"Online\",\n  \"region\": \"NA\",\n  \"maxParticipants\": 64,\n  \"teamId\": \"{{teamId}}\"\n}"
@@ -376,11 +298,7 @@
             "header": [
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/events/{{eventId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "events", "{{eventId}}"]
-            },
+            "url": "{{baseUrl}}/api/v1/events/{{eventId}}",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Spring Championship 2025\",\n  \"status\": \"Open\",\n  \"maxParticipants\": 128\n}"
@@ -391,11 +309,7 @@
           "name": "Delete Event",
           "request": {
             "method": "DELETE",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/events/{{eventId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "events", "{{eventId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/events/{{eventId}}"
           }
         }
       ]
@@ -407,11 +321,7 @@
           "name": "Get Roster Import by ID",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "rosterimports", "{{rosterImportId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}"
           }
         },
         {
@@ -420,8 +330,6 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/v1/rosterimports?page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "rosterimports"],
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "pageSize", "value": "20" },
@@ -438,11 +346,7 @@
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/rosterimports",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "rosterimports"]
-            },
+            "url": "{{baseUrl}}/api/v1/rosterimports",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"sourceName\": \"TeamSpreadsheet\",\n  \"sourceType\": \"CSV\",\n  \"rawData\": \"Name,Role\\nstriker99,Tank\\ngoalie01,Support\"\n}"
@@ -456,22 +360,14 @@
             "header": [
               { "key": "X-User-Id", "value": "{{playerId}}" }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "rosterimports", "{{rosterImportId}}", "process"]
-            }
+            "url": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}/process"
           }
         },
         {
           "name": "Delete Roster Import",
           "request": {
             "method": "DELETE",
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "rosterimports", "{{rosterImportId}}"]
-            }
+            "url": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}"
           }
         }
       ]
@@ -483,11 +379,7 @@
           "name": "Health Check",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/health",
-              "host": ["{{baseUrl}}"],
-              "path": ["health"]
-            }
+            "url": "{{baseUrl}}/health"
           }
         }
       ]
