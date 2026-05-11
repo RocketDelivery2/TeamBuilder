@@ -196,6 +196,59 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // ── PUT /api/v1/teams/{id} ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task Update_WhenTeamExists_Returns200WithUpdatedFields()
+    {
+        // Arrange
+        var team = await SeedTeamAsync($"Upd-{Guid.NewGuid():N}");
+        var dto = new UpdateTeamDto
+        {
+            Name = "Renamed Team",
+            Description = "New description",
+            Region = "EU"
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/v1/teams/{team.Id}", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = await response.Content.ReadFromJsonAsync<TeamDto>();
+        updated!.Id.Should().Be(team.Id);
+        updated.Name.Should().Be("Renamed Team");
+        updated.Description.Should().Be("New description");
+        updated.Region.Should().Be("EU");
+    }
+
+    [Fact]
+    public async Task Update_WhenTeamDoesNotExist_Returns404()
+    {
+        // Arrange
+        var dto = new UpdateTeamDto { Name = "Ghost Team" };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/v1/teams/{Guid.NewGuid()}", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Update_WithInvalidPayload_Returns400()
+    {
+        // Arrange — MaxMembers = 0 violates [Range(1, 1000)]
+        var team = await SeedTeamAsync($"InvUpd-{Guid.NewGuid():N}");
+        var dto = new UpdateTeamDto { MaxMembers = 0 };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/v1/teams/{team.Id}", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     // ── POST /api/v1/teams/{teamId}/members/{playerId}/leave ─────────────────
 
     [Fact]
