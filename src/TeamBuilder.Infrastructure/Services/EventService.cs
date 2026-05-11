@@ -73,7 +73,7 @@ public class EventService : IEventService
             Id = Guid.NewGuid(),
             Name = createEventDto.Name,
             Description = createEventDto.Description,
-            EventDateUtc = createEventDto.EventDateUtc,
+            EventDateUtc = createEventDto.EventDateUtc!.Value,
             Category = createEventDto.Category,
             Tags = createEventDto.Tags,
             Location = createEventDto.Location,

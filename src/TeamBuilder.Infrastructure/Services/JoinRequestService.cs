@@ -94,7 +94,7 @@ public class JoinRequestService : IJoinRequestService
     public async Task<JoinRequestDto> CreateAsync(CreateJoinRequestDto createJoinRequestDto, Guid playerId, CancellationToken cancellationToken = default)
     {
         var existingRequest = await _context.JoinRequests
-            .FirstOrDefaultAsync(jr => jr.TeamId == createJoinRequestDto.TeamId && 
+            .FirstOrDefaultAsync(jr => jr.TeamId == createJoinRequestDto.TeamId!.Value && 
                                       jr.PlayerId == playerId && 
                                       jr.Status == RequestStatus.Pending, cancellationToken);
 
@@ -104,7 +104,7 @@ public class JoinRequestService : IJoinRequestService
         var joinRequest = new JoinRequest
         {
             Id = Guid.NewGuid(),
-            TeamId = createJoinRequestDto.TeamId,
+            TeamId = createJoinRequestDto.TeamId!.Value,
             PlayerId = playerId,
             Message = createJoinRequestDto.Message,
             Status = RequestStatus.Pending,
