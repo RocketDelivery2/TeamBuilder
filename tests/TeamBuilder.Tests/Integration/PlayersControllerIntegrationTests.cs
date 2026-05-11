@@ -159,6 +159,59 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // ── PUT /api/v1/players/{id} ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task Update_WhenPlayerExists_Returns200WithUpdatedFields()
+    {
+        // Arrange
+        var player = await SeedPlayerAsync($"upd-{Guid.NewGuid():N}");
+        var dto = new UpdatePlayerDto
+        {
+            DisplayName = "Updated Name",
+            Bio = "Updated bio",
+            Region = "EU"
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/v1/players/{player.Id}", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = await response.Content.ReadFromJsonAsync<PlayerDto>();
+        updated!.Id.Should().Be(player.Id);
+        updated.DisplayName.Should().Be("Updated Name");
+        updated.Bio.Should().Be("Updated bio");
+        updated.Region.Should().Be("EU");
+    }
+
+    [Fact]
+    public async Task Update_WhenPlayerDoesNotExist_Returns404()
+    {
+        // Arrange
+        var dto = new UpdatePlayerDto { DisplayName = "Ghost" };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/v1/players/{Guid.NewGuid()}", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Update_WithInvalidPayload_Returns400()
+    {
+        // Arrange — Email violates [EmailAddress]
+        var player = await SeedPlayerAsync($"inv-upd-{Guid.NewGuid():N}");
+        var dto = new UpdatePlayerDto { Email = "not-an-email" };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/v1/players/{player.Id}", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     // ── DELETE /api/v1/players/{id} ──────────────────────────────────────────
 
     [Fact]
