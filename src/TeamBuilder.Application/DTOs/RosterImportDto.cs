@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace TeamBuilder.Application.DTOs;
 
 public class RosterImportDto
@@ -15,7 +17,15 @@ public class RosterImportDto
 
 public class CreateRosterImportDto
 {
+    [Required]
+    [StringLength(200, MinimumLength = 1)]
     public string SourceName { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(100, MinimumLength = 1)]
     public string SourceType { get; set; } = string.Empty;
+
+    [Required]
+    [MinLength(1)]
     public string RawData { get; set; } = string.Empty;
 }

@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace TeamBuilder.Application.DTOs;
 
 public class PlayerDto
@@ -15,19 +17,42 @@ public class PlayerDto
 
 public class CreatePlayerDto
 {
+    [Required]
+    [StringLength(100, MinimumLength = 1)]
     public string Username { get; set; } = string.Empty;
+
+    [EmailAddress]
+    [StringLength(256)]
     public string? Email { get; set; }
+
+    [StringLength(200)]
     public string? DisplayName { get; set; }
+
+    [StringLength(1000)]
     public string? Bio { get; set; }
+
+    [StringLength(100)]
     public string? Region { get; set; }
+
+    [StringLength(500)]
     public string? AvatarUrl { get; set; }
 }
 
 public class UpdatePlayerDto
 {
+    [EmailAddress]
+    [StringLength(256)]
     public string? Email { get; set; }
+
+    [StringLength(200)]
     public string? DisplayName { get; set; }
+
+    [StringLength(1000)]
     public string? Bio { get; set; }
+
+    [StringLength(100)]
     public string? Region { get; set; }
+
+    [StringLength(500)]
     public string? AvatarUrl { get; set; }
 }
