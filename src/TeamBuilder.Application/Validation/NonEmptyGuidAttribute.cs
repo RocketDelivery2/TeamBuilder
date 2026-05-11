@@ -18,9 +18,9 @@ public sealed class NonEmptyGuidAttribute : ValidationAttribute
     {
         return value switch
         {
-            null => true, // null handled by [Required]; let it pass here
+            null => true,  // null is handled by [Required]; pass here so errors aren't duplicated
             Guid g => g != Guid.Empty,
-            _ => true
+            _ => false     // unsupported type: fail so accidental misuse is caught immediately
         };
     }
 }
