@@ -50,6 +50,7 @@ public class UpdateTeamDto
     [StringLength(2000)]
     public string? Description { get; set; }
 
+    [EnumDataType(typeof(TeamStatus))]
     public TeamStatus? Status { get; set; }
 
     [Range(1, 1000)]
