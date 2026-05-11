@@ -93,9 +93,12 @@ public class JoinRequestService : IJoinRequestService
 
     public async Task<JoinRequestDto> CreateAsync(CreateJoinRequestDto createJoinRequestDto, Guid playerId, CancellationToken cancellationToken = default)
     {
+        if (createJoinRequestDto.TeamId is not { } teamId || teamId == Guid.Empty)
+            throw new ArgumentException("TeamId is required and must not be an empty GUID.", nameof(createJoinRequestDto));
+
         var existingRequest = await _context.JoinRequests
-            .FirstOrDefaultAsync(jr => jr.TeamId == createJoinRequestDto.TeamId!.Value && 
-                                      jr.PlayerId == playerId && 
+            .FirstOrDefaultAsync(jr => jr.TeamId == teamId &&
+                                      jr.PlayerId == playerId &&
                                       jr.Status == RequestStatus.Pending, cancellationToken);
 
         if (existingRequest != null)
@@ -104,7 +107,7 @@ public class JoinRequestService : IJoinRequestService
         var joinRequest = new JoinRequest
         {
             Id = Guid.NewGuid(),
-            TeamId = createJoinRequestDto.TeamId!.Value,
+            TeamId = teamId,
             PlayerId = playerId,
             Message = createJoinRequestDto.Message,
             Status = RequestStatus.Pending,
