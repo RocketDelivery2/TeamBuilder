@@ -781,6 +781,34 @@ public class JoinRequestServiceTests : IDisposable
         result.Items.Should().OnlyContain(jr => jr.TeamId == team.Id);
     }
 
+    [Fact]
+    public async Task CreateAsync_ShouldThrowArgumentException_WhenTeamIdIsNull()
+    {
+        // Arrange
+        var dto = new CreateJoinRequestDto { TeamId = null };
+
+        // Act
+        var act = async () => await _joinRequestService.CreateAsync(dto, Guid.NewGuid());
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("createJoinRequestDto");
+    }
+
+    [Fact]
+    public async Task CreateAsync_ShouldThrowArgumentException_WhenTeamIdIsEmpty()
+    {
+        // Arrange
+        var dto = new CreateJoinRequestDto { TeamId = Guid.Empty };
+
+        // Act
+        var act = async () => await _joinRequestService.CreateAsync(dto, Guid.NewGuid());
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("createJoinRequestDto");
+    }
+
     public void Dispose()
     {
         _context.Dispose();
