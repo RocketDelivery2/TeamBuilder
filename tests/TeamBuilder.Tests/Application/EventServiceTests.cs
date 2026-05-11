@@ -659,6 +659,24 @@ public class EventServiceTests : IDisposable
         result.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task CreateAsync_ShouldThrowArgumentException_WhenEventDateUtcIsNull()
+    {
+        // Arrange
+        var dto = new CreateEventDto
+        {
+            Name = "Test Event",
+            EventDateUtc = null
+        };
+
+        // Act
+        var act = async () => await _eventService.CreateAsync(dto, Guid.NewGuid());
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("createEventDto");
+    }
+
     public void Dispose()
     {
         _context.Dispose();
