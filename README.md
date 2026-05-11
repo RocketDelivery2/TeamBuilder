@@ -14,6 +14,14 @@ Together, let's put the **Capital T** in **Team**.
 
 ---
 
+## Project Media
+
+![TeamBuilder hero image](docs/media/teambuilder-hero.png)
+
+*TeamBuilder concept and demo media. Canonical repository: [https://github.com/RocketDelivery2/TeamBuilder](https://github.com/RocketDelivery2/TeamBuilder)*
+
+---
+
 ## Overview
 
 A modern, API-first platform for building, hosting, and managing teams and events. TeamBuilder provides a clean RESTful API that can serve any frontend framework, mobile app, desktop application, or third-party integration.
