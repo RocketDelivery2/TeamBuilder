@@ -68,12 +68,15 @@ public class EventService : IEventService
 
     public async Task<EventDto> CreateAsync(CreateEventDto createEventDto, Guid hostId, CancellationToken cancellationToken = default)
     {
+        if (createEventDto.EventDateUtc is not { } eventDate)
+            throw new ArgumentException("EventDateUtc is required.", nameof(createEventDto));
+
         var teamEvent = new TeamEvent
         {
             Id = Guid.NewGuid(),
             Name = createEventDto.Name,
             Description = createEventDto.Description,
-            EventDateUtc = createEventDto.EventDateUtc!.Value,
+            EventDateUtc = eventDate,
             Category = createEventDto.Category,
             Tags = createEventDto.Tags,
             Location = createEventDto.Location,
