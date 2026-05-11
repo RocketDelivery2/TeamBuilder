@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using TeamBuilder.Domain.Enums;
 
 namespace TeamBuilder.Application.DTOs;
@@ -17,11 +18,15 @@ public class JoinRequestDto
 
 public class CreateJoinRequestDto
 {
+    [Required]
     public Guid TeamId { get; set; }
+
+    [StringLength(1000)]
     public string? Message { get; set; }
 }
 
 public class ProcessJoinRequestDto
 {
+    [Required]
     public RequestStatus Status { get; set; }
 }
