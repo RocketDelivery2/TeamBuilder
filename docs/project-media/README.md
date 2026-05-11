@@ -6,8 +6,8 @@ This directory contains concept and demo media for the TeamBuilder project.
 
 | File | Description |
 |---|---|
-| `teambuilder-hero.png` | Primary hero image used in the project README for visual preview |
-| `teambuilder-hero.jpeg` | JPEG copy of the hero image for use in contexts where PNG is not preferred |
+| `teambuilder-canonical-preview.png` | Primary hero image used in the project README for visual preview |
+| `teambuilder-canonical-preview.jpg` | JPEG copy of the hero image for use in contexts where PNG is not preferred |
 
 ## Usage
 
@@ -17,3 +17,4 @@ deployment pipeline.
 
 The canonical repository for TeamBuilder is:
 [https://github.com/RocketDelivery2/TeamBuilder](https://github.com/RocketDelivery2/TeamBuilder)
+
