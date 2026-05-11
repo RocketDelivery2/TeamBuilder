@@ -34,7 +34,7 @@ public class CreateEventDto
     public string? Description { get; set; }
 
     [Required]
-    public DateTime EventDateUtc { get; set; }
+    public DateTime? EventDateUtc { get; set; }
 
     [StringLength(100)]
     public string? Category { get; set; }
@@ -64,6 +64,7 @@ public class UpdateEventDto
 
     public DateTime? EventDateUtc { get; set; }
 
+    [EnumDataType(typeof(EventStatus))]
     public EventStatus? Status { get; set; }
 
     [StringLength(100)]
