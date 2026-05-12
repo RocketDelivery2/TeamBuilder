@@ -9,11 +9,13 @@ namespace TeamBuilder.Api.Controllers;
 public class RosterImportsController : ControllerBase
 {
     private readonly IRosterImportService _rosterImportService;
+    private readonly ICurrentUserContext _currentUser;
     private readonly ILogger<RosterImportsController> _logger;
 
-    public RosterImportsController(IRosterImportService rosterImportService, ILogger<RosterImportsController> logger)
+    public RosterImportsController(IRosterImportService rosterImportService, ICurrentUserContext currentUser, ILogger<RosterImportsController> logger)
     {
         _rosterImportService = rosterImportService;
+        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -52,15 +54,12 @@ public class RosterImportsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<RosterImportDto>> Create(
         [FromBody] CreateRosterImportDto createRosterImportDto,
-        [FromHeader(Name = "X-User-Id")] Guid? userId = null,
         CancellationToken cancellationToken = default)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var importedByUserId = userId ?? Guid.Empty;
-
-        var rosterImport = await _rosterImportService.CreateAsync(createRosterImportDto, importedByUserId, cancellationToken);
+        var rosterImport = await _rosterImportService.CreateAsync(createRosterImportDto, _currentUser.UserId, cancellationToken);
         var safeSourceName = (rosterImport.SourceName ?? string.Empty)
             .Replace("\r", string.Empty)
             .Replace("\n", string.Empty);
@@ -74,12 +73,9 @@ public class RosterImportsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<RosterImportDto>> Process(
         Guid id,
-        [FromHeader(Name = "X-User-Id")] Guid? userId = null,
         CancellationToken cancellationToken = default)
     {
-        var processedByUserId = userId ?? Guid.Empty;
-
-        var rosterImport = await _rosterImportService.ProcessAsync(id, processedByUserId, cancellationToken);
+        var rosterImport = await _rosterImportService.ProcessAsync(id, _currentUser.UserId, cancellationToken);
         if (rosterImport == null)
         {
             _logger.LogInformation("Roster import with ID {RosterImportId} not found for processing", id);
