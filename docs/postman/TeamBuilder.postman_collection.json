@@ -204,6 +204,21 @@
           }
         },
         {
+          "name": "Create Join Request (Duplicate — expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-User-Id", "value": "{{playerId}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/joinrequests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"teamId\": \"{{teamId}}\",\n  \"message\": \"I'd love to join!\"\n}"
+            }
+          }
+        },
+        {
           "name": "Process Join Request (Approve)",
           "request": {
             "method": "PUT",

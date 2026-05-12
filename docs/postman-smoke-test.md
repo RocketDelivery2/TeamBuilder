@@ -118,11 +118,12 @@ Run requests in this order. Each step captures an ID needed by the next.
 | 6 | `GET /api/v1/teams` | Teams | Verify the team appears in the list. |
 | 7 | `GET /api/v1/teams/{{teamId}}` | Teams | Verify `ownerUsername` is populated. |
 | 8 | `POST /api/v1/joinrequests` | Join Requests | Set `X-User-Id` to `{{playerId}}`. Copy `id` into `joinRequestId`. |
-| 9 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Set `X-User-Id`. Use body `{"status":"Approved"}`. Expect `200`. |
-| 10 | `POST /api/v1/events` | Events | Set `X-User-Id` to `{{playerId}}`. Set `teamId` in the body to `{{teamId}}`. Copy `id` into `eventId`. |
-| 11 | `GET /api/v1/events` | Events | Verify the event appears in the list. |
-| 12 | `POST /api/v1/rosterimports` | Roster Imports | Set `X-User-Id`. Copy `id` into `rosterImportId`. |
-| 13 | `GET /api/v1/rosterimports` | Roster Imports | Verify the import record appears. |
+| 9 | `POST /api/v1/joinrequests` (duplicate) | Join Requests | Repeat request 8 with the same `X-User-Id` and `teamId`. Expect `409 Conflict` with `application/problem+json`. Verify `status: 409` and a `detail` message in the response body. |
+| 10 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Set `X-User-Id`. Use body `{"status":"Approved"}`. Expect `200`. |
+| 11 | `POST /api/v1/events` | Events | Set `X-User-Id` to `{{playerId}}`. Set `teamId` in the body to `{{teamId}}`. Copy `id` into `eventId`. |
+| 12 | `GET /api/v1/events` | Events | Verify the event appears in the list. |
+| 13 | `POST /api/v1/rosterimports` | Roster Imports | Set `X-User-Id`. Copy `id` into `rosterImportId`. |
+| 14 | `GET /api/v1/rosterimports` | Roster Imports | Verify the import record appears. |
 
 ### Copying IDs into Postman environment variables
 
@@ -137,18 +138,23 @@ After each `POST` that returns a created resource:
 
 ## Expected status codes
 
+All error responses use `Content-Type: application/problem+json` and follow
+the ProblemDetails envelope. See [Error Responses](api.md#error-responses) in
+`docs/api.md` for full field descriptions and example JSON bodies.
+
 | Scenario | Expected |
 |---|---|
 | `GET /health` — database reachable | `200 Healthy` |
 | `GET /health` — database not reachable | `503 Unhealthy` |
 | `POST` — valid payload | `201 Created` with `Location` header |
-| `POST` — duplicate (e.g. same username) | `400 Bad Request` with `{ "error": "..." }` |
+| `POST` — duplicate pending join request | `409 Conflict` — `application/problem+json` with `detail` |
+| `POST` — invalid/missing required field | `400 Bad Request` — `application/problem+json` with `errors` dictionary |
 | `GET /{id}` — resource exists | `200 OK` |
-| `GET /{id}` — resource not found | `404 Not Found` |
+| `GET /{id}` — resource not found | `404 Not Found` — `application/problem+json` with `detail` |
 | `PUT /{id}/process` — valid state transition | `200 OK` |
-| `PUT /{id}/process` — already processed | `400 Bad Request` |
+| `PUT /{id}/process` — already processed | `409 Conflict` — `application/problem+json` with `detail` |
 | `DELETE /{id}` — resource exists | `204 No Content` |
-| `DELETE /{id}` — resource not found | `404 Not Found` |
+| `DELETE /{id}` — resource not found | `404 Not Found` — `application/problem+json` with `detail` |
 
 ---
 
