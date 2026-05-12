@@ -36,27 +36,13 @@ Do not commit real connection strings or credentials.
 
 ## Step 2 — Create the local database (EF Core)
 
-> **Note:** No EF Core migrations exist yet. The database schema is currently
-> created with `EnsureCreated()` or must be created manually for the first
-> local run.
-
-### Option A — Let EF Core create the schema automatically
-
-The `TeamBuilderDbContext` is configured for SQL Server. Run the API once and
-EF Core will attempt to connect. If no `Migrate()` or `EnsureCreated()` call
-is present in `Program.cs`, you must create the database schema yourself using
-option B below.
-
-### Option B — Add a migration (recommended; one-time setup)
+> **Note:** An `InitialCreate` migration exists at
+> `src/TeamBuilder.Infrastructure/Persistence/Migrations/`. Apply it once
+> before the first local run.
 
 ```bash
 # From the repo root
 dotnet tool install --global dotnet-ef   # if not already installed
-
-dotnet ef migrations add InitialCreate \
-  --project src/TeamBuilder.Infrastructure \
-  --startup-project src/TeamBuilder.Api \
-  --output-dir Data/Migrations
 
 dotnet ef database update \
   --project src/TeamBuilder.Infrastructure \
@@ -64,8 +50,6 @@ dotnet ef database update \
 ```
 
 This creates the `TeamBuilderDev` LocalDB database and applies the full schema.
-A future PR should commit these migration files so every developer can run
-`dotnet ef database update` instead of creating the schema from scratch.
 
 ---
 
@@ -164,7 +148,7 @@ the ProblemDetails envelope. See [Error Responses](api.md#error-responses) in
 |---|---|
 | **No authentication** | Any value works for `X-User-Id`. No request will be rejected for auth reasons. |
 | **No authorization** | Any caller can read or modify any resource. |
-| **No EF Core migrations** | Must create the schema with `dotnet ef database update` before first run (see Step 2). |
+| **EF Core migrations must be applied** | Run `dotnet ef database update` before the first local run (see Step 2). |
 | **Health check requires live LocalDB** | `/health` returns `503` if LocalDB is not running. Start it with `sqllocaldb start mssqllocaldb`. |
 | **No data annotations on DTOs** | Model validation is minimal. Sending an empty body will often succeed or produce a generic error. |
 | **`X-User-Id` is optional on some endpoints** | If omitted, `Guid.Empty` is used as the caller identity. This does not cause an error but may produce unexpected data (e.g., `ownerId = 00000000-0000-0000-0000-000000000000`). |
