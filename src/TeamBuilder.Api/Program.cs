@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
+using TeamBuilder.Api.Middleware;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
 using TeamBuilder.Infrastructure.Services;
@@ -72,6 +73,9 @@ var app = builder.Build();
 
 // Configure the HTTP request pipeline
 app.UseExceptionHandler();
+
+// Correlation ID and structured request logging — runs early so every request is covered.
+app.UseMiddleware<RequestLoggingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {

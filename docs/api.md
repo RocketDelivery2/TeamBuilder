@@ -106,6 +106,32 @@ All list endpoints return a `PaginatedResult<T>` envelope:
 
 ---
 
+## Correlation ID
+
+Every response includes an `X-Request-Id` header that can be used to correlate
+client requests with server-side log entries.
+
+| Scenario | Behaviour |
+|---|---|
+| Request includes `X-Request-Id` | The value is echoed back in the response header unchanged. |
+| Request omits `X-Request-Id` | A new ID is generated from the ASP.NET Core `TraceIdentifier` and added to the response. |
+
+Using a client-supplied value is useful when tracing end-to-end requests across
+multiple services. The server **never** logs authorization headers, cookies, or
+request/response bodies.
+
+```http
+GET /api/v1/teams HTTP/1.1
+X-Request-Id: my-client-trace-001
+```
+
+```http
+HTTP/1.1 200 OK
+X-Request-Id: my-client-trace-001
+```
+
+---
+
 ## Error Responses
 
 All API errors are returned as `application/problem+json` using the
@@ -802,5 +828,3 @@ Short-term API-only improvements:
 1. Add authentication (JWT Bearer / Azure AD / ASP.NET Core Identity).
 2. Add authorization policies (team owner, admin roles).
 3. Add a `WebApplicationFactory`-based integration test project.
-4. Add a `WebApplicationFactory`-based integration test project.
-5. Add request logging middleware or structured telemetry.
