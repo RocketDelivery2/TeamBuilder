@@ -1,3 +1,104 @@
 # TeamBuilder Copilot Chat Checkin History
 
 This file is automatically appended during commits to main.
+
+================================================================================
+Timestamp  : 2026-05-12 14:06:00 UTC
+Branch     : main
+SHA (short): b5993d2
+SHA (full) : b5993d25d196631e3b02bd701d0f8aabae840795
+Merge      : False
+Commit     : Add AI checkin history automation (#54)
+================================================================================
+--- Copilot Session ---
+# Copilot Session State
+
+## Current Branch
+api/auth-jwt-phase1
+
+## Current PR
+None open yet. Branch has one local commit not yet pushed.
+
+## Recent Merged PRs
+- #51 — api: add /health/ready readiness probe
+- #52 — api: add structured request logging (X-Request-Id correlation, log-injection sanitization)
+- #53 — docs: auth context groundwork (aligned auth-plan.md to ICurrentUserContext, added Authentication section to api.md)
+
+## Commits on this Branch (not yet pushed)
+- d29a062 — Add AI checkin history automation
+  - .ai/scripts/append-checkin-history.ps1 (new)
+  - .githooks/pre-commit (new)
+  - ai-history/terminal-history.txt (new starter file)
+  - ai-history/copilot-chat-history.txt (new starter file)
+  - .gitignore (updated — scratch files ignored, automation tracked)
+
+## Tests / Checks
+- Last full run: 198/198 passed (on main after PR #53 merge)
+- Markdownlint: 0 errors
+- No code changes on this branch — only automation and docs
+
+## Decisions Made
+- ICurrentUserContext (not IUserContext) is the correct interface name; already exists in TeamBuilder.Application.Interfaces
+- HeaderCurrentUserContext reads X-User-Id header via IHttpContextAccessor (not [FromHeader] on controllers)
+- X-User-Id stays working in parallel through JWT Phase 1 per auth-plan.md
+- AI scratch files (.ai/copilot-session.md, .ai/todo.md, .ai/latest-terminal-output.md, .ai/terminal-history.md) are gitignored
+- Automation scripts (.ai/scripts/) and appended history (ai-history/) ARE tracked
+- core.hooksPath = .githooks (set locally, not committed)
+- pre-commit hook runs append-checkin-history.ps1 only on main/master commits
+
+## Merge Readiness
+- ai-history automation commit is ready to push and PR once JWT phase 1 work begins,
+  OR can be merged as a standalone automation PR before starting JWT work.
+- No blocking issues.
+
+## Architecture Notes (for JWT Phase 1)
+- ICurrentUserContext is the single injection point across all controllers
+- HeaderCurrentUserContext (src/TeamBuilder.Api/Auth/) is the current implementation
+- Program.cs: builder.Services.AddScoped<ICurrentUserContext, HeaderCurrentUserContext>()
+- Migration path per auth-plan.md:
+  Phase 1: AddAuthentication().AddJwtBearer(...) + keep X-User-Id parallel
+  Phase 3: Add IsAuthenticated to ICurrentUserContext, implement ClaimsUserContext
+  Phase 3: Swap DI registration from HeaderCurrentUserContext to ClaimsUserContext
+
+## Next Recommended PR
+api/auth-jwt-phase1 — JWT Bearer authentication configuration:
+- Add Microsoft.AspNetCore.Authentication.JwtBearer NuGet package
+- Register AddAuthentication().AddJwtBearer() in Program.cs
+- Add UseAuthentication() to middleware pipeline (before UseAuthorization)
+- Configure dotnet user-jwts for local dev token issuance
+- Keep X-User-Id working in parallel (do not remove HeaderCurrentUserContext yet)
+- Add integration tests for unauthenticated requests (still 200 while X-User-Id is parallel)
+- Update docs/api.md Authentication section
+
+--- TODOs ---
+# TODOs
+
+## Immediate
+- [ ] Push api/auth-jwt-phase1 branch and open PR (or decide to include JWT work first)
+- [ ] Decide: open standalone PR for AI history automation now, or bundle with JWT phase 1
+
+## JWT Phase 1 (next PR: api/auth-jwt-phase1)
+- [ ] Add Microsoft.AspNetCore.Authentication.JwtBearer package
+- [ ] Register AddAuthentication().AddJwtBearer(...) in Program.cs
+- [ ] Add UseAuthentication() to middleware pipeline (after UseExceptionHandler, before UseAuthorization)
+- [ ] Configure dotnet user-jwts for local development token issuance
+- [ ] Keep X-User-Id (HeaderCurrentUserContext) working in parallel — do not remove
+- [ ] Add appsettings.Development.json JWT config (no secrets committed)
+- [ ] Update docs/api.md Authentication section with Bearer token example
+- [ ] Add/update integration tests — unauthenticated requests still succeed while parallel
+- [ ] Run: dotnet restore, dotnet build, dotnet test (198+), markdownlint
+
+## JWT Phase 3 (future PR)
+- [ ] Add IsAuthenticated property to ICurrentUserContext
+- [ ] Update HeaderCurrentUserContext: IsAuthenticated = false
+- [ ] Implement ClaimsUserContext in TeamBuilder.Api/Auth/
+- [ ] Swap DI registration in Program.cs
+- [ ] Update integration tests to use test auth scheme instead of X-User-Id headers
+
+## Validation (before each main merge)
+- [ ] dotnet build TeamBuilder.slnx --configuration Release
+- [ ] dotnet test TeamBuilder.slnx --configuration Release
+- [ ] npx markdownlint-cli2 "**/*.md"
+- [ ] Update .ai/copilot-session.md and .ai/todo.md
+- [ ] Run dotnet test and save to .ai/latest-terminal-output.md
+- [ ] gh pr checks --watch (all green before merge)
