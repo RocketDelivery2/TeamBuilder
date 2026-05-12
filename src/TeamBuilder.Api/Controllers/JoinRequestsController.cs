@@ -78,22 +78,9 @@ public class JoinRequestsController : ControllerBase
 
         var playerId = userId ?? Guid.Empty;
 
-        try
-        {
-            var joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, playerId, cancellationToken);
-            _logger.LogInformation("Created join request {JoinRequestId} for team {TeamId}", joinRequest.Id, joinRequest.TeamId);
-            return CreatedAtAction(nameof(GetById), new { id = joinRequest.Id }, joinRequest);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Failed to create join request");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error creating join request");
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        var joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, playerId, cancellationToken);
+        _logger.LogInformation("Created join request {JoinRequestId} for team {TeamId}", joinRequest.Id, joinRequest.TeamId);
+        return CreatedAtAction(nameof(GetById), new { id = joinRequest.Id }, joinRequest);
     }
 
     [HttpPut("{id}/process")]
@@ -111,27 +98,14 @@ public class JoinRequestsController : ControllerBase
 
         var processedByUserId = userId ?? Guid.Empty;
 
-        try
+        var joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, processedByUserId, cancellationToken);
+        if (joinRequest == null)
         {
-            var joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, processedByUserId, cancellationToken);
-            if (joinRequest == null)
-            {
-                _logger.LogInformation("Join request with ID {JoinRequestId} not found for processing", id);
-                return NotFound();
-            }
+            _logger.LogInformation("Join request with ID {JoinRequestId} not found for processing", id);
+            return NotFound();
+        }
 
-            _logger.LogInformation("Processed join request {JoinRequestId} with status {Status}", id, processJoinRequestDto.Status);
-            return Ok(joinRequest);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Failed to process join request {JoinRequestId}", id);
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing join request {JoinRequestId}", id);
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        _logger.LogInformation("Processed join request {JoinRequestId} with status {Status}", id, processJoinRequestDto.Status);
+        return Ok(joinRequest);
     }
 }

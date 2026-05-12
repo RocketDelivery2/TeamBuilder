@@ -60,20 +60,12 @@ public class RosterImportsController : ControllerBase
 
         var importedByUserId = userId ?? Guid.Empty;
 
-        try
-        {
-            var rosterImport = await _rosterImportService.CreateAsync(createRosterImportDto, importedByUserId, cancellationToken);
-            var safeSourceName = (rosterImport.SourceName ?? string.Empty)
-                .Replace("\r", string.Empty)
-                .Replace("\n", string.Empty);
-            _logger.LogInformation("Created roster import {RosterImportId} from source {SourceName}", rosterImport.Id, safeSourceName);
-            return CreatedAtAction(nameof(GetById), new { id = rosterImport.Id }, rosterImport);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error creating roster import");
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        var rosterImport = await _rosterImportService.CreateAsync(createRosterImportDto, importedByUserId, cancellationToken);
+        var safeSourceName = (rosterImport.SourceName ?? string.Empty)
+            .Replace("\r", string.Empty)
+            .Replace("\n", string.Empty);
+        _logger.LogInformation("Created roster import {RosterImportId} from source {SourceName}", rosterImport.Id, safeSourceName);
+        return CreatedAtAction(nameof(GetById), new { id = rosterImport.Id }, rosterImport);
     }
 
     [HttpPut("{id}/process")]
@@ -87,28 +79,15 @@ public class RosterImportsController : ControllerBase
     {
         var processedByUserId = userId ?? Guid.Empty;
 
-        try
+        var rosterImport = await _rosterImportService.ProcessAsync(id, processedByUserId, cancellationToken);
+        if (rosterImport == null)
         {
-            var rosterImport = await _rosterImportService.ProcessAsync(id, processedByUserId, cancellationToken);
-            if (rosterImport == null)
-            {
-                _logger.LogInformation("Roster import with ID {RosterImportId} not found for processing", id);
-                return NotFound();
-            }
+            _logger.LogInformation("Roster import with ID {RosterImportId} not found for processing", id);
+            return NotFound();
+        }
 
-            _logger.LogInformation("Processed roster import {RosterImportId}", id);
-            return Ok(rosterImport);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Failed to process roster import {RosterImportId}", id);
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing roster import {RosterImportId}", id);
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        _logger.LogInformation("Processed roster import {RosterImportId}", id);
+        return Ok(rosterImport);
     }
 
     [HttpDelete("{id}")]

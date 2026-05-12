@@ -84,22 +84,9 @@ public class PlayersController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        try
-        {
-            var player = await _playerService.CreateAsync(createPlayerDto, cancellationToken);
-            _logger.LogInformation("Created player {PlayerId} with username {Username}", player.Id, SanitizeForLog(player.Username));
-            return CreatedAtAction(nameof(GetById), new { id = player.Id }, player);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Failed to create player with username {Username}", SanitizeForLog(createPlayerDto.Username));
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error creating player");
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        var player = await _playerService.CreateAsync(createPlayerDto, cancellationToken);
+        _logger.LogInformation("Created player {PlayerId} with username {Username}", player.Id, SanitizeForLog(player.Username));
+        return CreatedAtAction(nameof(GetById), new { id = player.Id }, player);
     }
 
     [HttpPut("{id}")]
@@ -114,23 +101,15 @@ public class PlayersController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        try
+        var player = await _playerService.UpdateAsync(id, updatePlayerDto, cancellationToken);
+        if (player == null)
         {
-            var player = await _playerService.UpdateAsync(id, updatePlayerDto, cancellationToken);
-            if (player == null)
-            {
-                _logger.LogInformation("Player with ID {PlayerId} not found for update", id);
-                return NotFound();
-            }
+            _logger.LogInformation("Player with ID {PlayerId} not found for update", id);
+            return NotFound();
+        }
 
-            _logger.LogInformation("Updated player {PlayerId}", id);
-            return Ok(player);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error updating player {PlayerId}", id);
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        _logger.LogInformation("Updated player {PlayerId}", id);
+        return Ok(player);
     }
 
     [HttpDelete("{id}")]

@@ -63,18 +63,10 @@ public class EventsController : ControllerBase
 
         var hostId = userId ?? Guid.Empty;
 
-        try
-        {
-            var teamEvent = await _eventService.CreateAsync(createEventDto, hostId, cancellationToken);
-            var safeEventName = SanitizeForLog(teamEvent.Name);
-            _logger.LogInformation("Created event {EventId} with name {EventName}", teamEvent.Id, safeEventName);
-            return CreatedAtAction(nameof(GetById), new { id = teamEvent.Id }, teamEvent);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error creating event");
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        var teamEvent = await _eventService.CreateAsync(createEventDto, hostId, cancellationToken);
+        var safeEventName = SanitizeForLog(teamEvent.Name);
+        _logger.LogInformation("Created event {EventId} with name {EventName}", teamEvent.Id, safeEventName);
+        return CreatedAtAction(nameof(GetById), new { id = teamEvent.Id }, teamEvent);
     }
 
     [HttpPut("{id}")]
@@ -89,23 +81,15 @@ public class EventsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        try
+        var teamEvent = await _eventService.UpdateAsync(id, updateEventDto, cancellationToken);
+        if (teamEvent == null)
         {
-            var teamEvent = await _eventService.UpdateAsync(id, updateEventDto, cancellationToken);
-            if (teamEvent == null)
-            {
-                _logger.LogInformation("Event with ID {EventId} not found for update", id);
-                return NotFound();
-            }
+            _logger.LogInformation("Event with ID {EventId} not found for update", id);
+            return NotFound();
+        }
 
-            _logger.LogInformation("Updated event {EventId}", id);
-            return Ok(teamEvent);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error updating event {EventId}", id);
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        _logger.LogInformation("Updated event {EventId}", id);
+        return Ok(teamEvent);
     }
 
     [HttpDelete("{id}")]
