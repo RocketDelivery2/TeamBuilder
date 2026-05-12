@@ -94,20 +94,21 @@ Run requests in this order. Each step captures an ID needed by the next.
 
 | # | Request | Folder | Notes |
 |---|---------|--------|-------|
-| 1 | `GET /health` | Health | Expect `200 Healthy`. If `503`, the database is not reachable — re-run the migration from Step 2. |
-| 2 | `POST /api/v1/players` | Players | Creates a player. Copy `id` from the response into the `playerId` environment variable. |
-| 3 | `GET /api/v1/players` | Players | Verify the player appears in the paginated list. |
-| 4 | `GET /api/v1/players/{{playerId}}` | Players | Verify the player can be fetched by ID. |
-| 5 | `POST /api/v1/teams` | Teams | Set `X-User-Id` header to `{{playerId}}`. Copy `id` from the response into `teamId`. |
-| 6 | `GET /api/v1/teams` | Teams | Verify the team appears in the list. |
-| 7 | `GET /api/v1/teams/{{teamId}}` | Teams | Verify `ownerUsername` is populated. |
-| 8 | `POST /api/v1/joinrequests` | Join Requests | Set `X-User-Id` to `{{playerId}}`. Copy `id` into `joinRequestId`. |
-| 9 | `POST /api/v1/joinrequests` (duplicate) | Join Requests | Repeat request 8 with the same `X-User-Id` and `teamId`. Expect `409 Conflict` with `application/problem+json`. Verify `status: 409` and a `detail` message in the response body. |
-| 10 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Set `X-User-Id`. Use body `{"status":"Approved"}`. Expect `200`. |
-| 11 | `POST /api/v1/events` | Events | Set `X-User-Id` to `{{playerId}}`. Set `teamId` in the body to `{{teamId}}`. Copy `id` into `eventId`. |
-| 12 | `GET /api/v1/events` | Events | Verify the event appears in the list. |
-| 13 | `POST /api/v1/rosterimports` | Roster Imports | Set `X-User-Id`. Copy `id` into `rosterImportId`. |
-| 14 | `GET /api/v1/rosterimports` | Roster Imports | Verify the import record appears. |
+| 1 | `GET /health` | Health | Expect `200 Healthy`. This is the liveness check; the process is running. |
+| 2 | `GET /health/ready` | Health | Expect `200 Healthy`. If `503`, the database is not reachable — re-run the migration from Step 2. |
+| 3 | `POST /api/v1/players` | Players | Creates a player. Copy `id` from the response into the `playerId` environment variable. |
+| 4 | `GET /api/v1/players` | Players | Verify the player appears in the paginated list. |
+| 5 | `GET /api/v1/players/{{playerId}}` | Players | Verify the player can be fetched by ID. |
+| 6 | `POST /api/v1/teams` | Teams | Set `X-User-Id` header to `{{playerId}}`. Copy `id` from the response into `teamId`. |
+| 7 | `GET /api/v1/teams` | Teams | Verify the team appears in the list. |
+| 8 | `GET /api/v1/teams/{{teamId}}` | Teams | Verify `ownerUsername` is populated. |
+| 9 | `POST /api/v1/joinrequests` | Join Requests | Set `X-User-Id` to `{{playerId}}`. Copy `id` into `joinRequestId`. |
+| 10 | `POST /api/v1/joinrequests` (duplicate) | Join Requests | Repeat request 9 with the same `X-User-Id` and `teamId`. Expect `409 Conflict` with `application/problem+json`. Verify `status: 409` and a `detail` message in the response body. |
+| 11 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Set `X-User-Id`. Use body `{"status":"Approved"}`. Expect `200`. |
+| 12 | `POST /api/v1/events` | Events | Set `X-User-Id` to `{{playerId}}`. Set `teamId` in the body to `{{teamId}}`. Copy `id` into `eventId`. |
+| 13 | `GET /api/v1/events` | Events | Verify the event appears in the list. |
+| 14 | `POST /api/v1/rosterimports` | Roster Imports | Set `X-User-Id`. Copy `id` into `rosterImportId`. |
+| 15 | `GET /api/v1/rosterimports` | Roster Imports | Verify the import record appears. |
 
 ### Copying IDs into Postman environment variables
 
@@ -128,8 +129,9 @@ the ProblemDetails envelope. See [Error Responses](api.md#error-responses) in
 
 | Scenario | Expected |
 |---|---|
-| `GET /health` — database reachable | `200 Healthy` |
-| `GET /health` — database not reachable | `503 Unhealthy` |
+| `GET /health` — process is running | `200 Healthy` |
+| `GET /health/ready` — database reachable | `200 Healthy` |
+| `GET /health/ready` — database not reachable | `503 Unhealthy` |
 | `POST` — valid payload | `201 Created` with `Location` header |
 | `POST` — duplicate pending join request | `409 Conflict` — `application/problem+json` with `detail` |
 | `POST` — invalid/missing required field | `400 Bad Request` — `application/problem+json` with `errors` dictionary |
@@ -149,7 +151,7 @@ the ProblemDetails envelope. See [Error Responses](api.md#error-responses) in
 | **No authentication** | Any value works for `X-User-Id`. No request will be rejected for auth reasons. |
 | **No authorization** | Any caller can read or modify any resource. |
 | **EF Core migrations must be applied** | Run `dotnet ef database update` before the first local run (see Step 2). |
-| **Health check requires live LocalDB** | `/health` returns `503` if LocalDB is not running. Start it with `sqllocaldb start mssqllocaldb`. |
+| **Health check requires live LocalDB** | `/health/ready` returns `503` if LocalDB is not running. Start it with `sqllocaldb start mssqllocaldb`. `/health` (liveness) always returns `200`. |
 | **No data annotations on DTOs** | Model validation is minimal. Sending an empty body will often succeed or produce a generic error. |
 | **`X-User-Id` is optional on some endpoints** | If omitted, `Guid.Empty` is used as the caller identity. This does not cause an error but may produce unexpected data (e.g., `ownerId = 00000000-0000-0000-0000-000000000000`). |
 
@@ -159,7 +161,7 @@ the ProblemDetails envelope. See [Error Responses](api.md#error-responses) in
 
 | Symptom | Fix |
 |---|---|
-| `GET /health` returns `503` | Run `sqllocaldb start mssqllocaldb` then retry. If the database does not exist, run the `dotnet ef database update` command from Step 2. |
+| `GET /health/ready` returns `503` | Run `sqllocaldb start mssqllocaldb` then retry. If the database does not exist, run the `dotnet ef database update` command from Step 2. |
 | SSL certificate error in Postman | Run `dotnet dev-certs https --trust` and restart Postman. Alternatively, disable SSL verification in Postman settings (not recommended for production). |
 | `Connection refused` on port 7178 | Check the console output for the actual port and update `baseUrl` in the Postman environment. |
 | `500 Internal Server Error` on all requests | The database schema likely does not exist. Apply migrations (Step 2). |

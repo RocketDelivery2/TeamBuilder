@@ -13,7 +13,7 @@ middle layer between any client-side frontend and the backend data platform.
   team, submitting a join request, or processing a roster import). Some write
   endpoints do not use it. See [Known Limitations](#known-limitations).
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
-- **Health endpoint:** `GET /health`
+- **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
 
 ---
 
@@ -72,7 +72,11 @@ The port is shown in the terminal when the API starts.
 ### Health Check
 
 ```bash
+# Liveness: is the process running?
 curl https://localhost:<port>/health
+
+# Readiness: is the database reachable?
+curl https://localhost:<port>/health/ready
 ```
 
 ---
@@ -742,16 +746,26 @@ Deletes a roster import record.
 
 ---
 
-### Health — `/health`
+### Health — `/health` and `/health/ready`
 
 #### `GET /health`
 
-ASP.NET Core health check endpoint. The check is registered under the name
-`TeamBuilderDb` and verifies database connectivity using the configured
+Liveness check. Returns `Healthy` as long as the API process is running.
+No external dependencies are checked. Use this to verify the process is alive.
+
+**Response `200`:** Healthy.
+
+---
+
+#### `GET /health/ready`
+
+Readiness check. Verifies that external dependencies are reachable before
+marking the API as ready to serve traffic. The check is registered under the
+name `TeamBuilderDb` and verifies database connectivity using the configured
 `TeamBuilderSql` connection string.
 
-**Response `200`:** Healthy.  
-**Response `503`:** Unhealthy (database unreachable).
+**Response `200`:** Healthy — database is reachable.  
+**Response `503`:** Unhealthy — database is unreachable.
 
 ---
 
@@ -776,7 +790,7 @@ ASP.NET Core health check endpoint. The check is registered under the name
 | **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
-| **Health check requires live SQL** | Running locally without a database will cause `/health` to report unhealthy. |
+| **Health check requires live SQL** | Running locally without a database will cause `/health/ready` to report unhealthy. `/health` (liveness) always returns `200`. |
 
 ---
 
@@ -788,5 +802,5 @@ Short-term API-only improvements:
 1. Add authentication (JWT Bearer / Azure AD / ASP.NET Core Identity).
 2. Add authorization policies (team owner, admin roles).
 3. Add a `WebApplicationFactory`-based integration test project.
-4. Add a `/health/ready` readiness probe distinct from the liveness check.
+4. Add a `WebApplicationFactory`-based integration test project.
 5. Add request logging middleware or structured telemetry.
