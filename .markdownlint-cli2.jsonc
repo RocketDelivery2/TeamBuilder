@@ -16,6 +16,7 @@
     "**/*.md"
   ],
   "ignores": [
-    "**/node_modules"
+    "**/node_modules",
+    ".ai/**"
   ]
 }
