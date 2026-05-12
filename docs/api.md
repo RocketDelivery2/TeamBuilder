@@ -775,7 +775,7 @@ ASP.NET Core health check endpoint. The check is registered under the name
 | **No authorization** | Any caller can modify any resource. Future PR needed. |
 | **No data annotations / FluentValidation** | DTOs have no `[Required]` or `[MaxLength]` attributes. Model state validation is therefore minimal. Future PR recommended. |
 | **`PaginatedResult<T>` uses `typeof(object)`** | Several `GetAll` endpoints declare `[ProducesResponseType(typeof(object))]` instead of the concrete paginated type. This reduces Swagger schema quality. Future PR recommended. |
-| **No EF Core migrations** | The database schema has not been version-controlled via migrations. Future PR needed before production deployment. |
+| **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
 | **Health check requires live SQL** | Running locally without a database will cause `/health` to report unhealthy. |
 
