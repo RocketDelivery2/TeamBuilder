@@ -1,0 +1,14 @@
+#!/bin/sh
+# pre-commit hook — appends AI history on commits to main or master only.
+
+branch=$(git branch --show-current)
+
+if [ "$branch" != "main" ] && [ "$branch" != "master" ]; then
+    exit 0
+fi
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./.ai/scripts/append-checkin-history.ps1"
+
+git add ai-history/terminal-history.txt ai-history/copilot-chat-history.txt
+
+exit 0
