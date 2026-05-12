@@ -60,10 +60,13 @@ builder.Services.AddCors(options =>
 });
 
 // Add health checks
+// /health  — liveness: fast process-level check, no external dependencies
+// /health/ready — readiness: verifies external dependencies (database) are reachable
 builder.Services.AddHealthChecks()
     .AddSqlServer(
         builder.Configuration.GetConnectionString("TeamBuilderSql") ?? "",
-        name: "TeamBuilderDb");
+        name: "TeamBuilderDb",
+        tags: ["ready"]);
 
 var app = builder.Build();
 
@@ -84,6 +87,16 @@ app.UseCors("AllowAll");
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHealthChecks("/health");
+// Liveness: always returns Healthy as long as the process is running
+app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = _ => false
+});
+
+// Readiness: returns Healthy only when all external dependencies are reachable
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
 
 app.Run();
