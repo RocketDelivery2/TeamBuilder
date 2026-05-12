@@ -92,28 +92,32 @@ from the team before Phase 1 begins.
 
 ### Phase 3 — Replace X-User-Id with Authenticated User Context
 
-- Introduce `IUserContext` interface in `TeamBuilder.Application`:
+- `ICurrentUserContext` already exists in `TeamBuilder.Application.Interfaces`
+  with a `UserId` property. Extend it with `IsAuthenticated`:
 
   ```csharp
-  public interface IUserContext
+  public interface ICurrentUserContext
   {
       Guid UserId { get; }
       bool IsAuthenticated { get; }
   }
   ```
 
+- Update `HeaderCurrentUserContext` to implement `IsAuthenticated = false`
+  (the temporary header mechanism never represents a real authenticated identity).
 - Implement `ClaimsUserContext` in `TeamBuilder.Api` backed by
   `IHttpContextAccessor` and `ClaimsPrincipal`.
-- Remove all `[FromHeader(Name = "X-User-Id")]` parameters from controllers.
-- Inject `IUserContext` into services that need caller identity.
-- Register `IUserContext` / `ClaimsUserContext` in `Program.cs`.
+- Register `ClaimsUserContext` in place of `HeaderCurrentUserContext` once JWT
+  authentication is active.
+- Controllers and services require **no changes** — they already depend only on
+  `ICurrentUserContext` via dependency injection.
 
 ### Phase 4 — Update Integration Tests
 
 - Add a test authentication handler (ASP.NET Core test auth scheme) to the
   integration test `WebApplicationFactory`.
 - Replace any `X-User-Id` header injection in tests with the test auth scheme.
-- Ensure all existing 184 tests continue to pass.
+- Ensure all existing integration tests continue to pass (198 as of PR #52).
 - Add new tests for unauthenticated and unauthorized request paths (401, 403).
 
 ### Phase 5 — Update Postman Environment and Collection
@@ -145,11 +149,13 @@ from the team before Phase 1 begins.
 
 | File | Relevance |
 |---|---|
-| `src/TeamBuilder.Api/Controllers/TeamsController.cs` | Reads `X-User-Id` for team creation. |
-| `src/TeamBuilder.Api/Controllers/JoinRequestsController.cs` | Reads `X-User-Id` for join request creation and processing. |
-| `src/TeamBuilder.Api/Controllers/EventsController.cs` | Reads `X-User-Id` for event creation. |
-| `src/TeamBuilder.Api/Controllers/RosterImportsController.cs` | Reads `X-User-Id` for roster import creation and processing. |
+| `src/TeamBuilder.Application/Interfaces/ICurrentUserContext.cs` | Caller-identity abstraction — already in place; extend with `IsAuthenticated` in Phase 3. |
+| `src/TeamBuilder.Api/Auth/HeaderCurrentUserContext.cs` | Temporary header-based implementation — replaced by `ClaimsUserContext` in Phase 3. |
+| `src/TeamBuilder.Api/Controllers/TeamsController.cs` | Uses `ICurrentUserContext.UserId` for team creation. |
+| `src/TeamBuilder.Api/Controllers/JoinRequestsController.cs` | Uses `ICurrentUserContext.UserId` for join request creation and processing. |
+| `src/TeamBuilder.Api/Controllers/EventsController.cs` | Uses `ICurrentUserContext.UserId` for event creation. |
+| `src/TeamBuilder.Api/Controllers/RosterImportsController.cs` | Uses `ICurrentUserContext.UserId` for roster import creation and processing. |
 | `src/TeamBuilder.Api/Program.cs` | Authentication / authorization middleware will be registered here. |
-| `docs/api.md` | API reference — will need an Authentication section added in a future PR. |
+| `docs/api.md` | API reference — Authentication section documents `X-User-Id` temporary behavior. |
 | `docs/postman-smoke-test.md` | Smoke test guide — will need token setup steps added in Phase 5. |
 | `docs/postman/TeamBuilder.postman_collection.json` | Collection — will need Bearer token auth added in Phase 5. |
