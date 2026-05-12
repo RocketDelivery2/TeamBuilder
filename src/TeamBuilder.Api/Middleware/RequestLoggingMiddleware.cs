@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace TeamBuilder.Api.Middleware;
 
@@ -10,10 +11,16 @@ namespace TeamBuilder.Api.Middleware;
 /// If the incoming request already carries an X-Request-Id header its value is
 /// echoed back unchanged. Otherwise a new short ID is generated from the ASP.NET
 /// Core TraceIdentifier.
+///
+/// User-controlled string values (path, request ID) are sanitized before logging
+/// to prevent log injection via embedded control characters or newlines.
 /// </summary>
 internal sealed class RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> logger)
 {
     private const string HeaderName = "X-Request-Id";
+
+    // Matches any ASCII/Unicode control character (includes CR, LF, TAB, etc.)
+    private static readonly Regex ControlChars = new(@"\p{Cc}", RegexOptions.Compiled);
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -39,10 +46,10 @@ internal sealed class RequestLoggingMiddleware(RequestDelegate next, ILogger<Req
             logger.LogInformation(
                 "HTTP {Method} {Path} responded {StatusCode} in {ElapsedMs}ms — RequestId: {RequestId}",
                 context.Request.Method,
-                context.Request.Path,
+                Sanitize(context.Request.Path),
                 context.Response.StatusCode,
                 sw.ElapsedMilliseconds,
-                requestId);
+                Sanitize(requestId));
         }
     }
 
@@ -55,4 +62,11 @@ internal sealed class RequestLoggingMiddleware(RequestDelegate next, ILogger<Req
         // Fall back to ASP.NET Core's built-in trace identifier, which is unique per request.
         return context.TraceIdentifier;
     }
+
+    /// <summary>
+    /// Strips control characters from a user-supplied string to prevent log injection.
+    /// The original value is still echoed in the response header; only the logged form is sanitized.
+    /// </summary>
+    private static string Sanitize(string? value) =>
+        value is null ? string.Empty : ControlChars.Replace(value, "_");
 }
