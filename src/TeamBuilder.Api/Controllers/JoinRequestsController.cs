@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
+using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Enums;
 
 namespace TeamBuilder.Api.Controllers;
@@ -36,7 +37,7 @@ public class JoinRequestsController : ControllerBase
     }
 
     [HttpGet("teams/{teamId}")]
-    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PaginatedResult<JoinRequestDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetByTeamId(
         Guid teamId,
         [FromQuery] int page = 1,
@@ -52,7 +53,7 @@ public class JoinRequestsController : ControllerBase
     }
 
     [HttpGet("players/{playerId}")]
-    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PaginatedResult<JoinRequestDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetByPlayerId(
         Guid playerId,
         [FromQuery] int page = 1,
