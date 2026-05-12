@@ -63,18 +63,10 @@ public class TeamsController : ControllerBase
 
         var ownerId = userId ?? Guid.Empty;
 
-        try
-        {
-            var team = await _teamService.CreateAsync(createTeamDto, ownerId, cancellationToken);
-            var safeTeamName = SanitizeForLog(team.Name);
-            _logger.LogInformation("Created team {TeamId} with name {TeamName}", team.Id, safeTeamName);
-            return CreatedAtAction(nameof(GetById), new { id = team.Id }, team);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error creating team");
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        var team = await _teamService.CreateAsync(createTeamDto, ownerId, cancellationToken);
+        var safeTeamName = SanitizeForLog(team.Name);
+        _logger.LogInformation("Created team {TeamId} with name {TeamName}", team.Id, safeTeamName);
+        return CreatedAtAction(nameof(GetById), new { id = team.Id }, team);
     }
 
     [HttpPut("{id}")]
@@ -89,23 +81,15 @@ public class TeamsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        try
+        var team = await _teamService.UpdateAsync(id, updateTeamDto, cancellationToken);
+        if (team == null)
         {
-            var team = await _teamService.UpdateAsync(id, updateTeamDto, cancellationToken);
-            if (team == null)
-            {
-                _logger.LogInformation("Team with ID {TeamId} not found for update", id);
-                return NotFound();
-            }
+            _logger.LogInformation("Team with ID {TeamId} not found for update", id);
+            return NotFound();
+        }
 
-            _logger.LogInformation("Updated team {TeamId}", id);
-            return Ok(team);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error updating team {TeamId}", id);
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        _logger.LogInformation("Updated team {TeamId}", id);
+        return Ok(team);
     }
 
     [HttpDelete("{id}")]
@@ -133,23 +117,15 @@ public class TeamsController : ControllerBase
         Guid playerId,
         CancellationToken cancellationToken)
     {
-        try
+        var result = await _teamService.RemoveMemberAsync(teamId, playerId, cancellationToken);
+        if (!result)
         {
-            var result = await _teamService.RemoveMemberAsync(teamId, playerId, cancellationToken);
-            if (!result)
-            {
-                _logger.LogInformation("Team member not found: TeamId={TeamId}, PlayerId={PlayerId}", teamId, playerId);
-                return NotFound();
-            }
+            _logger.LogInformation("Team member not found: TeamId={TeamId}, PlayerId={PlayerId}", teamId, playerId);
+            return NotFound();
+        }
 
-            _logger.LogInformation("Player {PlayerId} left team {TeamId}", playerId, teamId);
-            return NoContent();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error removing player {PlayerId} from team {TeamId}", playerId, teamId);
-            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred." });
-        }
+        _logger.LogInformation("Player {PlayerId} left team {TeamId}", playerId, teamId);
+        return NoContent();
     }
 
     private static string SanitizeForLog(string? value)

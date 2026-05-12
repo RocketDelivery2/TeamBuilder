@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Domain.Entities;
@@ -125,7 +126,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     }
 
     [Fact]
-    public async Task Create_DuplicatePendingRequest_Returns400()
+    public async Task Create_DuplicatePendingRequest_Returns409Conflict()
     {
         // Arrange — seed an already-pending request for the same team/player
         var (team, player) = await SeedTeamAndPlayerAsync();
@@ -141,7 +142,10 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         var response = await _client.SendAsync(request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        problem.Should().NotBeNull();
+        problem!.Status.Should().Be(StatusCodes.Status409Conflict);
     }
 
     // ── PUT /api/v1/joinrequests/{id}/process ────────────────────────────────
