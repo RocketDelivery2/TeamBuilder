@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
+using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Enums;
 
 namespace TeamBuilder.Api.Controllers;
@@ -36,7 +37,7 @@ public class EventsController : ControllerBase
     }
 
     [HttpGet]
-    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PaginatedResult<EventDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,

@@ -2,6 +2,7 @@ using System;
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
+using TeamBuilder.Application.Models;
 
 namespace TeamBuilder.Api.Controllers;
 
@@ -60,7 +61,7 @@ public class PlayersController : ControllerBase
     }
 
     [HttpGet]
-    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PaginatedResult<PlayerDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
