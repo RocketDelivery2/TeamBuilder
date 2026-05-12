@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
@@ -19,6 +20,10 @@ builder.Services.AddScoped<IPlayerService, PlayerService>();
 builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
+
+// Add user context (reads X-User-Id header; will be replaced by claims-based context)
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserContext, HeaderCurrentUserContext>();
 
 // Add ProblemDetails support
 builder.Services.AddProblemDetails();

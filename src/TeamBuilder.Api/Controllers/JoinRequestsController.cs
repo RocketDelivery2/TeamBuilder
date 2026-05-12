@@ -10,11 +10,13 @@ namespace TeamBuilder.Api.Controllers;
 public class JoinRequestsController : ControllerBase
 {
     private readonly IJoinRequestService _joinRequestService;
+    private readonly ICurrentUserContext _currentUser;
     private readonly ILogger<JoinRequestsController> _logger;
 
-    public JoinRequestsController(IJoinRequestService joinRequestService, ILogger<JoinRequestsController> logger)
+    public JoinRequestsController(IJoinRequestService joinRequestService, ICurrentUserContext currentUser, ILogger<JoinRequestsController> logger)
     {
         _joinRequestService = joinRequestService;
+        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -70,15 +72,12 @@ public class JoinRequestsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<JoinRequestDto>> Create(
         [FromBody] CreateJoinRequestDto createJoinRequestDto,
-        [FromHeader(Name = "X-User-Id")] Guid? userId = null,
         CancellationToken cancellationToken = default)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var playerId = userId ?? Guid.Empty;
-
-        var joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, playerId, cancellationToken);
+        var joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, _currentUser.UserId, cancellationToken);
         _logger.LogInformation("Created join request {JoinRequestId} for team {TeamId}", joinRequest.Id, joinRequest.TeamId);
         return CreatedAtAction(nameof(GetById), new { id = joinRequest.Id }, joinRequest);
     }
@@ -90,15 +89,12 @@ public class JoinRequestsController : ControllerBase
     public async Task<ActionResult<JoinRequestDto>> Process(
         Guid id,
         [FromBody] ProcessJoinRequestDto processJoinRequestDto,
-        [FromHeader(Name = "X-User-Id")] Guid? userId = null,
         CancellationToken cancellationToken = default)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var processedByUserId = userId ?? Guid.Empty;
-
-        var joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, processedByUserId, cancellationToken);
+        var joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, _currentUser.UserId, cancellationToken);
         if (joinRequest == null)
         {
             _logger.LogInformation("Join request with ID {JoinRequestId} not found for processing", id);

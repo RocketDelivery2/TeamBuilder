@@ -10,11 +10,13 @@ namespace TeamBuilder.Api.Controllers;
 public class TeamsController : ControllerBase
 {
     private readonly ITeamService _teamService;
+    private readonly ICurrentUserContext _currentUser;
     private readonly ILogger<TeamsController> _logger;
 
-    public TeamsController(ITeamService teamService, ILogger<TeamsController> logger)
+    public TeamsController(ITeamService teamService, ICurrentUserContext currentUser, ILogger<TeamsController> logger)
     {
         _teamService = teamService;
+        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -55,15 +57,12 @@ public class TeamsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<TeamDto>> Create(
         [FromBody] CreateTeamDto createTeamDto,
-        [FromHeader(Name = "X-User-Id")] Guid? userId = null,
         CancellationToken cancellationToken = default)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var ownerId = userId ?? Guid.Empty;
-
-        var team = await _teamService.CreateAsync(createTeamDto, ownerId, cancellationToken);
+        var team = await _teamService.CreateAsync(createTeamDto, _currentUser.UserId, cancellationToken);
         var safeTeamName = SanitizeForLog(team.Name);
         _logger.LogInformation("Created team {TeamId} with name {TeamName}", team.Id, safeTeamName);
         return CreatedAtAction(nameof(GetById), new { id = team.Id }, team);
