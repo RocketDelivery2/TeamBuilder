@@ -8,10 +8,8 @@ middle layer between any client-side frontend and the backend data platform.
 
 - **Base path:** `api/v1`
 - **Format:** JSON (request and response)
-- **Authentication:** Not currently implemented. The `X-User-Id` header is
-  read by specific endpoints that need caller identity (such as creating a
-  team, submitting a join request, or processing a roster import). Some write
-  endpoints do not use it. See [Known Limitations](#known-limitations).
+- **Authentication:** Temporary `X-User-Id` header placeholder (not production-safe).
+  See [Authentication](#authentication) for current behavior and migration plan.
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
 - **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
 
@@ -129,6 +127,50 @@ X-Request-Id: my-client-trace-001
 HTTP/1.1 200 OK
 X-Request-Id: my-client-trace-001
 ```
+
+---
+
+## Authentication
+
+> **Status: temporary placeholder — not production-safe.**
+> See [`docs/auth-plan.md`](auth-plan.md) for the full phased implementation plan.
+
+### Current behavior (X-User-Id header)
+
+Endpoints that require a caller identity read an `X-User-Id` HTTP request header
+and treat the value as the acting player's ID.
+
+| Scenario | Behavior |
+|---|---|
+| Valid GUID in `X-User-Id` | Used as the caller's player ID. |
+| Header missing | `Guid.Empty` (`00000000-0000-0000-0000-000000000000`) is used. |
+| Header present but not a valid GUID | `Guid.Empty` is used. |
+
+**Security warning:** No token validation, signature verification, or session
+management is performed. Any caller can supply any GUID and impersonate any
+player. This mechanism is suitable only for local development and early API
+testing.
+
+```http
+POST /api/v1/teams HTTP/1.1
+X-User-Id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+Content-Type: application/json
+```
+
+### Future behavior (JWT claims)
+
+When authentication is added (see `auth-plan.md` Phase 1–3), `X-User-Id` will
+be replaced by a standard `Authorization: Bearer <token>` header. The
+`ICurrentUserContext` abstraction is already in place — controllers and services
+will require no changes when the underlying implementation switches from
+`HeaderCurrentUserContext` to `ClaimsUserContext`.
+
+Clients will need to:
+
+1. Obtain a JWT from the configured identity provider.
+2. Send `Authorization: Bearer <token>` instead of `X-User-Id`.
+
+The API routes, status codes, and response shapes will not change.
 
 ---
 
