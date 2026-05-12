@@ -102,15 +102,93 @@ All list endpoints return a `PaginatedResult<T>` envelope:
 
 ---
 
-## Validation and Error Behavior
+## Error Responses
 
-| Scenario                          | Status | Body                                    |
-|-----------------------------------|--------|-----------------------------------------|
-| Model validation failure          | `400`  | `ModelState` errors serialized as `{ "FieldName": ["error"] }` |
-| Duplicate / conflict (service)    | `400`  | `{ "error": "<message>" }`              |
-| Resource not found                | `404`  | Empty body                              |
-| Already-processed resource        | `400`  | `{ "error": "<message>" }`              |
-| Unexpected server error           | `500`  | `{ "error": "An unexpected error occurred." }` |
+All API errors are returned as `application/problem+json` using the
+[RFC 9457 ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) envelope.
+
+### ProblemDetails envelope
+
+| Field      | Type   | Description                                                      |
+|------------|--------|------------------------------------------------------------------|
+| `type`     | string | URI reference identifying the problem type (may be omitted).     |
+| `title`    | string | Short, human-readable summary of the problem type.               |
+| `status`   | int    | HTTP status code.                                                |
+| `detail`   | string | Human-readable explanation specific to this occurrence.          |
+| `traceId`  | string | ASP.NET Core request trace ID. Include this when reporting bugs. |
+
+### Status code mappings
+
+| Scenario                                    | Status | Exception / source              |
+|---------------------------------------------|--------|---------------------------------|
+| Model validation failure (data annotations) | `400`  | `ValidationProblemDetails`      |
+| Invalid argument (business rule)            | `400`  | `ArgumentException`             |
+| Resource not found                          | `404`  | `KeyNotFoundException`          |
+| Conflict (duplicate or invalid state)       | `409`  | `InvalidOperationException`     |
+| Unexpected server error                     | `500`  | Unhandled exception             |
+
+### ValidationProblemDetails (400 — model validation)
+
+When ASP.NET Core model binding or data-annotation validation fails, the
+response extends `ProblemDetails` with an `errors` dictionary keyed by field
+name:
+
+| Field    | Type                          | Description                         |
+|----------|-------------------------------|-------------------------------------|
+| `errors` | `object` (field → string[ ]) | One entry per invalid field.         |
+
+### Example responses
+
+#### 400 — Validation error
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+  "title": "One or more validation errors occurred.",
+  "status": 400,
+  "errors": {
+    "Username": ["The Username field is required."],
+    "Email": ["The Email field is not a valid e-mail address."]
+  },
+  "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+}
+```
+
+#### 404 — Not found
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.5",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Player not found.",
+  "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+}
+```
+
+#### 409 — Conflict
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.10",
+  "title": "Conflict",
+  "status": 409,
+  "detail": "A pending join request already exists for this player and team.",
+  "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+}
+```
+
+#### 500 — Unexpected error
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.6.1",
+  "title": "Internal Server Error",
+  "status": 500,
+  "detail": "An unexpected error occurred. Please try again later.",
+  "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+}
+```
 
 ---
 
