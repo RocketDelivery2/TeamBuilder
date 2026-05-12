@@ -10,11 +10,13 @@ namespace TeamBuilder.Api.Controllers;
 public class EventsController : ControllerBase
 {
     private readonly IEventService _eventService;
+    private readonly ICurrentUserContext _currentUser;
     private readonly ILogger<EventsController> _logger;
 
-    public EventsController(IEventService eventService, ILogger<EventsController> logger)
+    public EventsController(IEventService eventService, ICurrentUserContext currentUser, ILogger<EventsController> logger)
     {
         _eventService = eventService;
+        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -55,15 +57,12 @@ public class EventsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<EventDto>> Create(
         [FromBody] CreateEventDto createEventDto,
-        [FromHeader(Name = "X-User-Id")] Guid? userId = null,
         CancellationToken cancellationToken = default)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var hostId = userId ?? Guid.Empty;
-
-        var teamEvent = await _eventService.CreateAsync(createEventDto, hostId, cancellationToken);
+        var teamEvent = await _eventService.CreateAsync(createEventDto, _currentUser.UserId, cancellationToken);
         var safeEventName = SanitizeForLog(teamEvent.Name);
         _logger.LogInformation("Created event {EventId} with name {EventName}", teamEvent.Id, safeEventName);
         return CreatedAtAction(nameof(GetById), new { id = teamEvent.Id }, teamEvent);
