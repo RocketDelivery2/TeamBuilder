@@ -773,7 +773,7 @@ ASP.NET Core health check endpoint. The check is registered under the name
 |---|---|
 | **No authentication** | The `X-User-Id` header is a placeholder. Any caller can impersonate any user ID. A future PR should add authentication (JWT / Azure AD). |
 | **No authorization** | Any caller can modify any resource. Future PR needed. |
-| **No data annotations / FluentValidation** | DTOs have no `[Required]` or `[MaxLength]` attributes. Model state validation is therefore minimal. Future PR recommended. |
+| **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **`PaginatedResult<T>` uses `typeof(object)`** | Several `GetAll` endpoints declare `[ProducesResponseType(typeof(object))]` instead of the concrete paginated type. This reduces Swagger schema quality. Future PR recommended. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
@@ -786,11 +786,10 @@ ASP.NET Core health check endpoint. The check is registered under the name
 See [deployment-next-steps.md](deployment-next-steps.md) for the full list.
 Short-term API-only improvements:
 
-1. Add `[Required]` and `[MaxLength]` data annotations to all DTOs.
-2. Replace `typeof(object)` on paginated list endpoints with
+1. Replace `typeof(object)` on paginated list endpoints with
    `typeof(PaginatedResult<TeamDto>)` etc.
-3. Add authentication (JWT Bearer / Azure AD / ASP.NET Core Identity).
-4. Add authorization policies (team owner, admin roles).
-5. Add a `WebApplicationFactory`-based integration test project.
-6. Add a `/health/ready` readiness probe distinct from the liveness check.
-7. Add request logging middleware or structured telemetry.
+2. Add authentication (JWT Bearer / Azure AD / ASP.NET Core Identity).
+3. Add authorization policies (team owner, admin roles).
+4. Add a `WebApplicationFactory`-based integration test project.
+5. Add a `/health/ready` readiness probe distinct from the liveness check.
+6. Add request logging middleware or structured telemetry.
