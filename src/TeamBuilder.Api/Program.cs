@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TeamBuilder.Api.Errors;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
 using TeamBuilder.Infrastructure.Services;
@@ -18,6 +19,10 @@ builder.Services.AddScoped<IPlayerService, PlayerService>();
 builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
+
+// Add ProblemDetails support
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
 // Add controllers
 builder.Services.AddControllers();
@@ -58,6 +63,8 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
+app.UseExceptionHandler();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -65,11 +72,6 @@ if (app.Environment.IsDevelopment())
     {
         options.SwaggerEndpoint("/swagger/v1/swagger.json", "TeamBuilder API v1");
     });
-    app.UseDeveloperExceptionPage();
-}
-else
-{
-    app.UseExceptionHandler("/error");
 }
 
 app.UseHttpsRedirection();

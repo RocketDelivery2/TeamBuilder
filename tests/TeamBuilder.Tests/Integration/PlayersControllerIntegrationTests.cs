@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Models;
@@ -144,7 +145,7 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
     }
 
     [Fact]
-    public async Task Create_WithDuplicateUsername_Returns400()
+    public async Task Create_WithDuplicateUsername_Returns409Conflict()
     {
         // Arrange — seed the player first so the username is taken
         var username = $"dup-{Guid.NewGuid():N}";
@@ -156,7 +157,10 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
         var response = await _client.PostAsJsonAsync("/api/v1/players", dto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        problem.Should().NotBeNull();
+        problem!.Status.Should().Be(StatusCodes.Status409Conflict);
     }
 
     // ── PUT /api/v1/players/{id} ─────────────────────────────────────────────
@@ -185,6 +189,23 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
         updated.Region.Should().Be("EU");
     }
 
+    [Fact]
+    public async Task Update_WithInvalidPayload_Returns400WithProblemDetails()
+    {
+        // Arrange — DisplayName exceeds MaxLength
+        var player = await SeedPlayerAsync($"inv-{Guid.NewGuid():N}");
+        var dto = new UpdatePlayerDto { DisplayName = new string('x', 300) };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/v1/players/{player.Id}", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ValidationProblemDetails>();
+        problem.Should().NotBeNull();
+        problem!.Status.Should().Be(StatusCodes.Status400BadRequest);
+        problem.Errors.Should().NotBeEmpty();
+    }
     [Fact]
     public async Task Update_WhenPlayerDoesNotExist_Returns404()
     {
