@@ -361,3 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Local AI scratch files (not tracked; automation scripts and appended history ARE tracked)
+.ai/latest-terminal-output.md
+.ai/terminal-history.md
+.ai/copilot-session.md
+.ai/todo.md
+.ai/ai-handoff-latest.txt
+.ai/*.bak

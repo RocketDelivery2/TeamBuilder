@@ -1,0 +1,3 @@
+# TeamBuilder Terminal Checkin History
+
+This file is automatically appended during commits to main.
