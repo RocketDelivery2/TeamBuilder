@@ -30,13 +30,18 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
             foreach (var d in dbDescriptors)
                 services.Remove(d);
 
-            // Also remove SqlServer health check so the host can start without a real DB.
+            // Remove all health check registrations so the host can start without a real DB.
+            // HealthCheckRegistration instances are held inside IConfigureOptions<HealthCheckServiceOptions>;
+            // the simplest cross-platform approach is to clear them via post-configure.
             var healthDescriptors = services
                 .Where(d => d.ServiceType.FullName?.Contains("SqlServer") == true ||
                             d.ImplementationType?.FullName?.Contains("SqlServer") == true)
                 .ToList();
             foreach (var d in healthDescriptors)
                 services.Remove(d);
+
+            services.Configure<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>(opts =>
+                opts.Registrations.Clear());
 
             // Register an in-memory database isolated per factory instance.
             services.AddDbContext<TeamBuilderDbContext>(options =>
