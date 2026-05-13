@@ -77,10 +77,24 @@ public class RosterImportsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<RosterImportDto>> Process(
         Guid id,
         CancellationToken cancellationToken = default)
     {
+        var existing = await _rosterImportService.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
+        {
+            _logger.LogInformation("Roster import with ID {RosterImportId} not found for processing", id);
+            return NotFound();
+        }
+
+        if (existing.ImportedByUserId != _currentUser.UserId)
+        {
+            _logger.LogInformation("User {UserId} is not the importer of roster import {RosterImportId}", _currentUser.UserId, id);
+            return Forbid();
+        }
+
         var rosterImport = await _rosterImportService.ProcessAsync(id, _currentUser.UserId, cancellationToken);
         if (rosterImport == null)
         {
@@ -97,15 +111,23 @@ public class RosterImportsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        var result = await _rosterImportService.DeleteAsync(id, cancellationToken);
-        if (!result)
+        var existing = await _rosterImportService.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
         {
             _logger.LogInformation("Roster import with ID {RosterImportId} not found for deletion", id);
             return NotFound();
         }
 
+        if (existing.ImportedByUserId != _currentUser.UserId)
+        {
+            _logger.LogInformation("User {UserId} is not the importer of roster import {RosterImportId}", _currentUser.UserId, id);
+            return Forbid();
+        }
+
+        await _rosterImportService.DeleteAsync(id, cancellationToken);
         _logger.LogInformation("Deleted roster import {RosterImportId}", id);
         return NoContent();
     }

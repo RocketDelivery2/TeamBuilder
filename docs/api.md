@@ -132,20 +132,23 @@ X-Request-Id: my-client-trace-001
 
 ## Authentication
 
-> **Status: Phase 3 — Ownership authorization enforced on team mutation endpoints.**
+> **Status: Phase 3 — Ownership authorization enforced on team, event, and roster import mutation endpoints.**
 > See [`docs/auth-plan.md`](auth-plan.md) for the full phased implementation plan.
 
 ### Ownership authorization (Phase 3)
 
-Team mutation endpoints enforce ownership in addition to authentication.
-Only the user whose `sub` claim matches the team's `OwnerId` may update or
-delete a team. Authenticated users who do not own the team receive
-`403 Forbidden`. Unauthenticated requests continue to receive `401 Unauthorized`.
+Mutation endpoints enforce ownership in addition to authentication.
+Authenticated users who do not own the resource receive `403 Forbidden`.
+Unauthenticated requests continue to receive `401 Unauthorized`.
 
-| Method | Path | Ownership check |
-|---|---|---|
-| `PUT` | `/api/v1/teams/{id}` | `sub` claim must match `OwnerId`. |
-| `DELETE` | `/api/v1/teams/{id}` | `sub` claim must match `OwnerId`. |
+| Method | Path | Owner field | Ownership check |
+|---|---|---|---|
+| `PUT` | `/api/v1/teams/{id}` | `OwnerId` | `sub` claim must match `OwnerId`. |
+| `DELETE` | `/api/v1/teams/{id}` | `OwnerId` | `sub` claim must match `OwnerId`. |
+| `PUT` | `/api/v1/events/{id}` | `HostId` | `sub` claim must match `HostId`. |
+| `DELETE` | `/api/v1/events/{id}` | `HostId` | `sub` claim must match `HostId`. |
+| `PUT` | `/api/v1/rosterimports/{id}/process` | `ImportedByUserId` | `sub` claim must match `ImportedByUserId`. |
+| `DELETE` | `/api/v1/rosterimports/{id}` | `ImportedByUserId` | `sub` claim must match `ImportedByUserId`. |
 
 ### Protected endpoints (require `Authorization: Bearer <token>`)
 
@@ -161,11 +164,11 @@ without a valid token receive `401 Unauthorized`.
 | `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from `sub` claim. |
 | `PUT` | `/api/v1/joinrequests/{id}/process` | Identifies processing user from `sub` claim. |
 | `POST` | `/api/v1/events` | Sets `HostId` from `sub` claim. |
-| `PUT` | `/api/v1/events/{id}` | Requires authentication. |
-| `DELETE` | `/api/v1/events/{id}` | Requires authentication. |
+| `PUT` | `/api/v1/events/{id}` | Requires authentication; host only (see above). |
+| `DELETE` | `/api/v1/events/{id}` | Requires authentication; host only (see above). |
 | `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from `sub` claim. |
-| `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication. |
-| `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication. |
+| `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication; importer only (see above). |
+| `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication; importer only (see above). |
 
 ### Anonymous endpoints (no token required)
 

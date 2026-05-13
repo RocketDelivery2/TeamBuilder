@@ -78,6 +78,7 @@ public class EventsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<EventDto>> Update(
         Guid id,
         [FromBody] UpdateEventDto updateEventDto,
@@ -86,15 +87,22 @@ public class EventsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var teamEvent = await _eventService.UpdateAsync(id, updateEventDto, cancellationToken);
-        if (teamEvent == null)
+        var existing = await _eventService.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
         {
             _logger.LogInformation("Event with ID {EventId} not found for update", id);
             return NotFound();
         }
 
+        if (existing.HostId != _currentUser.UserId)
+        {
+            _logger.LogInformation("User {UserId} is not the host of event {EventId}", _currentUser.UserId, id);
+            return Forbid();
+        }
+
+        var teamEvent = await _eventService.UpdateAsync(id, updateEventDto, cancellationToken);
         _logger.LogInformation("Updated event {EventId}", id);
-        return Ok(teamEvent);
+        return Ok(teamEvent!);
     }
 
     [HttpDelete("{id}")]
@@ -102,15 +110,23 @@ public class EventsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        var result = await _eventService.DeleteAsync(id, cancellationToken);
-        if (!result)
+        var existing = await _eventService.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
         {
             _logger.LogInformation("Event with ID {EventId} not found for deletion", id);
             return NotFound();
         }
 
+        if (existing.HostId != _currentUser.UserId)
+        {
+            _logger.LogInformation("User {UserId} is not the host of event {EventId}", _currentUser.UserId, id);
+            return Forbid();
+        }
+
+        await _eventService.DeleteAsync(id, cancellationToken);
         _logger.LogInformation("Deleted event {EventId}", id);
         return NoContent();
     }
