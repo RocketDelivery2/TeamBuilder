@@ -8,7 +8,7 @@ middle layer between any client-side frontend and the backend data platform.
 
 - **Base path:** `api/v1`
 - **Format:** JSON (request and response)
-- **Authentication:** Temporary `X-User-Id` header placeholder (not production-safe).
+- **Authentication:** JWT Bearer (optional, phase 1) with `X-User-Id` header fallback.
   See [Authentication](#authentication) for current behavior and migration plan.
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
 - **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
@@ -132,45 +132,71 @@ X-Request-Id: my-client-trace-001
 
 ## Authentication
 
-> **Status: temporary placeholder — not production-safe.**
+> **Status: Phase 1 — JWT Bearer configured, optional on all endpoints.**
 > See [`docs/auth-plan.md`](auth-plan.md) for the full phased implementation plan.
 
-### Current behavior (X-User-Id header)
+### Current behavior (transition period)
 
-Endpoints that require a caller identity read an `X-User-Id` HTTP request header
-and treat the value as the acting player's ID.
+TeamBuilder supports two caller-identity mechanisms in parallel during Phase 1:
 
-| Scenario | Behavior |
+1. **JWT Bearer token** — Send `Authorization: Bearer <token>`. When a valid
+   token is present, the `sub` claim (configurable via `Jwt:PlayerIdClaim`) is
+   used as the caller's player ID.
+2. **`X-User-Id` header fallback** — When no authenticated JWT is present, the
+   `X-User-Id` header is read as before. Existing Postman smoke tests and local
+   `curl` workflows continue to work unchanged.
+
+| Scenario | `UserId` value |
 |---|---|
-| Valid GUID in `X-User-Id` | Used as the caller's player ID. |
-| Header missing | `Guid.Empty` (`00000000-0000-0000-0000-000000000000`) is used. |
-| Header present but not a valid GUID | `Guid.Empty` is used. |
+| Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
+| JWT present but invalid / expired | Falls through to `X-User-Id` header |
+| No JWT, valid `X-User-Id` header | GUID from the header |
+| No JWT, missing / invalid `X-User-Id` | `Guid.Empty` |
 
-**Security warning:** No token validation, signature verification, or session
-management is performed. Any caller can supply any GUID and impersonate any
-player. This mechanism is suitable only for local development and early API
-testing.
+No `[Authorize]` attribute has been added to any endpoint yet. JWT is
+**optional** on all existing routes.
 
 ```http
+POST /api/v1/teams HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+```
+
+```http
+# Legacy fallback — still works during the transition period
 POST /api/v1/teams HTTP/1.1
 X-User-Id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
 Content-Type: application/json
 ```
 
-### Future behavior (JWT claims)
+### Local development — issuing tokens with `dotnet user-jwts`
 
-When authentication is added (see `auth-plan.md` Phase 1–3), `X-User-Id` will
-be replaced by a standard `Authorization: Bearer <token>` header. The
-`ICurrentUserContext` abstraction is already in place — controllers and services
-will require no changes when the underlying implementation switches from
-`HeaderCurrentUserContext` to `ClaimsUserContext`.
+```powershell
+cd src/TeamBuilder.Api
 
-Clients will need to:
+# Issue a dev token (stores signing key in user-secrets automatically)
+dotnet user-jwts create --audience teambuilder-api --claim sub=<your-player-guid>
+```
 
-1. Obtain a JWT from the configured identity provider.
-2. Send `Authorization: Bearer <token>` instead of `X-User-Id`.
+Copy the printed token into Postman as `Authorization: Bearer <token>`.
 
-The API routes, status codes, and response shapes will not change.
+To align with TeamBuilder's `Jwt:SigningKey` config path, copy the generated
+key into user-secrets:
+
+```powershell
+dotnet user-secrets set "Jwt:SigningKey" "<key-from-user-jwts>"
+dotnet user-secrets set "Jwt:Issuer"     "dotnet-user-jwts"
+```
+
+See [`docs/auth-plan.md`](auth-plan.md) for all configuration keys and the
+full transition-behavior table.
+
+### Future — JWT enforcement (Phase 2)
+
+In a future PR, `[Authorize]` will be added to write endpoints. At that point,
+the `X-User-Id` fallback will no longer be sufficient for protected routes —
+callers must supply a valid Bearer token. The API routes, status codes, and
+response shapes will not change.
 
 ---
 

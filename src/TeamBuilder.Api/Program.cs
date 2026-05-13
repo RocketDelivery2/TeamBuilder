@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
@@ -22,9 +23,60 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
-// Add user context (reads X-User-Id header; will be replaced by claims-based context)
+// Add user context (reads claims from authenticated principal; falls back to X-User-Id header during transition)
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<ICurrentUserContext, HeaderCurrentUserContext>();
+builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
+
+// Add JWT Bearer authentication
+// Local development: use `dotnet user-jwts` to issue tokens (see docs/auth-plan.md).
+// No [Authorize] is required yet; authentication is optional on all existing endpoints.
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer();
+builder.Services.AddAuthorization();
+
+// Configure JWT Bearer options via IConfigureOptions so that test overrides via
+// ConfigureAppConfiguration are read at options resolution time, not registration time.
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IConfiguration>((options, config) =>
+    {
+        var jwtSection = config.GetSection("Jwt");
+        var jwtSigningKey = jwtSection["SigningKey"];
+        var jwtAuthority  = jwtSection["Authority"];
+        var jwtIssuer     = jwtSection["Issuer"];
+        var jwtAudience   = jwtSection["Audience"];
+
+        if (!string.IsNullOrWhiteSpace(jwtSigningKey))
+        {
+            // Symmetric key path: used for local development (dotnet user-jwts) and tests.
+            // No OIDC metadata discovery; Authority is intentionally not set.
+            // MapInboundClaims = false preserves raw JWT claim names (e.g. "sub", not the
+            // WS-Security URI) so that Jwt:PlayerIdClaim = "sub" resolves correctly.
+            options.MapInboundClaims = false;
+            options.RequireHttpsMetadata = false;
+            options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+                    System.Text.Encoding.UTF8.GetBytes(jwtSigningKey)),
+                ValidateIssuer    = !string.IsNullOrWhiteSpace(jwtIssuer),
+                ValidIssuer       = jwtIssuer,
+                ValidateAudience  = !string.IsNullOrWhiteSpace(jwtAudience),
+                ValidAudience     = jwtAudience,
+                ValidateLifetime  = true,
+                ClockSkew         = System.TimeSpan.Zero
+            };
+        }
+        else
+        {
+            // OIDC authority path: used in staging/production with a real identity provider.
+            options.MapInboundClaims                           = false;
+            options.Authority              = string.IsNullOrWhiteSpace(jwtAuthority) ? null : jwtAuthority;
+            options.Audience               = jwtAudience;
+            options.RequireHttpsMetadata   = jwtSection.GetValue("RequireHttpsMetadata", defaultValue: true);
+            options.TokenValidationParameters.ValidateAudience = !string.IsNullOrWhiteSpace(jwtAudience);
+            options.TokenValidationParameters.ValidateIssuer   = !string.IsNullOrWhiteSpace(jwtAuthority);
+        }
+    });
 
 // Add ProblemDetails support
 builder.Services.AddProblemDetails();
@@ -88,6 +140,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("AllowAll");
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
