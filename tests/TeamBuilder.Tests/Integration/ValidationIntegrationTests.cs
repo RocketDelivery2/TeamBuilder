@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -21,26 +22,28 @@ public sealed class ValidationIntegrationTests : IClassFixture<TeamBuilderWebApp
     }
 
     /// <summary>
-    /// Sends a POST request with a per-request X-User-Id header so tests do not
-    /// mutate shared HttpClient.DefaultRequestHeaders.
+    /// Sends a POST request with a JWT Bearer token so tests pass the [Authorize] gate
+    /// and reach the model validation layer.
     /// </summary>
     private Task<HttpResponseMessage> PostWithUserIdAsync<T>(string url, T dto, Guid? userId = null)
     {
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(userId ?? Guid.NewGuid());
         var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = JsonContent.Create(dto)
         };
-        request.Headers.Add("X-User-Id", (userId ?? Guid.NewGuid()).ToString());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return _client.SendAsync(request);
     }
 
     private Task<HttpResponseMessage> PostJsonStringWithUserIdAsync(string url, string json, Guid? userId = null)
     {
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(userId ?? Guid.NewGuid());
         var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
-        request.Headers.Add("X-User-Id", (userId ?? Guid.NewGuid()).ToString());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return _client.SendAsync(request);
     }
 
@@ -182,11 +185,12 @@ public sealed class ValidationIntegrationTests : IClassFixture<TeamBuilderWebApp
     {
         // Arrange — Status [EnumDataType(typeof(RequestStatus))]; 99 is not a valid value
         var json = """{"status": 99}""";
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
         var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{Guid.NewGuid()}/process")
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
-        request.Headers.Add("X-User-Id", Guid.NewGuid().ToString());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
         var response = await _client.SendAsync(request);

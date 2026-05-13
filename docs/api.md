@@ -8,8 +8,8 @@ middle layer between any client-side frontend and the backend data platform.
 
 - **Base path:** `api/v1`
 - **Format:** JSON (request and response)
-- **Authentication:** JWT Bearer (optional, phase 1) with `X-User-Id` header fallback.
-  See [Authentication](#authentication) for current behavior and migration plan.
+- **Authentication:** JWT Bearer required on write endpoints; read and health endpoints are public.
+  See [Authentication](#authentication) for details and local dev token setup.
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
 - **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
 
@@ -132,40 +132,60 @@ X-Request-Id: my-client-trace-001
 
 ## Authentication
 
-> **Status: Phase 1 — JWT Bearer configured, optional on all endpoints.**
+> **Status: Phase 2 — JWT Bearer required on all write endpoints.**
 > See [`docs/auth-plan.md`](auth-plan.md) for the full phased implementation plan.
 
-### Current behavior (transition period)
+### Protected endpoints (require `Authorization: Bearer <token>`)
 
-TeamBuilder supports two caller-identity mechanisms in parallel during Phase 1:
+The following write endpoints require a valid JWT Bearer token. Requests
+without a valid token receive `401 Unauthorized`.
 
-1. **JWT Bearer token** — Send `Authorization: Bearer <token>`. When a valid
-   token is present, the `sub` claim (configurable via `Jwt:PlayerIdClaim`) is
-   used as the caller's player ID.
-2. **`X-User-Id` header fallback** — When no authenticated JWT is present, the
-   `X-User-Id` header is read as before. Existing Postman smoke tests and local
-   `curl` workflows continue to work unchanged.
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/api/v1/teams` | Sets `OwnerId` from `sub` claim. |
+| `PUT` | `/api/v1/teams/{id}` | Requires authentication. |
+| `DELETE` | `/api/v1/teams/{id}` | Requires authentication. |
+| `POST` | `/api/v1/teams/{teamId}/members/{playerId}/leave` | Requires authentication. |
+| `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from `sub` claim. |
+| `PUT` | `/api/v1/joinrequests/{id}/process` | Identifies processing user from `sub` claim. |
+| `POST` | `/api/v1/events` | Sets `HostId` from `sub` claim. |
+| `PUT` | `/api/v1/events/{id}` | Requires authentication. |
+| `DELETE` | `/api/v1/events/{id}` | Requires authentication. |
+| `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from `sub` claim. |
+| `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication. |
+| `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication. |
+
+### Anonymous endpoints (no token required)
+
+| Method | Path |
+|---|---|
+| `GET` | `/health` |
+| `GET` | `/health/ready` |
+| `GET` | `/api/v1/teams`, `/api/v1/teams/{id}` |
+| `GET` | `/api/v1/joinrequests/{id}`, `/api/v1/joinrequests/teams/{teamId}`, `/api/v1/joinrequests/players/{playerId}` |
+| `GET` | `/api/v1/events`, `/api/v1/events/{id}` |
+| `GET` | `/api/v1/rosterimports`, `/api/v1/rosterimports/{id}` |
+| `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
+| `GET` | `/swagger` (Development only) |
+
+### `X-User-Id` transition behavior
+
+The `X-User-Id` header fallback is still wired in `ClaimsCurrentUserContext`
+but is no longer sufficient to call any protected write endpoint — the
+middleware gate returns `401` before the controller sees the header. The header
+remains available as a last-resort fallback for unauthenticated contexts.
 
 | Scenario | `UserId` value |
 |---|---|
 | Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
-| JWT present but invalid / expired | Falls through to `X-User-Id` header |
-| No JWT, valid `X-User-Id` header | GUID from the header |
-| No JWT, missing / invalid `X-User-Id` | `Guid.Empty` |
-
-No `[Authorize]` attribute has been added to any endpoint yet. JWT is
-**optional** on all existing routes.
+| JWT present but invalid / expired | `Guid.Empty` (falls through to header) |
+| No JWT on a **protected** endpoint | `401 Unauthorized` |
+| No JWT, valid `X-User-Id` on public endpoint | GUID from the header |
+| No JWT, missing / invalid `X-User-Id` on public endpoint | `Guid.Empty` |
 
 ```http
 POST /api/v1/teams HTTP/1.1
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-Content-Type: application/json
-```
-
-```http
-# Legacy fallback — still works during the transition period
-POST /api/v1/teams HTTP/1.1
-X-User-Id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
 Content-Type: application/json
 ```
 
@@ -190,13 +210,6 @@ dotnet user-secrets set "Jwt:Issuer"     "dotnet-user-jwts"
 
 See [`docs/auth-plan.md`](auth-plan.md) for all configuration keys and the
 full transition-behavior table.
-
-### Future — JWT enforcement (Phase 2)
-
-In a future PR, `[Authorize]` will be added to write endpoints. At that point,
-the `X-User-Id` fallback will no longer be sufficient for protected routes —
-callers must supply a valid Bearer token. The API routes, status codes, and
-response shapes will not change.
 
 ---
 
@@ -448,13 +461,13 @@ Returns a paginated list of teams.
 
 #### `POST api/v1/teams`
 
-Creates a new team. Requires `X-User-Id` header to set the owner.
+Creates a new team. Requires `Authorization: Bearer <token>`. Sets `OwnerId` from the JWT `sub` claim.
 
 **Headers:**
 
-| Header      | Type | Description        |
-|-------------|------|--------------------|
-| `X-User-Id` | Guid | Caller's player ID |
+| Header | Type | Description |
+|---|---|---|
+| `Authorization` | string | `Bearer <jwt-token>` |
 
 **Request body:**
 
@@ -576,13 +589,13 @@ Returns paginated join requests for a player.
 #### `POST api/v1/joinrequests`
 
 Submits a join request. Only one pending request per player per team is allowed.
-Requires `X-User-Id` header to identify the requesting player.
+Requires `Authorization: Bearer <token>`. Sets `PlayerId` from the JWT `sub` claim.
 
 **Headers:**
 
-| Header      | Type | Description        |
-|-------------|------|--------------------|
-| `X-User-Id` | Guid | Caller's player ID |
+| Header | Type | Description |
+|---|---|---|
+| `Authorization` | string | `Bearer <jwt-token>` |
 
 **Request body:**
 
@@ -607,13 +620,13 @@ Only `Pending` requests can be processed. Approving a request:
 - Increments `Team.CurrentMemberCount`.
 - Sets team status to `Full` if at capacity.
 
-Requires `X-User-Id` header for the processing user.
+Requires `Authorization: Bearer <token>` for the processing user.
 
 **Headers:**
 
-| Header      | Type | Description           |
-|-------------|------|-----------------------|
-| `X-User-Id` | Guid | Caller's player ID    |
+| Header | Type | Description |
+|---|---|---|
+| `Authorization` | string | `Bearer <jwt-token>` |
 
 **Request body:**
 
@@ -685,13 +698,13 @@ Returns a paginated list of events, ordered by `EventDateUtc` ascending.
 
 #### `POST api/v1/events`
 
-Creates a new event. Requires `X-User-Id` header to set the host.
+Creates a new event. Requires `Authorization: Bearer <token>`. Sets `HostId` from the JWT `sub` claim.
 
 **Headers:**
 
-| Header      | Type | Description        |
-|-------------|------|--------------------|
-| `X-User-Id` | Guid | Caller's player ID |
+| Header | Type | Description |
+|---|---|---|
+| `Authorization` | string | `Bearer <jwt-token>` |
 
 **Request body:**
 
@@ -788,13 +801,13 @@ Returns a paginated list of roster imports.
 #### `POST api/v1/rosterimports`
 
 Creates a new roster import record. Does not process it immediately.
-Requires `X-User-Id` header to identify the importing user.
+Requires `Authorization: Bearer <token>`. Sets `ImportedByUserId` from the JWT `sub` claim.
 
 **Headers:**
 
-| Header      | Type | Description           |
-|-------------|------|-----------------------|
-| `X-User-Id` | Guid | Caller's player ID    |
+| Header | Type | Description |
+|---|---|---|
+| `Authorization` | string | `Bearer <jwt-token>` |
 
 **Request body:**
 
@@ -817,13 +830,13 @@ Processes a roster import. Parses CSV `rawData` (format: `Name,Role,Notes`),
 creates `Player` records for any unrecognized usernames, and marks the import
 as processed. Can only be processed once.
 
-Requires `X-User-Id` header.
+Requires `Authorization: Bearer <token>`.
 
 **Headers:**
 
-| Header      | Type | Description           |
-|-------------|------|-----------------------|
-| `X-User-Id` | Guid | Caller's player ID    |
+| Header | Type | Description |
+|---|---|---|
+| `Authorization` | string | `Bearer <jwt-token>` |
 
 **Response `200`:** Updated `RosterImportDto` with `processingNotes`.  
 **Response `404`:** Roster import not found.  
@@ -879,8 +892,7 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 
 | Limitation | Detail |
 |---|---|
-| **No authentication** | The `X-User-Id` header is a placeholder. Any caller can impersonate any user ID. A future PR should add authentication (JWT / Azure AD). |
-| **No authorization** | Any caller can modify any resource. Future PR needed. |
+| **No ownership authorization** | Any authenticated caller can modify any resource (e.g., update another user's team). Role/policy-based authorization is planned for Phase 3. |
 | **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
@@ -893,6 +905,9 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 See [deployment-next-steps.md](deployment-next-steps.md) for the full list.
 Short-term API-only improvements:
 
-1. Add authentication (JWT Bearer / Azure AD / ASP.NET Core Identity).
-2. Add authorization policies (team owner, admin roles).
-3. Add a `WebApplicationFactory`-based integration test project.
+1. Add ownership/role authorization policies (team owner, admin roles).
+2. Select and integrate an identity provider (Azure AD B2C, Auth0, etc.).
+3. Remove `X-User-Id` header fallback once all callers have migrated to JWT.
+
+git commit -m "feat(auth): enforce JWT Bearer on all write endpoints (phase 2)"
+git push origin api/auth-enforcement-phase2
