@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
@@ -54,8 +55,10 @@ public class EventsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize]
     [ProducesResponseType(typeof(EventDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<EventDto>> Create(
         [FromBody] CreateEventDto createEventDto,
         CancellationToken cancellationToken = default)
@@ -70,9 +73,11 @@ public class EventsController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [Authorize]
     [ProducesResponseType(typeof(EventDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<EventDto>> Update(
         Guid id,
         [FromBody] UpdateEventDto updateEventDto,
@@ -93,8 +98,10 @@ public class EventsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         var result = await _eventService.DeleteAsync(id, cancellationToken);

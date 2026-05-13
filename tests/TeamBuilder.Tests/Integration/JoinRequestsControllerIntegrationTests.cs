@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -110,11 +111,12 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         // Arrange
         var (team, player) = await SeedTeamAndPlayerAsync();
         var dto = new CreateJoinRequestDto { TeamId = team.Id, Message = "Please let me join!" };
-
-        // Act — X-User-Id header acts as the authenticated player identity
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Add("X-User-Id", player.Id.ToString());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
         var response = await _client.SendAsync(request);
 
         // Assert
@@ -126,6 +128,20 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     }
 
     [Fact]
+    public async Task Create_WithoutJwt_Returns401()
+    {
+        // Arrange — no Authorization header
+        var (team, _) = await SeedTeamAndPlayerAsync();
+        var dto = new CreateJoinRequestDto { TeamId = team.Id };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/v1/joinrequests", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
     public async Task Create_DuplicatePendingRequest_Returns409Conflict()
     {
         // Arrange — seed an already-pending request for the same team/player
@@ -133,10 +149,10 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         await SeedPendingJoinRequestAsync(team.Id, player.Id);
 
         var dto = new CreateJoinRequestDto { TeamId = team.Id };
-
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Add("X-User-Id", player.Id.ToString());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -157,9 +173,13 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         var (team, player) = await SeedTeamAndPlayerAsync();
         var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process");
+        request.Content = JsonContent.Create(processDto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/v1/joinrequests/{jr.Id}/process", processDto);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -174,9 +194,13 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         var (team, player) = await SeedTeamAndPlayerAsync();
         var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Rejected };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process");
+        request.Content = JsonContent.Create(processDto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/v1/joinrequests/{jr.Id}/process", processDto);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -189,11 +213,30 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     {
         // Arrange
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{Guid.NewGuid()}/process");
+        request.Content = JsonContent.Create(processDto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/v1/joinrequests/{Guid.NewGuid()}/process", processDto);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Process_WithoutJwt_Returns401()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
+
+        // Act — no Authorization header
+        var response = await _client.PutAsJsonAsync($"/api/v1/joinrequests/{jr.Id}/process", processDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 }
