@@ -132,8 +132,20 @@ X-Request-Id: my-client-trace-001
 
 ## Authentication
 
-> **Status: Phase 2 — JWT Bearer required on all write endpoints.**
+> **Status: Phase 3 — Ownership authorization enforced on team mutation endpoints.**
 > See [`docs/auth-plan.md`](auth-plan.md) for the full phased implementation plan.
+
+### Ownership authorization (Phase 3)
+
+Team mutation endpoints enforce ownership in addition to authentication.
+Only the user whose `sub` claim matches the team's `OwnerId` may update or
+delete a team. Authenticated users who do not own the team receive
+`403 Forbidden`. Unauthenticated requests continue to receive `401 Unauthorized`.
+
+| Method | Path | Ownership check |
+|---|---|---|
+| `PUT` | `/api/v1/teams/{id}` | `sub` claim must match `OwnerId`. |
+| `DELETE` | `/api/v1/teams/{id}` | `sub` claim must match `OwnerId`. |
 
 ### Protected endpoints (require `Authorization: Bearer <token>`)
 
@@ -143,8 +155,8 @@ without a valid token receive `401 Unauthorized`.
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/api/v1/teams` | Sets `OwnerId` from `sub` claim. |
-| `PUT` | `/api/v1/teams/{id}` | Requires authentication. |
-| `DELETE` | `/api/v1/teams/{id}` | Requires authentication. |
+| `PUT` | `/api/v1/teams/{id}` | Requires authentication; owner only (see above). |
+| `DELETE` | `/api/v1/teams/{id}` | Requires authentication; owner only (see above). |
 | `POST` | `/api/v1/teams/{teamId}/members/{playerId}/leave` | Requires authentication. |
 | `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from `sub` claim. |
 | `PUT` | `/api/v1/joinrequests/{id}/process` | Identifies processing user from `sub` claim. |
@@ -235,6 +247,8 @@ All API errors are returned as `application/problem+json` using the
 |---------------------------------------------|--------|---------------------------------|
 | Model validation failure (data annotations) | `400`  | `ValidationProblemDetails`      |
 | Invalid argument (business rule)            | `400`  | `ArgumentException`             |
+| Unauthenticated request on protected route  | `401`  | Auth middleware                 |
+| Authenticated but not resource owner        | `403`  | Ownership check in controller   |
 | Resource not found                          | `404`  | `KeyNotFoundException`          |
 | Conflict (duplicate or invalid state)       | `409`  | `InvalidOperationException`     |
 | Unexpected server error                     | `500`  | Unhandled exception             |
