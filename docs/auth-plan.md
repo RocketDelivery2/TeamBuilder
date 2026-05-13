@@ -2,8 +2,7 @@
 
 This document captures the current temporary user-context behavior, identifies
 affected endpoints, and defines a phased plan for replacing the placeholder
-mechanism with real authentication. **Phase 1 is complete. Phase 2 is in
-progress.**
+**Phase 1 and Phase 2 are complete.**
 
 ---
 
@@ -102,9 +101,11 @@ The claim expected for player identity is **`sub`** (configurable via
 | Request carries | `ICurrentUserContext.UserId` value |
 |---|---|
 | Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
-| JWT present but invalid / expired | `Guid.Empty` (falls through to header) |
-| No JWT, valid `X-User-Id` header | GUID from the header |
-| No JWT, missing / invalid `X-User-Id` | `Guid.Empty` |
+| Invalid / expired JWT on a **protected** endpoint | `401 Unauthorized` |
+| Invalid / expired JWT on a public endpoint | `Guid.Empty` (falls through to `X-User-Id` header) |
+| No JWT on a **protected** endpoint | `401 Unauthorized` |
+| No JWT, valid `X-User-Id` header on a public endpoint | GUID from the header |
+| No JWT, missing / invalid `X-User-Id` on a public endpoint | `Guid.Empty` |
 
 ---
 
