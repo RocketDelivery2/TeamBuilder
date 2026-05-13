@@ -281,4 +281,36 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
+
+    [Fact]
+    public async Task Process_WhenImportedByUserIdIsNull_Returns409()
+    {
+        // Arrange — import seeded without an importer (orphaned)
+        var import = await SeedRosterImportAsync(isProcessed: false, importedByUserId: null);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task Delete_WhenImportedByUserIdIsNull_Returns409()
+    {
+        // Arrange — import seeded without an importer (orphaned)
+        var import = await SeedRosterImportAsync(importedByUserId: null);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/rosterimports/{import.Id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
 }
