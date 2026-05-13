@@ -178,7 +178,8 @@ remains available as a last-resort fallback for unauthenticated contexts.
 | Scenario | `UserId` value |
 |---|---|
 | Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
-| JWT present but invalid / expired | `Guid.Empty` (falls through to header) |
+| Invalid / expired JWT on a **protected** endpoint | `401 Unauthorized` |
+| Invalid / expired JWT on a **public** endpoint | `Guid.Empty` (falls through to `X-User-Id` header) |
 | No JWT on a **protected** endpoint | `401 Unauthorized` |
 | No JWT, valid `X-User-Id` on public endpoint | GUID from the header |
 | No JWT, missing / invalid `X-User-Id` on public endpoint | `Guid.Empty` |
@@ -892,7 +893,7 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 
 | Limitation | Detail |
 |---|---|
-| **No ownership authorization** | Any authenticated caller can modify any resource (e.g., update another user's team). Role/policy-based authorization is planned for Phase 3. |
+| **No ownership authorization** | Any authenticated caller can modify any resource (e.g., update another user's team). Role/policy-based authorization is planned for a future phase — see [`docs/auth-plan.md`](auth-plan.md). |
 | **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
@@ -908,6 +909,3 @@ Short-term API-only improvements:
 1. Add ownership/role authorization policies (team owner, admin roles).
 2. Select and integrate an identity provider (Azure AD B2C, Auth0, etc.).
 3. Remove `X-User-Id` header fallback once all callers have migrated to JWT.
-
-git commit -m "feat(auth): enforce JWT Bearer on all write endpoints (phase 2)"
-git push origin api/auth-enforcement-phase2
