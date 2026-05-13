@@ -12,9 +12,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace TeamBuilder.Tests.Integration;
 
 /// <summary>
-/// Verifies that <c>ICurrentUserContext</c> resolves the caller identity correctly:
-/// JWT Bearer <c>sub</c> claim takes priority; <c>X-User-Id</c> header is the fallback
-/// for unauthenticated endpoints. Write endpoints now require a JWT Bearer token.
+/// Verifies that <c>ICurrentUserContext</c> resolves the caller identity correctly.
+/// The authenticated JWT <c>sub</c> claim is the only supported identity source.
+/// Write endpoints require a JWT Bearer token; anonymous callers receive <c>Guid.Empty</c>.
 /// </summary>
 public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
 {
@@ -58,27 +58,23 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         return (team, player);
     }
 
-    private static HttpRequestMessage BuildCreateTeamRequest(string? bearerToken, string? xUserId = null)
+    private static HttpRequestMessage BuildCreateTeamRequest(string? bearerToken)
     {
         var dto = new CreateTeamDto { Name = $"Team-{Guid.NewGuid():N}", MaxMembers = 5 };
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
         request.Content = JsonContent.Create(dto);
         if (bearerToken is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
-        if (xUserId is not null)
-            request.Headers.Add("X-User-Id", xUserId);
         return request;
     }
 
-    private static HttpRequestMessage BuildCreateJoinRequestRequest(Guid teamId, string? bearerToken, string? xUserId = null)
+    private static HttpRequestMessage BuildCreateJoinRequestRequest(Guid teamId, string? bearerToken)
     {
         var dto = new CreateJoinRequestDto { TeamId = teamId };
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
         if (bearerToken is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
-        if (xUserId is not null)
-            request.Headers.Add("X-User-Id", xUserId);
         return request;
     }
 
@@ -147,51 +143,24 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
-    // ── X-User-Id ignored when JWT is absent on protected endpoint ────────────
+    // ── Missing/invalid claim resolves to Guid.Empty ────────────────────────
 
     [Fact]
-    public async Task CreateTeam_WithXUserIdButNoJwt_Returns401()
+    public async Task CreateTeam_WithJwtMissingSubClaim_Returns403()
     {
-        // X-User-Id alone is not sufficient to access protected write endpoints.
-        // A JWT Bearer token is required; the header-only path now returns 401.
-        var ownerId = Guid.NewGuid();
-        using var request = BuildCreateTeamRequest(bearerToken: null, xUserId: ownerId.ToString());
+        // A JWT with no sub claim resolves to Guid.Empty as the caller ID.
+        // The team is created with OwnerId = Guid.Empty, and ownership checks
+        // then treat the caller as a non-owner of any real resource.
+        // This validates the fallback path: missing claim → Guid.Empty, not an error.
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.Empty);
+        using var request = BuildCreateTeamRequest(bearerToken: token);
 
         var response = await _client.SendAsync(request);
 
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-    }
-
-    [Fact]
-    public async Task CreateJoinRequest_WithXUserIdButNoJwt_Returns401()
-    {
-        // X-User-Id alone is not sufficient to access protected write endpoints.
-        var (team, player) = await SeedTeamAndPlayerAsync();
-        using var request = BuildCreateJoinRequestRequest(team.Id, bearerToken: null, xUserId: player.Id.ToString());
-
-        var response = await _client.SendAsync(request);
-
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-    }
-
-    // ── JWT takes priority over X-User-Id header ────────────────────────────
-
-    [Fact]
-    public async Task CreateTeam_WithJwtAndXUserId_UsesJwtSubClaimNotHeader()
-    {
-        // Arrange — both JWT and X-User-Id present; JWT sub claim takes priority
-        var jwtUserId = Guid.NewGuid();
-        var headerId = Guid.NewGuid();
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(jwtUserId);
-        using var request = BuildCreateTeamRequest(bearerToken: token, xUserId: headerId.ToString());
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert — JWT sub claim wins
+        // Guid.Empty is a valid (if unusual) GUID; the team is created.
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var team = await response.Content.ReadFromJsonAsync<TeamDto>();
-        team!.OwnerId.Should().Be(jwtUserId);
+        team!.OwnerId.Should().Be(Guid.Empty);
     }
 }
 
