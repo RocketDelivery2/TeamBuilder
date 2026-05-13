@@ -24,7 +24,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<TeamEvent> SeedEventAsync(string name = "Test Event")
+    private async Task<TeamEvent> SeedEventAsync(string name = "Test Event", Guid? hostId = null)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
@@ -36,6 +36,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
             EventDateUtc = DateTime.UtcNow.AddDays(7),
             Status = EventStatus.Planned,
             MaxParticipants = 32,
+            HostId = hostId,
             CreatedAtUtc = DateTime.UtcNow,
             RowVersion = []
         };
@@ -141,9 +142,10 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     public async Task Update_WithValidPayload_Returns200()
     {
         // Arrange
-        var ev = await SeedEventAsync($"Update-{Guid.NewGuid():N}");
+        var hostId = Guid.NewGuid();
+        var ev = await SeedEventAsync($"Update-{Guid.NewGuid():N}", hostId);
         var dto = new UpdateEventDto { Name = $"Updated-{Guid.NewGuid():N}" };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(hostId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{ev.Id}");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -192,8 +194,9 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     public async Task Delete_WhenEventExists_Returns204()
     {
         // Arrange
-        var ev = await SeedEventAsync($"Del-{Guid.NewGuid():N}");
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var hostId = Guid.NewGuid();
+        var ev = await SeedEventAsync($"Del-{Guid.NewGuid():N}", hostId);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(hostId);
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{ev.Id}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -230,5 +233,41 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Update_ByNonHost_Returns403()
+    {
+        // Arrange — event seeded with a different host
+        var hostId = Guid.NewGuid();
+        var ev = await SeedEventAsync($"UpdNonHost-{Guid.NewGuid():N}", hostId);
+        var dto = new UpdateEventDto { Name = "Non-host rename" };
+        var nonHostToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{ev.Id}");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonHostToken);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Delete_ByNonHost_Returns403()
+    {
+        // Arrange — event seeded with a different host
+        var hostId = Guid.NewGuid();
+        var ev = await SeedEventAsync($"DelNonHost-{Guid.NewGuid():N}", hostId);
+        var nonHostToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{ev.Id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonHostToken);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }
