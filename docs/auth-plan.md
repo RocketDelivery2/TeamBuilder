@@ -144,11 +144,15 @@ The claim expected for player identity is **`sub`** (configurable via
   - `PUT /api/v1/rosterimports/{id}/process`, `DELETE /api/v1/rosterimports/{id}` — checks `ImportedByUserId`.
 - Authenticated users who do not own the resource receive `403 Forbidden`.
 - Unauthenticated requests continue to receive `401 Unauthorized`.
+- Orphaned resources (where `HostId` or `ImportedByUserId` is `null`) return `409 Conflict`
+  for any authenticated mutation attempt, making the failure explicit rather than silently
+  denying all callers with `403`. An administrator path for orphan remediation is deferred.
 - Create endpoints (`POST`) still set the owner/host/importer field from the `sub` claim as before.
 - `X-User-Id` fallback remains wired in `ClaimsCurrentUserContext` — full removal
   is deferred to a follow-up PR to avoid breaking the transition path.
 - Integration tests updated: non-owner/non-host/non-importer 403 coverage added;
-  existing success tests updated to seed resources with a matching owner ID.
+  orphaned-resource 409 coverage added; existing success tests seed resources with
+  a matching owner ID.
 
 ### Phase 4 — Identity Provider Selection
 

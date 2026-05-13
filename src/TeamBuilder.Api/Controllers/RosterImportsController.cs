@@ -74,10 +74,11 @@ public class RosterImportsController : ControllerBase
     [HttpPut("{id}/process")]
     [Authorize]
     [ProducesResponseType(typeof(RosterImportDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<RosterImportDto>> Process(
         Guid id,
         CancellationToken cancellationToken = default)
@@ -87,6 +88,12 @@ public class RosterImportsController : ControllerBase
         {
             _logger.LogInformation("Roster import with ID {RosterImportId} not found for processing", id);
             return NotFound();
+        }
+
+        if (existing.ImportedByUserId == null)
+        {
+            _logger.LogInformation("Roster import {RosterImportId} has no importer; cannot process orphaned import", id);
+            return Conflict(new { message = "This roster import has no owner and cannot be processed. Contact an administrator." });
         }
 
         if (existing.ImportedByUserId != _currentUser.UserId)
@@ -109,9 +116,10 @@ public class RosterImportsController : ControllerBase
     [HttpDelete("{id}")]
     [Authorize]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         var existing = await _rosterImportService.GetByIdAsync(id, cancellationToken);
@@ -119,6 +127,12 @@ public class RosterImportsController : ControllerBase
         {
             _logger.LogInformation("Roster import with ID {RosterImportId} not found for deletion", id);
             return NotFound();
+        }
+
+        if (existing.ImportedByUserId == null)
+        {
+            _logger.LogInformation("Roster import {RosterImportId} has no importer; cannot delete orphaned import", id);
+            return Conflict(new { message = "This roster import has no owner and cannot be deleted. Contact an administrator." });
         }
 
         if (existing.ImportedByUserId != _currentUser.UserId)
