@@ -2,7 +2,8 @@
 
 This document captures the current temporary user-context behavior, identifies
 affected endpoints, and defines a phased plan for replacing the placeholder
-mechanism with real authentication. **Phase 1 is now complete.**
+mechanism with real authentication. **Phase 1 is complete. Phase 2 is in
+progress.**
 
 ---
 
@@ -21,8 +22,11 @@ The `ClaimsCurrentUserContext` service implements both paths. If a request has
 neither a valid JWT nor an `X-User-Id` header, `UserId` is `Guid.Empty` as it
 was before.
 
-No `[Authorize]` attribute has been added to any endpoint yet. JWT is
-**optional** on all existing routes during this phase.
+No `[Authorize]` attribute has been added to read-only endpoints. Write
+endpoints (`POST`, `PUT`, `DELETE`) on Teams, JoinRequests, Events, and
+RosterImports now require a valid JWT Bearer token. Unauthenticated write
+requests return `401 Unauthorized`. Health and read (`GET`) endpoints remain
+anonymous.
 
 ---
 
@@ -117,13 +121,19 @@ The claim expected for player identity is **`sub`** (configurable via
 - Integration tests cover both the JWT claims path and the `X-User-Id` fallback.
 - `MapInboundClaims = false` ensures raw JWT claim names (`sub`) are preserved.
 
-### Phase 2 — Authorization Policies
+### Phase 2 — Authorization Enforcement (Write Endpoints) ✅
 
-- Add `[Authorize]` to all write endpoints (`POST`, `PUT`, `DELETE`).
-- Define role-based or policy-based authorization for sensitive actions
-  (e.g., only team owners can process join requests for their team).
-- Register policies in `Program.cs` via `AddAuthorization(options => ...)`.
-- Read-only endpoints remain open or receive a deliberate `[AllowAnonymous]`.
+- `[Authorize]` added to all write actions on `TeamsController`,
+  `JoinRequestsController`, `EventsController`, and `RosterImportsController`.
+- Health endpoints (`/health`, `/health/ready`) explicitly marked
+  `.AllowAnonymous()` in `Program.cs`.
+- Read (`GET`) endpoints remain public.
+- `X-User-Id` fallback is **still wired** in `ClaimsCurrentUserContext` but is
+  unreachable on protected endpoints without a valid JWT. It remains available
+  for unauthenticated contexts (e.g., middleware or future public read endpoints
+  that may need caller identity).
+- Integration tests updated: 401 coverage for unauthenticated write paths;
+  JWT-authenticated write paths verified; health endpoints verified anonymous.
 
 ### Phase 3 — Replace X-User-Id Completely
 

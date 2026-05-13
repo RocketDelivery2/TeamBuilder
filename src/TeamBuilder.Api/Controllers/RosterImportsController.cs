@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
@@ -51,8 +52,10 @@ public class RosterImportsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize]
     [ProducesResponseType(typeof(RosterImportDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<RosterImportDto>> Create(
         [FromBody] CreateRosterImportDto createRosterImportDto,
         CancellationToken cancellationToken = default)
@@ -69,9 +72,11 @@ public class RosterImportsController : ControllerBase
     }
 
     [HttpPut("{id}/process")]
+    [Authorize]
     [ProducesResponseType(typeof(RosterImportDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<RosterImportDto>> Process(
         Guid id,
         CancellationToken cancellationToken = default)
@@ -88,8 +93,10 @@ public class RosterImportsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         var result = await _rosterImportService.DeleteAsync(id, cancellationToken);

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -159,9 +160,13 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
             Name = $"NewTeam-{Guid.NewGuid():N}",
             MaxMembers = 5
         };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PostAsJsonAsync("/api/v1/teams", dto);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -171,6 +176,19 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         response.Headers.Location.Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task Create_WithoutJwt_Returns401()
+    {
+        // Arrange — no Authorization header
+        var dto = new CreateTeamDto { Name = $"Unauth-{Guid.NewGuid():N}", MaxMembers = 5 };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/v1/teams", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     // ── DELETE /api/v1/teams/{id} ────────────────────────────────────────────
 
     [Fact]
@@ -178,9 +196,12 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     {
         // Arrange
         var team = await SeedTeamAsync($"Del-{Guid.NewGuid():N}");
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/teams/{team.Id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.DeleteAsync($"/api/v1/teams/{team.Id}");
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
@@ -189,11 +210,29 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     [Fact]
     public async Task Delete_WhenTeamDoesNotExist_Returns404()
     {
+        // Arrange
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/teams/{Guid.NewGuid()}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
         // Act
-        var response = await _client.DeleteAsync($"/api/v1/teams/{Guid.NewGuid()}");
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Delete_WithoutJwt_Returns401()
+    {
+        // Arrange
+        var team = await SeedTeamAsync($"DelUnauth-{Guid.NewGuid():N}");
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/v1/teams/{team.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     // ── PUT /api/v1/teams/{id} ───────────────────────────────────────────────
@@ -209,9 +248,13 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
             Description = "New description",
             Region = "EU"
         };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/teams/{team.Id}");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/v1/teams/{team.Id}", dto);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -227,9 +270,13 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     {
         // Arrange
         var dto = new UpdateTeamDto { Name = "Ghost Team" };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/teams/{Guid.NewGuid()}");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/v1/teams/{Guid.NewGuid()}", dto);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -241,12 +288,30 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         // Arrange — MaxMembers = 0 violates [Range(1, 1000)]
         var team = await SeedTeamAsync($"InvUpd-{Guid.NewGuid():N}");
         var dto = new UpdateTeamDto { MaxMembers = 0 };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/teams/{team.Id}");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Update_WithoutJwt_Returns401()
+    {
+        // Arrange
+        var team = await SeedTeamAsync($"UpdUnauth-{Guid.NewGuid():N}");
+        var dto = new UpdateTeamDto { Name = "Should fail" };
 
         // Act
         var response = await _client.PutAsJsonAsync($"/api/v1/teams/{team.Id}", dto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     // ── POST /api/v1/teams/{teamId}/members/{playerId}/leave ─────────────────
@@ -258,10 +323,13 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var team = await SeedTeamAsync($"Leave-{Guid.NewGuid():N}");
         var player = await SeedPlayerAsync($"leaver-{Guid.NewGuid():N}");
         await AddMemberAsync(team.Id, player.Id);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/teams/{team.Id}/members/{player.Id}/leave");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PostAsync(
-            $"/api/v1/teams/{team.Id}/members/{player.Id}/leave", null);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
@@ -272,12 +340,31 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     {
         // Arrange
         var team = await SeedTeamAsync($"LeaveNotFound-{Guid.NewGuid():N}");
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/teams/{team.Id}/members/{Guid.NewGuid()}/leave");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
-        var response = await _client.PostAsync(
-            $"/api/v1/teams/{team.Id}/members/{Guid.NewGuid()}/leave", null);
+        var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task LeaveTeam_WithoutJwt_Returns401()
+    {
+        // Arrange
+        var team = await SeedTeamAsync($"LeaveUnauth-{Guid.NewGuid():N}");
+        var player = await SeedPlayerAsync($"leaverunauthplayer-{Guid.NewGuid():N}");
+        await AddMemberAsync(team.Id, player.Id);
+
+        // Act — no Authorization header
+        var response = await _client.PostAsync(
+            $"/api/v1/teams/{team.Id}/members/{player.Id}/leave", null);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 }

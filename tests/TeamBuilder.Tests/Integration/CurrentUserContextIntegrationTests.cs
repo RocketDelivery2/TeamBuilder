@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
@@ -11,9 +12,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace TeamBuilder.Tests.Integration;
 
 /// <summary>
-/// Verifies that the <c>ICurrentUserContext</c> / <c>HeaderCurrentUserContext</c>
-/// abstraction behaves correctly for all three X-User-Id header states:
-/// valid GUID, missing header, and unparseable value.
+/// Verifies that <c>ICurrentUserContext</c> resolves the caller identity correctly:
+/// JWT Bearer <c>sub</c> claim takes priority; <c>X-User-Id</c> header is the fallback
+/// for unauthenticated endpoints. Write endpoints now require a JWT Bearer token.
 /// </summary>
 public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
 {
@@ -57,137 +58,39 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         return (team, player);
     }
 
-    private static HttpRequestMessage BuildCreateTeamRequest(string? xUserId)
+    private static HttpRequestMessage BuildCreateTeamRequest(string? bearerToken, string? xUserId = null)
     {
         var dto = new CreateTeamDto { Name = $"Team-{Guid.NewGuid():N}", MaxMembers = 5 };
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
         request.Content = JsonContent.Create(dto);
+        if (bearerToken is not null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
         if (xUserId is not null)
             request.Headers.Add("X-User-Id", xUserId);
         return request;
     }
 
-    private static HttpRequestMessage BuildCreateJoinRequestRequest(Guid teamId, string? xUserId)
+    private static HttpRequestMessage BuildCreateJoinRequestRequest(Guid teamId, string? bearerToken, string? xUserId = null)
     {
         var dto = new CreateJoinRequestDto { TeamId = teamId };
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
+        if (bearerToken is not null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
         if (xUserId is not null)
             request.Headers.Add("X-User-Id", xUserId);
         return request;
     }
 
-    // ── Valid X-User-Id header ────────────────────────────────────────────────
+    // ── JWT Bearer claims path (write endpoints require JWT) ─────────────────
 
     [Fact]
-    public async Task CreateTeam_WithValidXUserId_SetsOwnerIdOnCreatedTeam()
-    {
-        // Arrange
-        var ownerId = Guid.NewGuid();
-        using var request = BuildCreateTeamRequest(ownerId.ToString());
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var team = await response.Content.ReadFromJsonAsync<TeamDto>();
-        team!.OwnerId.Should().Be(ownerId);
-    }
-
-    [Fact]
-    public async Task CreateJoinRequest_WithValidXUserId_SetsPlayerIdOnJoinRequest()
-    {
-        // Arrange
-        var (team, player) = await SeedTeamAndPlayerAsync();
-        using var request = BuildCreateJoinRequestRequest(team.Id, player.Id.ToString());
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var jr = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
-        jr!.PlayerId.Should().Be(player.Id);
-    }
-
-    // ── Missing X-User-Id header ──────────────────────────────────────────────
-
-    [Fact]
-    public async Task CreateTeam_WithoutXUserId_SetsOwnerIdToGuidEmpty()
-    {
-        // Arrange — no X-User-Id header
-        using var request = BuildCreateTeamRequest(xUserId: null);
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert — request succeeds, owner defaults to Guid.Empty
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var team = await response.Content.ReadFromJsonAsync<TeamDto>();
-        team!.OwnerId.Should().Be(Guid.Empty);
-    }
-
-    [Fact]
-    public async Task CreateJoinRequest_WithoutXUserId_SetsPlayerIdToGuidEmpty()
-    {
-        // Arrange
-        var (team, _) = await SeedTeamAndPlayerAsync();
-        using var request = BuildCreateJoinRequestRequest(team.Id, xUserId: null);
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert — request succeeds, playerId defaults to Guid.Empty
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var jr = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
-        jr!.PlayerId.Should().Be(Guid.Empty);
-    }
-
-    // ── Invalid (unparseable) X-User-Id header ────────────────────────────────
-
-    [Fact]
-    public async Task CreateTeam_WithInvalidXUserId_SetsOwnerIdToGuidEmpty()
-    {
-        // Arrange — header value is not a valid GUID
-        using var request = BuildCreateTeamRequest(xUserId: "not-a-guid");
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert — request still succeeds; invalid header falls back to Guid.Empty
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var team = await response.Content.ReadFromJsonAsync<TeamDto>();
-        team!.OwnerId.Should().Be(Guid.Empty);
-    }
-
-    [Fact]
-    public async Task CreateJoinRequest_WithInvalidXUserId_SetsPlayerIdToGuidEmpty()
-    {
-        // Arrange
-        var (team, _) = await SeedTeamAndPlayerAsync();
-        using var request = BuildCreateJoinRequestRequest(team.Id, xUserId: "not-a-guid");
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var jr = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
-        jr!.PlayerId.Should().Be(Guid.Empty);
-    }
-
-    // ── JWT Bearer claims path ────────────────────────────────────────────────
-
-    [Fact]
-    public async Task CreateTeam_WithValidJwt_SetsOwnerIdFromSubClaim()
+    public async Task CreateTeam_WithValidJwtSubClaim_SetsOwnerIdFromToken()
     {
         // Arrange
         var ownerId = Guid.NewGuid();
         var token = TeamBuilderWebApplicationFactory.CreateTestJwt(ownerId);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
-        request.Content = JsonContent.Create(new CreateTeamDto { Name = $"Team-{Guid.NewGuid():N}", MaxMembers = 5 });
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using var request = BuildCreateTeamRequest(bearerToken: token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -199,14 +102,12 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
     }
 
     [Fact]
-    public async Task CreateJoinRequest_WithValidJwt_SetsPlayerIdFromSubClaim()
+    public async Task CreateJoinRequest_WithValidJwtSubClaim_SetsPlayerIdFromToken()
     {
         // Arrange
         var (team, player) = await SeedTeamAndPlayerAsync();
         var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
-        request.Content = JsonContent.Create(new CreateJoinRequestDto { TeamId = team.Id });
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using var request = BuildCreateJoinRequestRequest(team.Id, bearerToken: token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -217,17 +118,72 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         jr!.PlayerId.Should().Be(player.Id);
     }
 
+    // ── Protected write endpoint — missing JWT returns 401 ───────────────────
+
+    [Fact]
+    public async Task CreateTeam_WithoutJwt_Returns401()
+    {
+        // Arrange — no Authorization header; write endpoint now requires JWT
+        using var request = BuildCreateTeamRequest(bearerToken: null);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task CreateJoinRequest_WithoutJwt_Returns401()
+    {
+        // Arrange
+        var (team, _) = await SeedTeamAndPlayerAsync();
+        using var request = BuildCreateJoinRequestRequest(team.Id, bearerToken: null);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    // ── X-User-Id ignored when JWT is absent on protected endpoint ────────────
+
+    [Fact]
+    public async Task CreateTeam_WithXUserIdButNoJwt_Returns401()
+    {
+        // X-User-Id alone is not sufficient to access protected write endpoints.
+        // A JWT Bearer token is required; the header-only path now returns 401.
+        var ownerId = Guid.NewGuid();
+        using var request = BuildCreateTeamRequest(bearerToken: null, xUserId: ownerId.ToString());
+
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task CreateJoinRequest_WithXUserIdButNoJwt_Returns401()
+    {
+        // X-User-Id alone is not sufficient to access protected write endpoints.
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        using var request = BuildCreateJoinRequestRequest(team.Id, bearerToken: null, xUserId: player.Id.ToString());
+
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    // ── JWT takes priority over X-User-Id header ────────────────────────────
+
     [Fact]
     public async Task CreateTeam_WithJwtAndXUserId_UsesJwtSubClaimNotHeader()
     {
-        // Arrange — both JWT and X-User-Id present; JWT claims take priority
+        // Arrange — both JWT and X-User-Id present; JWT sub claim takes priority
         var jwtUserId = Guid.NewGuid();
         var headerId = Guid.NewGuid();
         var token = TeamBuilderWebApplicationFactory.CreateTestJwt(jwtUserId);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
-        request.Content = JsonContent.Create(new CreateTeamDto { Name = $"Team-{Guid.NewGuid():N}", MaxMembers = 5 });
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        request.Headers.Add("X-User-Id", headerId.ToString());
+        using var request = BuildCreateTeamRequest(bearerToken: token, xUserId: headerId.ToString());
 
         // Act
         var response = await _client.SendAsync(request);

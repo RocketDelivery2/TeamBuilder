@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
@@ -69,8 +70,10 @@ public class JoinRequestsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize]
     [ProducesResponseType(typeof(JoinRequestDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<JoinRequestDto>> Create(
         [FromBody] CreateJoinRequestDto createJoinRequestDto,
         CancellationToken cancellationToken = default)
@@ -84,9 +87,11 @@ public class JoinRequestsController : ControllerBase
     }
 
     [HttpPut("{id}/process")]
+    [Authorize]
     [ProducesResponseType(typeof(JoinRequestDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<JoinRequestDto>> Process(
         Guid id,
         [FromBody] ProcessJoinRequestDto processJoinRequestDto,
