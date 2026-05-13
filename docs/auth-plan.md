@@ -2,29 +2,33 @@
 
 This document captures the current temporary user-context behavior, identifies
 affected endpoints, and defines a phased plan for replacing the placeholder
-mechanism with real authentication. **No authentication is implemented here.**
+mechanism with real authentication. **Phase 1 is now complete.**
 
 ---
 
-## Current Behavior (Temporary)
+## Current Behavior (Phase 1 — Transition)
 
-TeamBuilder uses an `X-User-Id` HTTP header as a lightweight caller-identity
-placeholder. Endpoints that need to know who is making a request read this
-header and treat the value as the acting player's ID.
+TeamBuilder supports two caller-identity mechanisms in parallel:
 
-Key characteristics of the current approach:
+1. **JWT Bearer token** — When a valid `Authorization: Bearer <token>` header
+   is present, the authenticated `ClaimsPrincipal` is used. The claim named in
+   `Jwt:PlayerIdClaim` (default: `sub`) carries the caller's player ID.
+2. **`X-User-Id` header fallback** — When no authenticated JWT principal is
+   present, the `X-User-Id` header is read as before. This preserves the
+   existing development workflow without breaking any Postman smoke tests.
 
-- No token validation, no signature verification, no session management.
-- Any caller can supply any GUID and impersonate any player.
-- If the header is omitted, `Guid.Empty` is used as the caller identity.
-- This mechanism is suitable only for **local development and early API
-  testing**. It must be replaced before any production exposure.
+The `ClaimsCurrentUserContext` service implements both paths. If a request has
+neither a valid JWT nor an `X-User-Id` header, `UserId` is `Guid.Empty` as it
+was before.
+
+No `[Authorize]` attribute has been added to any endpoint yet. JWT is
+**optional** on all existing routes during this phase.
 
 ---
 
 ## Affected Endpoints
 
-The following controller actions currently read `X-User-Id`:
+The following controller actions read `ICurrentUserContext.UserId`:
 
 | Controller | Action | Header use |
 |---|---|---|
@@ -35,89 +39,105 @@ The following controller actions currently read `X-User-Id`:
 | `RosterImportsController` | `POST api/v1/rosterimports` | Sets `ImportedByUserId` on the import record. |
 | `RosterImportsController` | `PUT api/v1/rosterimports/{id}/process` | Identifies the processing user. |
 
-Read-only (`GET`, `DELETE`) endpoints do not currently use `X-User-Id` but
+Read-only (`GET`, `DELETE`) endpoints do not currently use caller identity but
 will need authorization policies applied in a future phase.
 
 ---
 
-## Proposed Future Authentication Approach
+## JWT Bearer Configuration Keys
 
-### Technology
+All keys live under the `Jwt` section:
 
-- **ASP.NET Core authentication middleware** (`AddAuthentication` /
-  `UseAuthentication` / `UseAuthorization`).
-- **JWT bearer tokens** as the primary scheme, issued by an external identity
-  provider or a lightweight local dev issuer.
-- **Claims-based identity** — the authenticated `ClaimsPrincipal` replaces all
-  direct header reads. The sub / `nameidentifier` claim carries the caller's
-  identity.
-- A thin **`IUserContext` service** abstracts claim extraction so controllers
-  and services never read headers or claims directly.
+| Key | Purpose | Default |
+|---|---|---|
+| `Jwt:SigningKey` | Symmetric HMAC-SHA256 signing key (local dev / tests). When set, OIDC authority discovery is skipped. | _(empty — authority path used)_ |
+| `Jwt:Issuer` | Expected token issuer when using the symmetric key path. | _(empty — issuer not validated)_ |
+| `Jwt:Audience` | Expected token audience. | `teambuilder-api` |
+| `Jwt:PlayerIdClaim` | JWT claim name that carries the TeamBuilder player ID. | `sub` |
+| `Jwt:Authority` | OIDC authority URL for staging/production. Ignored when `Jwt:SigningKey` is set. | _(empty)_ |
+| `Jwt:RequireHttpsMetadata` | Whether HTTPS is required for OIDC metadata. Only applies to the authority path. | `true` |
 
-### Identity Provider Options (decision pending)
+> **Never commit a real `Jwt:SigningKey` to source control.** Use
+> `dotnet user-secrets` or environment variables for any value that must be
+> kept out of `appsettings*.json`.
 
-| Option | Notes |
+---
+
+## Local Development Setup with `dotnet user-jwts`
+
+`dotnet user-jwts` issues development tokens signed with a local symmetric key
+and stores the key in `dotnet user-secrets` — it never touches
+`appsettings.json`.
+
+```powershell
+# Issue a development token (run from the API project directory)
+cd src/TeamBuilder.Api
+dotnet user-jwts create --audience teambuilder-api --claim sub=<your-player-guid>
+```
+
+The command prints a Bearer token you can paste into Postman or an `.http`
+file. It also writes the signing key to `dotnet user-secrets` under the path
+`Authentication:Schemes:Bearer:SigningKeys:0:Value`.
+
+> **Note:** `dotnet user-jwts` uses its own configuration path. To align it
+> with TeamBuilder's `Jwt:SigningKey` and `Jwt:Issuer` keys you can copy the
+> generated key into user-secrets manually:
+>
+> ```powershell
+> dotnet user-secrets set "Jwt:SigningKey" "<key-from-user-jwts>"
+> dotnet user-secrets set "Jwt:Issuer" "dotnet-user-jwts"
+> ```
+
+The claim expected for player identity is **`sub`** (configurable via
+`Jwt:PlayerIdClaim`). The value must be a valid `Guid` string.
+
+---
+
+## Transition Behavior Summary
+
+| Request carries | `ICurrentUserContext.UserId` value |
 |---|---|
-| Azure Active Directory / Entra ID | Recommended for production; integrates with Octopus secrets. |
-| Auth0 | SaaS option; easy local dev flow. |
-| ASP.NET Core Identity (local) | Useful if self-hosted user management is preferred. |
-| Custom lightweight issuer | Development-only; not for production. |
-
-The identity provider choice is a **deferred decision** that requires input
-from the team before Phase 1 begins.
+| Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
+| JWT present but invalid / expired | `Guid.Empty` (falls through to header) |
+| No JWT, valid `X-User-Id` header | GUID from the header |
+| No JWT, missing / invalid `X-User-Id` | `Guid.Empty` |
 
 ---
 
 ## Implementation Phases
 
-### Phase 1 — Authentication Configuration
+### Phase 1 — Authentication Configuration ✅
 
-- Add the chosen identity provider SDK / NuGet package.
-- Register `AddAuthentication().AddJwtBearer(...)` in `Program.cs`.
-- Configure a local development token strategy (e.g., a development-only
-  token issuer, or a `.http` file with a static dev token).
-- Keep `X-User-Id` working in parallel during this phase to avoid breaking
-  existing smoke tests.
-- Do **not** enforce `[Authorize]` on any endpoints yet.
+- JWT Bearer authentication registered in `Program.cs` (optional on all
+  endpoints).
+- `ClaimsCurrentUserContext` reads `sub` claim first; falls back to
+  `X-User-Id` header when no authenticated principal is present.
+- Symmetric key path (`Jwt:SigningKey`) for local development and tests.
+- OIDC authority path (`Jwt:Authority`) prepared for staging/production.
+- Integration tests cover both the JWT claims path and the `X-User-Id` fallback.
+- `MapInboundClaims = false` ensures raw JWT claim names (`sub`) are preserved.
 
 ### Phase 2 — Authorization Policies
 
-- Add `[Authorize]` to all write endpoints
-  (`POST`, `PUT`, `DELETE`).
+- Add `[Authorize]` to all write endpoints (`POST`, `PUT`, `DELETE`).
 - Define role-based or policy-based authorization for sensitive actions
   (e.g., only team owners can process join requests for their team).
 - Register policies in `Program.cs` via `AddAuthorization(options => ...)`.
-- Read-only endpoints remain open or receive a lightweight `[AllowAnonymous]`
-  annotation as a deliberate choice.
+- Read-only endpoints remain open or receive a deliberate `[AllowAnonymous]`.
 
-### Phase 3 — Replace X-User-Id with Authenticated User Context
+### Phase 3 — Replace X-User-Id Completely
 
-- `ICurrentUserContext` already exists in `TeamBuilder.Application.Interfaces`
-  with a `UserId` property. Extend it with `IsAuthenticated`:
+- Once JWT is enforced, remove the `X-User-Id` fallback path from
+  `ClaimsCurrentUserContext`.
+- Add `IsAuthenticated` to `ICurrentUserContext` if needed by business logic.
+- Remove `HeaderCurrentUserContext` from the codebase.
 
-  ```csharp
-  public interface ICurrentUserContext
-  {
-      Guid UserId { get; }
-      bool IsAuthenticated { get; }
-  }
-  ```
+### Phase 4 — Identity Provider Selection
 
-- Update `HeaderCurrentUserContext` to implement `IsAuthenticated = false`
-  (the temporary header mechanism never represents a real authenticated identity).
-- Implement `ClaimsUserContext` in `TeamBuilder.Api` backed by
-  `IHttpContextAccessor` and `ClaimsPrincipal`.
-- Register `ClaimsUserContext` in place of `HeaderCurrentUserContext` once JWT
-  authentication is active.
-- Controllers and services require **no changes** — they already depend only on
-  `ICurrentUserContext` via dependency injection.
-
-### Phase 4 — Update Integration Tests
-
-- Add a test authentication handler (ASP.NET Core test auth scheme) to the
-  integration test `WebApplicationFactory`.
-- Replace any `X-User-Id` header injection in tests with the test auth scheme.
-- Ensure all existing integration tests continue to pass (198 as of PR #52).
+- Connect to Azure Entra ID, Auth0, or another OIDC provider for
+  staging/production by setting `Jwt:Authority` (and removing `Jwt:SigningKey`
+  from the environment).
+- No code changes expected; only configuration.
 - Add new tests for unauthenticated and unauthorized request paths (401, 403).
 
 ### Phase 5 — Update Postman Environment and Collection

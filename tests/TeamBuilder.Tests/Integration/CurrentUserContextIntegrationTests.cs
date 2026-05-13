@@ -176,4 +176,66 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         var jr = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
         jr!.PlayerId.Should().Be(Guid.Empty);
     }
+
+    // ── JWT Bearer claims path ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateTeam_WithValidJwt_SetsOwnerIdFromSubClaim()
+    {
+        // Arrange
+        var ownerId = Guid.NewGuid();
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(ownerId);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
+        request.Content = JsonContent.Create(new CreateTeamDto { Name = $"Team-{Guid.NewGuid():N}", MaxMembers = 5 });
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var team = await response.Content.ReadFromJsonAsync<TeamDto>();
+        team!.OwnerId.Should().Be(ownerId);
+    }
+
+    [Fact]
+    public async Task CreateJoinRequest_WithValidJwt_SetsPlayerIdFromSubClaim()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
+        request.Content = JsonContent.Create(new CreateJoinRequestDto { TeamId = team.Id });
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var jr = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
+        jr!.PlayerId.Should().Be(player.Id);
+    }
+
+    [Fact]
+    public async Task CreateTeam_WithJwtAndXUserId_UsesJwtSubClaimNotHeader()
+    {
+        // Arrange — both JWT and X-User-Id present; JWT claims take priority
+        var jwtUserId = Guid.NewGuid();
+        var headerId = Guid.NewGuid();
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(jwtUserId);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
+        request.Content = JsonContent.Create(new CreateTeamDto { Name = $"Team-{Guid.NewGuid():N}", MaxMembers = 5 });
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add("X-User-Id", headerId.ToString());
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert — JWT sub claim wins
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var team = await response.Content.ReadFromJsonAsync<TeamDto>();
+        team!.OwnerId.Should().Be(jwtUserId);
+    }
 }
+
