@@ -78,6 +78,7 @@ public class TeamsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<TeamDto>> Update(
         Guid id,
         [FromBody] UpdateTeamDto updateTeamDto,
@@ -86,15 +87,22 @@ public class TeamsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var team = await _teamService.UpdateAsync(id, updateTeamDto, cancellationToken);
-        if (team == null)
+        var existing = await _teamService.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
         {
             _logger.LogInformation("Team with ID {TeamId} not found for update", id);
             return NotFound();
         }
 
+        if (existing.OwnerId != _currentUser.UserId)
+        {
+            _logger.LogInformation("User {UserId} is not the owner of team {TeamId}", _currentUser.UserId, id);
+            return Forbid();
+        }
+
+        var team = await _teamService.UpdateAsync(id, updateTeamDto, cancellationToken);
         _logger.LogInformation("Updated team {TeamId}", id);
-        return Ok(team);
+        return Ok(team!);
     }
 
     [HttpDelete("{id}")]
@@ -102,15 +110,23 @@ public class TeamsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        var result = await _teamService.DeleteAsync(id, cancellationToken);
-        if (!result)
+        var existing = await _teamService.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
         {
             _logger.LogInformation("Team with ID {TeamId} not found for deletion", id);
             return NotFound();
         }
 
+        if (existing.OwnerId != _currentUser.UserId)
+        {
+            _logger.LogInformation("User {UserId} is not the owner of team {TeamId}", _currentUser.UserId, id);
+            return Forbid();
+        }
+
+        await _teamService.DeleteAsync(id, cancellationToken);
         _logger.LogInformation("Deleted team {TeamId}", id);
         return NoContent();
     }

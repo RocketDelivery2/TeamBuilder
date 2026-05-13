@@ -136,12 +136,17 @@ The claim expected for player identity is **`sub`** (configurable via
 - Integration tests updated: 401 coverage for unauthenticated write paths;
   JWT-authenticated write paths verified; health endpoints verified anonymous.
 
-### Phase 3 — Replace X-User-Id Completely
+### Phase 3 — Replace X-User-Id Completely ✅ (Partial — Ownership)
 
-- Once JWT is enforced, remove the `X-User-Id` fallback path from
-  `ClaimsCurrentUserContext`.
-- Add `IsAuthenticated` to `ICurrentUserContext` if needed by business logic.
-- Remove `HeaderCurrentUserContext` from the codebase.
+- Ownership authorization added to team mutation endpoints (`PUT /api/v1/teams/{id}`,
+  `DELETE /api/v1/teams/{id}`).
+- Authenticated users who do not own a team receive `403 Forbidden`.
+- Unauthenticated requests continue to receive `401 Unauthorized`.
+- `POST /api/v1/teams` still sets `OwnerId` from the `sub` claim as before.
+- `X-User-Id` fallback remains wired in `ClaimsCurrentUserContext` — full removal
+  is deferred to a follow-up PR once ownership is stable across all resource types.
+- Integration tests added: non-owner 403 for Update and Delete; existing success
+  tests updated to seed teams with a matching `OwnerId`.
 
 ### Phase 4 — Identity Provider Selection
 
