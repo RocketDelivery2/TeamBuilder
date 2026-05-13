@@ -183,21 +183,19 @@ without a valid token receive `401 Unauthorized`.
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
 | `GET` | `/swagger` (Development only) |
 
-### `X-User-Id` transition behavior
+### Caller identity — JWT Bearer
 
-The `X-User-Id` header fallback is still wired in `ClaimsCurrentUserContext`
-but is no longer sufficient to call any protected write endpoint — the
-middleware gate returns `401` before the controller sees the header. The header
-remains available as a last-resort fallback for unauthenticated contexts.
+`Authorization: Bearer <token>` is the supported caller identity mechanism for
+all protected write endpoints. The configured `Jwt:PlayerIdClaim` (default
+`sub`) carries the caller's player ID as a `Guid` string.
 
 | Scenario | `UserId` value |
 |---|---|
 | Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
 | Invalid / expired JWT on a **protected** endpoint | `401 Unauthorized` |
-| Invalid / expired JWT on a **public** endpoint | `Guid.Empty` (falls through to `X-User-Id` header) |
 | No JWT on a **protected** endpoint | `401 Unauthorized` |
-| No JWT, valid `X-User-Id` on public endpoint | GUID from the header |
-| No JWT, missing / invalid `X-User-Id` on public endpoint | `Guid.Empty` |
+| Invalid / missing claim on an authenticated JWT | `Guid.Empty` |
+| Anonymous request to a public endpoint | `Guid.Empty` |
 
 ```http
 POST /api/v1/teams HTTP/1.1
@@ -224,8 +222,7 @@ dotnet user-secrets set "Jwt:SigningKey" "<key-from-user-jwts>"
 dotnet user-secrets set "Jwt:Issuer"     "dotnet-user-jwts"
 ```
 
-See [`docs/auth-plan.md`](auth-plan.md) for all configuration keys and the
-full transition-behavior table.
+See [`docs/auth-plan.md`](auth-plan.md) for all configuration keys.
 
 ---
 
@@ -912,7 +909,12 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
    it as the active environment.
 3. Update `baseUrl` in the environment to match the port shown when you run the
    API locally (e.g., `https://localhost:7123`).
-4. Replace placeholder GUIDs (`playerId`, `teamId`, etc.) with real IDs from
+4. Issue a local dev token and paste it into the `token` environment variable:
+   ```powershell
+   cd src/TeamBuilder.Api
+   dotnet user-jwts create --audience teambuilder-api --claim sub=<your-player-guid>
+   ```
+5. Replace placeholder GUIDs (`playerId`, `teamId`, etc.) with real IDs from
    previous responses or your local database.
 
 ---
@@ -921,7 +923,7 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 
 | Limitation | Detail |
 |---|---|
-| **No ownership authorization** | Any authenticated caller can modify any resource (e.g., update another user's team). Role/policy-based authorization is planned for a future phase — see [`docs/auth-plan.md`](auth-plan.md). |
+| **Ownership authorization is caller-scoped** | Any authenticated caller can still modify resources they do not own unless the controller explicitly checks ownership. Ownership checks are implemented for Teams, Events, and RosterImports. |
 | **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
@@ -936,4 +938,3 @@ Short-term API-only improvements:
 
 1. Add ownership/role authorization policies (team owner, admin roles).
 2. Select and integrate an identity provider (Azure AD B2C, Auth0, etc.).
-3. Remove `X-User-Id` header fallback once all callers have migrated to JWT.

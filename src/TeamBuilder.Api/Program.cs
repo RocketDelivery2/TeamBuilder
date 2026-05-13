@@ -23,7 +23,7 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
-// Add user context (reads claims from authenticated principal; falls back to X-User-Id header during transition)
+// Add user context (reads player ID from authenticated JWT sub claim; returns Guid.Empty for anonymous requests)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
 

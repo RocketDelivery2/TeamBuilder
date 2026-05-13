@@ -6,22 +6,14 @@ namespace TeamBuilder.Api.Auth;
 
 /// <summary>
 /// Claims-aware implementation of <see cref="ICurrentUserContext"/>.
-/// <para>
-/// Resolution order:
-/// <list type="number">
-///   <item>If the request carries a valid, authenticated <see cref="ClaimsPrincipal"/>,
-///         the configured <c>Jwt:PlayerIdClaim</c> (default <c>sub</c>) is used as the player ID.</item>
-///   <item>Otherwise the <c>X-User-Id</c> header is read as a fallback so that the existing
-///         development workflow is preserved during the transition period.</item>
-/// </list>
-/// </para>
+/// Reads the configured <c>Jwt:PlayerIdClaim</c> (default <c>sub</c>) from the
+/// authenticated <see cref="ClaimsPrincipal"/>. Returns <see cref="Guid.Empty"/>
+/// when no authenticated principal is present or the claim is missing/invalid.
 /// </summary>
 internal sealed class ClaimsCurrentUserContext : ICurrentUserContext
 {
     /// <summary>Default claim type used to carry the player ID in a JWT.</summary>
     internal const string DefaultPlayerIdClaim = "sub";
-
-    private const string XUserIdHeader = "X-User-Id";
 
     private readonly Guid _userId;
 
@@ -40,9 +32,7 @@ internal sealed class ClaimsCurrentUserContext : ICurrentUserContext
             return;
         }
 
-        // Transition fallback: honour X-User-Id when no JWT is present.
-        var headerValue = httpContext?.Request.Headers[XUserIdHeader].FirstOrDefault();
-        _userId = Guid.TryParse(headerValue, out var fromHeader) ? fromHeader : Guid.Empty;
+        _userId = Guid.Empty;
     }
 
     /// <inheritdoc/>

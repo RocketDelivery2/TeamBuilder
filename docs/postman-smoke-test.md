@@ -85,10 +85,20 @@ is running in the Development environment.
 3. In the top-right environment selector, choose **TeamBuilder Local**.
 4. Verify `baseUrl` is `https://localhost:7178`. If your API started on a
    different port, click the environment name → edit `baseUrl` to match.
+5. Issue a local dev token and paste it into the `token` variable:
+
+   ```powershell
+   cd src/TeamBuilder.Api
+   dotnet user-jwts create --audience teambuilder-api --claim sub=<your-player-guid>
+   ```
+
+   Copy the printed token into the `token` variable in the **TeamBuilder Local**
+   environment. Protected write requests will send it automatically as
+   `Authorization: Bearer {{token}}`.
 
 ---
 
-## Step 5 — Recommended smoke-test request order
+## Step 6 — Recommended smoke-test request order
 
 Run requests in this order. Each step captures an ID needed by the next.
 
@@ -99,15 +109,15 @@ Run requests in this order. Each step captures an ID needed by the next.
 | 3 | `POST /api/v1/players` | Players | Creates a player. Copy `id` from the response into the `playerId` environment variable. |
 | 4 | `GET /api/v1/players` | Players | Verify the player appears in the paginated list. |
 | 5 | `GET /api/v1/players/{{playerId}}` | Players | Verify the player can be fetched by ID. |
-| 6 | `POST /api/v1/teams` | Teams | Set `X-User-Id` header to `{{playerId}}`. Copy `id` from the response into `teamId`. |
+| 6 | `POST /api/v1/teams` | Teams | Sends `Authorization: Bearer {{token}}`. Copy `id` from the response into `teamId`. |
 | 7 | `GET /api/v1/teams` | Teams | Verify the team appears in the list. |
 | 8 | `GET /api/v1/teams/{{teamId}}` | Teams | Verify `ownerUsername` is populated. |
-| 9 | `POST /api/v1/joinrequests` | Join Requests | Set `X-User-Id` to `{{playerId}}`. Copy `id` into `joinRequestId`. |
-| 10 | `POST /api/v1/joinrequests` (duplicate) | Join Requests | Repeat request 9 with the same `X-User-Id` and `teamId`. Expect `409 Conflict` with `application/problem+json`. Verify `status: 409` and a `detail` message in the response body. |
-| 11 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Set `X-User-Id`. Use body `{"status":"Approved"}`. Expect `200`. |
-| 12 | `POST /api/v1/events` | Events | Set `X-User-Id` to `{{playerId}}`. Set `teamId` in the body to `{{teamId}}`. Copy `id` into `eventId`. |
+| 9 | `POST /api/v1/joinrequests` | Join Requests | Sends `Authorization: Bearer {{token}}`. Copy `id` into `joinRequestId`. |
+| 10 | `POST /api/v1/joinrequests` (duplicate) | Join Requests | Repeat request 9 with the same `token` and `teamId`. Expect `409 Conflict` with `application/problem+json`. Verify `status: 409` and a `detail` message in the response body. |
+| 11 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Sends `Authorization: Bearer {{token}}`. Use body `{"status":"Approved"}`. Expect `200`. |
+| 12 | `POST /api/v1/events` | Events | Sends `Authorization: Bearer {{token}}`. Set `teamId` in the body to `{{teamId}}`. Copy `id` into `eventId`. |
 | 13 | `GET /api/v1/events` | Events | Verify the event appears in the list. |
-| 14 | `POST /api/v1/rosterimports` | Roster Imports | Set `X-User-Id`. Copy `id` into `rosterImportId`. |
+| 14 | `POST /api/v1/rosterimports` | Roster Imports | Sends `Authorization: Bearer {{token}}`. Copy `id` into `rosterImportId`. |
 | 15 | `GET /api/v1/rosterimports` | Roster Imports | Verify the import record appears. |
 
 ### Copying IDs into Postman environment variables
@@ -148,12 +158,9 @@ the ProblemDetails envelope. See [Error Responses](api.md#error-responses) in
 
 | Limitation | Impact |
 |---|---|
-| **No authentication** | Any value works for `X-User-Id`. No request will be rejected for auth reasons. |
-| **No authorization** | Any caller can read or modify any resource. |
+| **JWT required for write endpoints** | Protected `POST`, `PUT`, `DELETE` requests return `401` without a valid token. Issue a dev token with `dotnet user-jwts` and set it in the `token` environment variable (see Step 5). |
 | **EF Core migrations must be applied** | Run `dotnet ef database update` before the first local run (see Step 2). |
 | **Health check requires live LocalDB** | `/health/ready` returns `503` if LocalDB is not running. Start it with `sqllocaldb start mssqllocaldb`. `/health` (liveness) always returns `200`. |
-| **No data annotations on DTOs** | Model validation is minimal. Sending an empty body will often succeed or produce a generic error. |
-| **`X-User-Id` is optional on some endpoints** | If omitted, `Guid.Empty` is used as the caller identity. This does not cause an error but may produce unexpected data (e.g., `ownerId = 00000000-0000-0000-0000-000000000000`). |
 
 ---
 
