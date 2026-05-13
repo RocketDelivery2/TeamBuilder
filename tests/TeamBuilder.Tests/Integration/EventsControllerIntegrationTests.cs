@@ -270,4 +270,38 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
+
+    [Fact]
+    public async Task Update_WhenHostIdIsNull_Returns409()
+    {
+        // Arrange — event seeded without a host (orphaned)
+        var ev = await SeedEventAsync($"UpdOrphan-{Guid.NewGuid():N}", hostId: null);
+        var dto = new UpdateEventDto { Name = "Orphan Rename" };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{ev.Id}");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task Delete_WhenHostIdIsNull_Returns409()
+    {
+        // Arrange — event seeded without a host (orphaned)
+        var ev = await SeedEventAsync($"DelOrphan-{Guid.NewGuid():N}", hostId: null);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{ev.Id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
 }

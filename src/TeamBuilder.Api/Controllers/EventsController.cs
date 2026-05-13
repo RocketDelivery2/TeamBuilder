@@ -75,10 +75,11 @@ public class EventsController : ControllerBase
     [HttpPut("{id}")]
     [Authorize]
     [ProducesResponseType(typeof(EventDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<EventDto>> Update(
         Guid id,
         [FromBody] UpdateEventDto updateEventDto,
@@ -92,6 +93,12 @@ public class EventsController : ControllerBase
         {
             _logger.LogInformation("Event with ID {EventId} not found for update", id);
             return NotFound();
+        }
+
+        if (existing.HostId == null)
+        {
+            _logger.LogInformation("Event {EventId} has no host; cannot update orphaned event", id);
+            return Conflict(new { message = "This event has no host and cannot be updated. Contact an administrator." });
         }
 
         if (existing.HostId != _currentUser.UserId)
@@ -108,9 +115,10 @@ public class EventsController : ControllerBase
     [HttpDelete("{id}")]
     [Authorize]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         var existing = await _eventService.GetByIdAsync(id, cancellationToken);
@@ -118,6 +126,12 @@ public class EventsController : ControllerBase
         {
             _logger.LogInformation("Event with ID {EventId} not found for deletion", id);
             return NotFound();
+        }
+
+        if (existing.HostId == null)
+        {
+            _logger.LogInformation("Event {EventId} has no host; cannot delete orphaned event", id);
+            return Conflict(new { message = "This event has no host and cannot be deleted. Contact an administrator." });
         }
 
         if (existing.HostId != _currentUser.UserId)

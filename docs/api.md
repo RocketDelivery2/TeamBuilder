@@ -760,8 +760,11 @@ Updates an existing event. Only non-null fields are applied.
 ```
 
 **Response `200`:** Updated `EventDto`.  
+**Response `400`:** Validation failure.  
+**Response `401`:** No valid JWT provided.  
+**Response `403`:** Authenticated caller is not the event host.  
 **Response `404`:** Event not found.  
-**Response `400`:** Validation failure.
+**Response `409`:** Event has no host (orphaned); contact an administrator.
 
 ---
 
@@ -770,7 +773,10 @@ Updates an existing event. Only non-null fields are applied.
 Deletes an event.
 
 **Response `204`:** Deleted.  
-**Response `404`:** Event not found.
+**Response `401`:** No valid JWT provided.  
+**Response `403`:** Authenticated caller is not the event host.  
+**Response `404`:** Event not found.  
+**Response `409`:** Event has no host (orphaned); contact an administrator.
 
 ---
 
@@ -857,8 +863,10 @@ Requires `Authorization: Bearer <token>`.
 | `Authorization` | string | `Bearer <jwt-token>` |
 
 **Response `200`:** Updated `RosterImportDto` with `processingNotes`.  
+**Response `401`:** No valid JWT provided.  
+**Response `403`:** Authenticated caller is not the original importer.  
 **Response `404`:** Roster import not found.  
-**Response `400`:** Already processed.
+**Response `409`:** Import already processed, or import has no owner (orphaned); contact an administrator.
 
 ---
 
@@ -867,7 +875,10 @@ Requires `Authorization: Bearer <token>`.
 Deletes a roster import record.
 
 **Response `204`:** Deleted.  
-**Response `404`:** Roster import not found.
+**Response `401`:** No valid JWT provided.  
+**Response `403`:** Authenticated caller is not the original importer.  
+**Response `404`:** Roster import not found.  
+**Response `409`:** Roster import has no owner (orphaned); contact an administrator.
 
 ---
 
