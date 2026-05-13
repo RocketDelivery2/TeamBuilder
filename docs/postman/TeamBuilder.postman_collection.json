@@ -106,7 +106,7 @@
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/teams",
             "body": {
@@ -194,7 +194,7 @@
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/joinrequests",
             "body": {
@@ -209,7 +209,7 @@
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/joinrequests",
             "body": {
@@ -224,7 +224,7 @@
             "method": "PUT",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
             "body": {
@@ -239,7 +239,7 @@
             "method": "PUT",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
             "body": {
@@ -254,7 +254,7 @@
             "method": "PUT",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/joinrequests/{{joinRequestId}}/process",
             "body": {
@@ -297,7 +297,7 @@
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/events",
             "body": {
@@ -359,7 +359,7 @@
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/rosterimports",
             "body": {
@@ -373,7 +373,7 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "X-User-Id", "value": "{{playerId}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{baseUrl}}/api/v1/rosterimports/{{rosterImportId}}/process"
           }

@@ -6,26 +6,19 @@ affected endpoints, and defines a phased plan for replacing the placeholder
 
 ---
 
-## Current Behavior (Phase 1 — Transition)
+## Current Behavior (Phase 3 — Complete)
 
-TeamBuilder supports two caller-identity mechanisms in parallel:
+TeamBuilder uses JWT Bearer tokens as the only caller-identity mechanism.
 
 1. **JWT Bearer token** — When a valid `Authorization: Bearer <token>` header
    is present, the authenticated `ClaimsPrincipal` is used. The claim named in
    `Jwt:PlayerIdClaim` (default: `sub`) carries the caller's player ID.
-2. **`X-User-Id` header fallback** — When no authenticated JWT principal is
-   present, the `X-User-Id` header is read as before. This preserves the
-   existing development workflow without breaking any Postman smoke tests.
+2. **No fallback** — When no authenticated JWT principal is present,
+   `UserId` is `Guid.Empty`. The `X-User-Id` header is no longer read.
 
-The `ClaimsCurrentUserContext` service implements both paths. If a request has
-neither a valid JWT nor an `X-User-Id` header, `UserId` is `Guid.Empty` as it
-was before.
-
-No `[Authorize]` attribute has been added to read-only endpoints. Write
-endpoints (`POST`, `PUT`, `DELETE`) on Teams, JoinRequests, Events, and
-RosterImports now require a valid JWT Bearer token. Unauthenticated write
-requests return `401 Unauthorized`. Health and read (`GET`) endpoints remain
-anonymous.
+Write endpoints (`POST`, `PUT`, `DELETE`) on Teams, JoinRequests, Events, and
+RosterImports require a valid JWT Bearer token. Unauthenticated write requests
+return `401 Unauthorized`. Health and read (`GET`) endpoints remain anonymous.
 
 ---
 
@@ -96,16 +89,15 @@ The claim expected for player identity is **`sub`** (configurable via
 
 ---
 
-## Transition Behavior Summary
+## Identity Resolution Summary
 
 | Request carries | `ICurrentUserContext.UserId` value |
 |---|---|
 | Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
 | Invalid / expired JWT on a **protected** endpoint | `401 Unauthorized` |
-| Invalid / expired JWT on a public endpoint | `Guid.Empty` (falls through to `X-User-Id` header) |
 | No JWT on a **protected** endpoint | `401 Unauthorized` |
-| No JWT, valid `X-User-Id` header on a public endpoint | GUID from the header |
-| No JWT, missing / invalid `X-User-Id` on a public endpoint | `Guid.Empty` |
+| Invalid / missing claim on an authenticated JWT | `Guid.Empty` |
+| Anonymous request to a public endpoint | `Guid.Empty` |
 
 ---
 
@@ -119,7 +111,7 @@ The claim expected for player identity is **`sub`** (configurable via
   `X-User-Id` header when no authenticated principal is present.
 - Symmetric key path (`Jwt:SigningKey`) for local development and tests.
 - OIDC authority path (`Jwt:Authority`) prepared for staging/production.
-- Integration tests cover both the JWT claims path and the `X-User-Id` fallback.
+- Integration tests cover the JWT claims path.
 - `MapInboundClaims = false` ensures raw JWT claim names (`sub`) are preserved.
 
 ### Phase 2 — Authorization Enforcement (Write Endpoints) ✅
@@ -129,14 +121,10 @@ The claim expected for player identity is **`sub`** (configurable via
 - Health endpoints (`/health`, `/health/ready`) explicitly marked
   `.AllowAnonymous()` in `Program.cs`.
 - Read (`GET`) endpoints remain public.
-- `X-User-Id` fallback is **still wired** in `ClaimsCurrentUserContext` but is
-  unreachable on protected endpoints without a valid JWT. It remains available
-  for unauthenticated contexts (e.g., middleware or future public read endpoints
-  that may need caller identity).
 - Integration tests updated: 401 coverage for unauthenticated write paths;
   JWT-authenticated write paths verified; health endpoints verified anonymous.
 
-### Phase 3 — Replace X-User-Id Completely ✅ (Ownership enforcement complete)
+### Phase 3 — Ownership Enforcement and X-User-Id Removal ✅
 
 - Ownership authorization added to all team, event, and roster import mutation endpoints:
   - `PUT /api/v1/teams/{id}`, `DELETE /api/v1/teams/{id}` — checks `OwnerId`.
@@ -147,12 +135,12 @@ The claim expected for player identity is **`sub`** (configurable via
 - Orphaned resources (where `HostId` or `ImportedByUserId` is `null`) return `409 Conflict`
   for any authenticated mutation attempt, making the failure explicit rather than silently
   denying all callers with `403`. An administrator path for orphan remediation is deferred.
-- Create endpoints (`POST`) still set the owner/host/importer field from the `sub` claim as before.
-- `X-User-Id` fallback remains wired in `ClaimsCurrentUserContext` — full removal
-  is deferred to a follow-up PR to avoid breaking the transition path.
-- Integration tests updated: non-owner/non-host/non-importer 403 coverage added;
-  orphaned-resource 409 coverage added; existing success tests seed resources with
-  a matching owner ID.
+- Create endpoints (`POST`) still set the owner/host/importer field from the `sub` claim.
+- `X-User-Id` fallback removed from `ClaimsCurrentUserContext`. The authenticated JWT `sub`
+  claim is now the only identity source. Anonymous requests resolve to `Guid.Empty`.
+- Postman collection updated to use `Authorization: Bearer {{token}}` for all write requests.
+- Integration tests updated: X-User-Id transition tests removed; missing-claim/Guid.Empty
+  behavior added; existing 401/403/409 coverage preserved.
 
 ### Phase 4 — Identity Provider Selection
 
@@ -162,15 +150,13 @@ The claim expected for player identity is **`sub`** (configurable via
 - No code changes expected; only configuration.
 - Add new tests for unauthenticated and unauthorized request paths (401, 403).
 
-### Phase 5 — Update Postman Environment and Collection
+### Phase 5 — Update Postman Environment and Collection ✅
 
-- Add a `token` environment variable to
+- Added `token` environment variable to
   `docs/postman/TeamBuilder.local.postman_environment.json`.
-- Add a pre-request script or Auth tab configuration to the collection to
-  attach `Authorization: Bearer {{token}}`.
-- Update `docs/postman-smoke-test.md` to document how to obtain a local dev
-  token and set it in the environment.
-- Remove or archive the `X-User-Id` header from all saved Postman requests.
+- All saved Postman write requests updated to use `Authorization: Bearer {{token}}`.
+- `docs/postman-smoke-test.md` updated to document how to obtain a local dev
+  token with `dotnet user-jwts` and set it in the environment.
 
 ---
 
@@ -191,13 +177,13 @@ The claim expected for player identity is **`sub`** (configurable via
 
 | File | Relevance |
 |---|---|
-| `src/TeamBuilder.Application/Interfaces/ICurrentUserContext.cs` | Caller-identity abstraction — already in place; extend with `IsAuthenticated` in Phase 3. |
-| `src/TeamBuilder.Api/Auth/HeaderCurrentUserContext.cs` | Temporary header-based implementation — replaced by `ClaimsUserContext` in Phase 3. |
-| `src/TeamBuilder.Api/Controllers/TeamsController.cs` | Uses `ICurrentUserContext.UserId` for team creation. |
+| `src/TeamBuilder.Application/Interfaces/ICurrentUserContext.cs` | Caller-identity abstraction. |
+| `src/TeamBuilder.Api/Auth/ClaimsCurrentUserContext.cs` | JWT-only implementation — reads `sub` claim; returns `Guid.Empty` for unauthenticated requests. |
+| `src/TeamBuilder.Api/Controllers/TeamsController.cs` | Uses `ICurrentUserContext.UserId` for team creation and ownership checks. |
 | `src/TeamBuilder.Api/Controllers/JoinRequestsController.cs` | Uses `ICurrentUserContext.UserId` for join request creation and processing. |
-| `src/TeamBuilder.Api/Controllers/EventsController.cs` | Uses `ICurrentUserContext.UserId` for event creation. |
-| `src/TeamBuilder.Api/Controllers/RosterImportsController.cs` | Uses `ICurrentUserContext.UserId` for roster import creation and processing. |
-| `src/TeamBuilder.Api/Program.cs` | Authentication / authorization middleware will be registered here. |
-| `docs/api.md` | API reference — Authentication section documents `X-User-Id` temporary behavior. |
-| `docs/postman-smoke-test.md` | Smoke test guide — will need token setup steps added in Phase 5. |
-| `docs/postman/TeamBuilder.postman_collection.json` | Collection — will need Bearer token auth added in Phase 5. |
+| `src/TeamBuilder.Api/Controllers/EventsController.cs` | Uses `ICurrentUserContext.UserId` for event creation and ownership checks. |
+| `src/TeamBuilder.Api/Controllers/RosterImportsController.cs` | Uses `ICurrentUserContext.UserId` for roster import creation and ownership checks. |
+| `src/TeamBuilder.Api/Program.cs` | Authentication / authorization middleware registered here. |
+| `docs/api.md` | API reference — Authentication section documents JWT Bearer as the supported identity mechanism. |
+| `docs/postman-smoke-test.md` | Smoke test guide — includes token setup steps and Bearer token usage. |
+| `docs/postman/TeamBuilder.postman_collection.json` | Collection — all write requests use `Authorization: Bearer {{token}}`. |
