@@ -23,7 +23,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<RosterImport> SeedRosterImportAsync(bool isProcessed = false)
+    private async Task<RosterImport> SeedRosterImportAsync(bool isProcessed = false, Guid? importedByUserId = null)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
@@ -35,6 +35,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
             SourceType = "CSV",
             RawData = "Name,Role\nplayer1,Tank",
             IsProcessed = isProcessed,
+            ImportedByUserId = importedByUserId,
             CreatedAtUtc = DateTime.UtcNow,
             RowVersion = []
         };
@@ -140,8 +141,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     public async Task Process_WithValidImport_Returns200()
     {
         // Arrange
-        var import = await SeedRosterImportAsync(isProcessed: false);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var importerId = Guid.NewGuid();
+        var import = await SeedRosterImportAsync(isProcessed: false, importedByUserId: importerId);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(importerId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -186,8 +188,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     public async Task Process_WhenAlreadyProcessed_Returns409()
     {
         // Arrange
-        var import = await SeedRosterImportAsync(isProcessed: true);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var importerId = Guid.NewGuid();
+        var import = await SeedRosterImportAsync(isProcessed: true, importedByUserId: importerId);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(importerId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -204,8 +207,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     public async Task Delete_WhenImportExists_Returns204()
     {
         // Arrange
-        var import = await SeedRosterImportAsync();
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var importerId = Guid.NewGuid();
+        var import = await SeedRosterImportAsync(importedByUserId: importerId);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(importerId);
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/rosterimports/{import.Id}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -242,5 +246,39 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Process_ByNonImporter_Returns403()
+    {
+        // Arrange — import seeded with a different owner
+        var importerId = Guid.NewGuid();
+        var import = await SeedRosterImportAsync(isProcessed: false, importedByUserId: importerId);
+        var nonImporterToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonImporterToken);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Delete_ByNonImporter_Returns403()
+    {
+        // Arrange — import seeded with a different owner
+        var importerId = Guid.NewGuid();
+        var import = await SeedRosterImportAsync(importedByUserId: importerId);
+        var nonImporterToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/rosterimports/{import.Id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonImporterToken);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }

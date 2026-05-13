@@ -136,17 +136,19 @@ The claim expected for player identity is **`sub`** (configurable via
 - Integration tests updated: 401 coverage for unauthenticated write paths;
   JWT-authenticated write paths verified; health endpoints verified anonymous.
 
-### Phase 3 — Replace X-User-Id Completely ✅ (Partial — Ownership)
+### Phase 3 — Replace X-User-Id Completely ✅ (Ownership enforcement complete)
 
-- Ownership authorization added to team mutation endpoints (`PUT /api/v1/teams/{id}`,
-  `DELETE /api/v1/teams/{id}`).
-- Authenticated users who do not own a team receive `403 Forbidden`.
+- Ownership authorization added to all team, event, and roster import mutation endpoints:
+  - `PUT /api/v1/teams/{id}`, `DELETE /api/v1/teams/{id}` — checks `OwnerId`.
+  - `PUT /api/v1/events/{id}`, `DELETE /api/v1/events/{id}` — checks `HostId`.
+  - `PUT /api/v1/rosterimports/{id}/process`, `DELETE /api/v1/rosterimports/{id}` — checks `ImportedByUserId`.
+- Authenticated users who do not own the resource receive `403 Forbidden`.
 - Unauthenticated requests continue to receive `401 Unauthorized`.
-- `POST /api/v1/teams` still sets `OwnerId` from the `sub` claim as before.
+- Create endpoints (`POST`) still set the owner/host/importer field from the `sub` claim as before.
 - `X-User-Id` fallback remains wired in `ClaimsCurrentUserContext` — full removal
-  is deferred to a follow-up PR once ownership is stable across all resource types.
-- Integration tests added: non-owner 403 for Update and Delete; existing success
-  tests updated to seed teams with a matching `OwnerId`.
+  is deferred to a follow-up PR to avoid breaking the transition path.
+- Integration tests updated: non-owner/non-host/non-importer 403 coverage added;
+  existing success tests updated to seed resources with a matching owner ID.
 
 ### Phase 4 — Identity Provider Selection
 
