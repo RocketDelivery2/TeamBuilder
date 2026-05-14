@@ -224,8 +224,8 @@ Recommended telemetry:
 | Area | Guidance |
 |---|---|
 | **Secrets** | Never store secrets in source control. Use GitHub Secrets, Azure App Settings, Key Vault references, or Octopus sensitive variables. |
-| **Authentication** | Add JWT Bearer or Azure AD authentication before Production. The current `X-User-Id` header is a placeholder only. |
-| **Authorization** | Add resource-level authorization (team owner, admin) after authentication is in place. |
+| **Authentication** | JWT Bearer authentication is implemented. Connect a real OIDC provider for staging/production — see [docs/oidc-rollout.md](oidc-rollout.md). |
+| **Authorization** | Resource-ownership authorization is implemented for Teams, Events, and RosterImports (403 for non-owners, 409 for null-owner resources). |
 | **HTTPS** | Enforce HTTPS-only in Azure App Service. The API already calls `app.UseHttpsRedirection()`. |
 | **CodeQL** | Keep GitHub's default CodeQL setup enabled. Do not disable it. |
 | **Dependabot** | Keep Dependabot and dependency submission enabled. Review and merge security PRs promptly. |
@@ -241,8 +241,8 @@ The following are not implemented and should each be a separate focused PR:
 | PR | Description | Priority |
 |---|---|---|
 | **EF Core migrations** | Create `InitialCreate` migration, generate idempotent SQL script, document apply workflow | High |
-| **Authentication** | Add JWT Bearer or Azure AD authentication to all endpoints | High |
-| **Authorization** | Add resource-ownership policies (team owner, admin) | High |
+| **Authentication** | JWT Bearer auth is implemented. Connect a real OIDC provider for QA/Production per [docs/oidc-rollout.md](oidc-rollout.md). | High |
+| **Authorization** | Resource-ownership policies are implemented (team owner, event host, roster import owner). | Complete |
 | **Data annotations on DTOs** | Add `[Required]`, `[MaxLength]`, `[EmailAddress]` to `CreatePlayerDto`, `CreateTeamDto`, `CreateEventDto`, `CreateRosterImportDto` | Medium |
 | **ProducesResponseType improvements** | Replace `typeof(object)` on paginated list endpoints with typed responses | Medium |
 | **WebApplicationFactory integration tests** | Controller-level integration tests using in-memory host | Medium |
