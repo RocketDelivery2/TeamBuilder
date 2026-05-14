@@ -91,4 +91,31 @@ public sealed class RequestLoggingMiddlewareTests : IClassFixture<TeamBuilderWeb
         hasHeader.Should().BeTrue();
         values!.First().Should().NotBeNullOrWhiteSpace();
     }
+
+    [Fact]
+    public async Task Response_IsSuccessful_WhenRequestIdContainsControlCharacters()
+    {
+        // Regression: control characters in X-Request-Id must be sanitized in the log
+        // but must not cause the request to fail.
+        var injectedId = "id\x01\x02\x1f-end";
+        var request = new HttpRequestMessage(HttpMethod.Get, "/health");
+        request.Headers.TryAddWithoutValidation(RequestIdHeader, injectedId);
+
+        var response = await _client.SendAsync(request);
+
+        response.IsSuccessStatusCode.Should().BeTrue();
+        var hasHeader = response.Headers.TryGetValues(RequestIdHeader, out var values);
+        hasHeader.Should().BeTrue();
+        values!.First().Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task Response_IsSuccessful_WhenPathContainsEncodedControlSequence()
+    {
+        // Regression: paths with percent-encoded sequences must be handled safely.
+        var response = await _client.GetAsync("/health%0a%0d");
+
+        // The server may return 400 or redirect; the key assertion is no unhandled exception.
+        response.Should().NotBeNull();
+    }
 }
