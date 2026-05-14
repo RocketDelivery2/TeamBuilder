@@ -148,7 +148,11 @@ The claim expected for player identity is **`sub`** (configurable via
   staging/production by setting `Jwt:Authority` (and removing `Jwt:SigningKey`
   from the environment).
 - No code changes expected; only configuration.
-- Add new tests for unauthenticated and unauthorized request paths (401, 403).
+- Full rollout guide, provider-specific setup steps, environment variable
+  reference, and a smoke-test checklist are documented in
+  [docs/oidc-rollout.md](oidc-rollout.md).
+- Add new integration tests for unauthenticated and unauthorized request paths
+  (401, 403) once a staging IdP is confirmed.
 
 ### Phase 5 — Update Postman Environment and Collection ✅
 
