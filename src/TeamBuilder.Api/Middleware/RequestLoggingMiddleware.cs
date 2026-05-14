@@ -35,6 +35,10 @@ internal sealed class RequestLoggingMiddleware(RequestDelegate next, ILogger<Req
             return Task.CompletedTask;
         });
 
+        var safeMethod = Sanitize(context.Request.Method);
+        var safePath = Sanitize(context.Request.Path.ToString());
+        var safeRequestId = Sanitize(requestId);
+
         var sw = Stopwatch.StartNew();
         try
         {
@@ -45,11 +49,11 @@ internal sealed class RequestLoggingMiddleware(RequestDelegate next, ILogger<Req
             sw.Stop();
             logger.LogInformation(
                 "HTTP {Method} {Path} responded {StatusCode} in {ElapsedMs}ms — RequestId: {RequestId}",
-                context.Request.Method,
-                Sanitize(context.Request.Path),
+                safeMethod,
+                safePath,
                 context.Response.StatusCode,
                 sw.ElapsedMilliseconds,
-                Sanitize(requestId));
+                safeRequestId);
         }
     }
 
