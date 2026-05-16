@@ -1,13 +1,12 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY TeamBuilder.slnx ./
 COPY src/TeamBuilder.Api/TeamBuilder.Api.csproj src/TeamBuilder.Api/
 COPY src/TeamBuilder.Application/TeamBuilder.Application.csproj src/TeamBuilder.Application/
 COPY src/TeamBuilder.Domain/TeamBuilder.Domain.csproj src/TeamBuilder.Domain/
 COPY src/TeamBuilder.Infrastructure/TeamBuilder.Infrastructure.csproj src/TeamBuilder.Infrastructure/
 
-RUN dotnet restore TeamBuilder.slnx
+RUN dotnet restore src/TeamBuilder.Api/TeamBuilder.Api.csproj
 
 COPY . .
 RUN dotnet publish src/TeamBuilder.Api/TeamBuilder.Api.csproj -c Release -o /app/publish /p:UseAppHost=false
