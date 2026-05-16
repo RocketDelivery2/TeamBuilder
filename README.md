@@ -270,7 +270,7 @@ The following Octopus Deploy variables are expected for QA and Production:
 | `AzureSql.DatabaseName` | Database name | `TeamBuilderQA` |
 | `AzureSql.UserName` | SQL authentication username | `teambuilder-api` |
 | `AzureSql.Password` | SQL authentication password (sensitive) | `***` |
-| `AllowedOrigins` | Comma-separated CORS origins | `https://app.teambuilder.com,https://admin.teambuilder.com` |
+| `AllowedOrigins` | Comma-separated CORS origins | `https://qa.teambuilder.info` (QA) / `https://teambuilder.info` (Production) |
 | `ApplicationInsights.ConnectionString` | Azure Application Insights connection string | `InstrumentationKey=...` |
 | `ASPNETCORE_ENVIRONMENT` | Environment name | `QA` or `Production` |
 
@@ -334,6 +334,8 @@ TeamBuilder uses **Entity Framework Core Code First** approach:
 
 - **HTTPS Redirection**: Enabled in production
 - **CORS**: Configurable per environment; use specific origins in production (not `*`)
+- **Production origin**: `https://teambuilder.info`
+- **Support email**: `support@teambuilder.info`
 - **Sensitive Data**: Exception details hidden outside Development
 - **Authentication**: Ready for integration with Identity, JWT, or Azure AD (not yet implemented)
 - **Secrets Management**: No hardcoded secrets; all sensitive config uses Octopus variables
