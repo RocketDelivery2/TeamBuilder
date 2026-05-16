@@ -1,0 +1,12 @@
+.git
+.gitignore
+.vs
+**/bin/
+**/obj/
+**/TestResults/
+.ai/
+ai-history/
+*.user
+*.suo
+*.swp
+README.md

@@ -64,6 +64,35 @@ Uses Octopus Deploy variable substitution. Variables are replaced during deploym
 
 ---
 
+## Render QA Hosting
+
+TeamBuilder API can run as a Docker Web Service on Render for QA validation before production rollout.
+
+| Setting | Value |
+|---|---|
+| **Service name** | `teambuilder-api-qa` |
+| **Render URL** | `https://teambuilder-api-qa.onrender.com` |
+| **Runtime** | Docker |
+| **Environment** | QA |
+| **Production URL** | `https://teambuilder.info` |
+
+### Required Render environment variables
+
+| Variable | Value | Notes |
+|---|---|---|
+| `ASPNETCORE_ENVIRONMENT` | `QA` | Keep the app in QA mode. |
+| `ASPNETCORE_URLS` | `http://0.0.0.0:${PORT}` | Bind to Render's assigned port. |
+| `AllowedOrigins` | `https://teambuilder.info,https://teambuilder-api-qa.onrender.com` | Allow production UI and QA API access. |
+| `Jwt__Authority` | `https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0` | Entra authority for QA JWT validation. |
+| `Jwt__Audience` | `api://5457c4d7-0746-4337-ab67-c5c1061b2963` | API audience value. |
+| `Jwt__Issuer` | `https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0` | Entra issuer for QA JWT validation. |
+| `Jwt__PlayerIdClaim` | `sub` | Player identifier claim. |
+| `Jwt__RequireHttpsMetadata` | `true` | Keep metadata retrieval secure. |
+| `Jwt__SigningKey` | *(do not set)* | Do not set for Entra/OIDC JWT validation. |
+| `ConnectionStrings__DefaultConnection` | *(do not set yet)* | Leave unset until the real database is ready. |
+
+---
+
 ## Octopus Deploy Variables
 
 Define the following variables in your Octopus Deploy project:
