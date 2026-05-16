@@ -39,9 +39,33 @@ GitHub (source control + CI/CD trigger)
 ```text
 ASPNETCORE_ENVIRONMENT        = Production
 ConnectionStrings__TeamBuilderSql = <managed by Octopus or Key Vault>
-AllowedOrigins                = https://your-frontend-domain.com
+AllowedOrigins                = https://teambuilder.info
 APPLICATIONINSIGHTS_CONNECTION_STRING = <managed by Octopus or Key Vault>
 ```
+
+### Render QA Docker hosting
+
+If TeamBuilder API is deployed to Render QA as a Docker Web Service, use:
+
+```text
+Service name                  = teambuilder-api-qa
+Render URL                    = https://teambuilder-api-qa.onrender.com
+Runtime                       = Docker
+Environment                   = QA
+ASPNETCORE_ENVIRONMENT        = QA
+ASPNETCORE_URLS               = http://0.0.0.0:${PORT}
+AllowedOrigins                = https://teambuilder.info,https://teambuilder-api-qa.onrender.com
+Jwt__Authority                = https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0
+Jwt__Audience                 = api://5457c4d7-0746-4337-ab67-c5c1061b2963
+Jwt__Issuer                   = https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0
+Jwt__PlayerIdClaim            = sub
+Jwt__RequireHttpsMetadata     = true
+Jwt__SigningKey               = not set
+ConnectionStrings__DefaultConnection = not set yet
+```
+
+Keep `Jwt__SigningKey` unset for Entra/OIDC JWT validation, and leave the database connection unset until the real database is ready.
+
 
 Do **not** store these values in source control. Use Octopus variables, Azure
 App Settings, or Azure Key Vault references.
