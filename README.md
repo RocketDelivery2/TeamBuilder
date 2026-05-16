@@ -388,4 +388,91 @@ This project is proprietary software. All rights reserved.
 
 For questions or issues, please contact the development team or create an issue in the repository.
 
+---
 
+## References
+
+A consolidated list of URLs, products, companies, tools, and technologies used
+by this project and the QA/OIDC rollout.
+
+### Project URLs
+
+| Resource | URL |
+|---|---|
+| TeamBuilder repository | <https://github.com/RocketDelivery2/TeamBuilder> |
+| TeamBuilder domain | <https://teambuilder.info> |
+| Support email | <support@teambuilder.info> |
+
+### Identity and Authentication
+
+| Resource | URL |
+|---|---|
+| Microsoft Entra ID (Azure AD) | <https://learn.microsoft.com/en-us/entra/identity/> |
+| Microsoft identity platform | <https://learn.microsoft.com/en-us/entra/identity-platform/> |
+| TeamBuilder QA API app registration | Azure Portal — Entra ID — App registrations |
+| TeamBuilder QA Smoke Test Client app registration | Azure Portal — Entra ID — App registrations |
+| JWT Bearer authentication (ASP.NET Core) | <https://learn.microsoft.com/en-us/aspnet/core/security/authentication/> |
+| OAuth 2.0 Authorization Code with PKCE | <https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow> |
+| jwt.io (token inspection) | <https://jwt.io> |
+
+### Deployment and Operations
+
+| Resource | URL |
+|---|---|
+| Octopus Deploy | <https://octopus.com> |
+| Octopus QA environment | Octopus Deploy dashboard — Environments — QA |
+| Azure App Service | <https://azure.microsoft.com/en-us/products/app-service/> |
+| Azure SQL Database | <https://azure.microsoft.com/en-us/products/azure-sql/database/> |
+| Azure Application Insights | <https://learn.microsoft.com/en-us/azure/azure-monitor/app/app-insights-overview> |
+| Azure Key Vault | <https://azure.microsoft.com/en-us/products/key-vault/> |
+
+### Domain and Email
+
+| Resource | URL |
+|---|---|
+| Spaceship (domain registrar) | <https://www.spaceship.com> |
+| teambuilder.info | <https://teambuilder.info> |
+| Spacemail | <https://www.spaceship.com/email/> |
+| support@teambuilder.info | <mailto:support@teambuilder.info> |
+
+### Development Stack
+
+| Resource | URL |
+|---|---|
+| .NET 10 | <https://dotnet.microsoft.com/en-us/download/dotnet/10.0> |
+| ASP.NET Core | <https://learn.microsoft.com/en-us/aspnet/core/> |
+| Entity Framework Core | <https://learn.microsoft.com/en-us/ef/core/> |
+| xUnit | <https://xunit.net> |
+| FluentAssertions | <https://fluentassertions.com> |
+| Swashbuckle (Swagger/OpenAPI) | <https://github.com/domaindrivendev/Swashbuckle.AspNetCore> |
+
+### Testing and Validation
+
+| Resource | URL |
+|---|---|
+| Postman | <https://www.postman.com> |
+| Postman smoke-test guide | [docs/postman-smoke-test.md](docs/postman-smoke-test.md) |
+| xUnit | <https://xunit.net> |
+| dotnet user-jwts | <https://learn.microsoft.com/en-us/aspnet/core/security/authentication/jwt-authn> |
+
+### Security Tooling
+
+| Resource | URL |
+|---|---|
+| GitHub | <https://github.com> |
+| GitHub Actions | <https://docs.github.com/en/actions> |
+| CodeQL | <https://codeql.github.com> |
+| Dependabot | <https://docs.github.com/en/code-security/dependabot> |
+
+### Documentation References
+
+| Resource | URL |
+|---|---|
+| OIDC rollout plan | [docs/oidc-rollout.md](docs/oidc-rollout.md) |
+| Authentication plan | [docs/auth-plan.md](docs/auth-plan.md) |
+| API reference | [docs/api.md](docs/api.md) |
+| Deployment guide | [docs/deployment.md](docs/deployment.md) |
+| Deployment next steps | [docs/deployment-next-steps.md](docs/deployment-next-steps.md) |
+| Postman smoke-test guide | [docs/postman-smoke-test.md](docs/postman-smoke-test.md) |
+| Markdownlint | <https://github.com/DavidAnson/markdownlint> |
+| OWASP Log Injection | <https://owasp.org/www-community/attacks/Log_Injection> |
