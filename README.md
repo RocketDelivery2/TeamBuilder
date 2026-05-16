@@ -351,18 +351,91 @@ TeamBuilder uses **Entity Framework Core Code First** approach:
 
 ## Future Enhancements
 
-Documented for future implementation:
+TeamBuilder is at the QA planning and rollout stage. The roadmap below is a
+high-level production-readiness guide rather than a commitment to a specific
+release date.
 
-- [ ] Authentication & authorization (JWT, Identity, Azure AD)
-- [ ] Rate limiting and throttling
-- [ ] Distributed caching (Redis)
-- [ ] Background job processing (Hangfire, Azure Functions)
-- [ ] Real-time notifications (SignalR)
-- [ ] File upload for avatars and roster imports
-- [ ] Advanced search with Elasticsearch
-- [ ] Multi-tenancy support
-- [ ] Audit logging
-- [ ] API versioning (v2, v3)
+### QA and staging rollout
+
+- Finish the QA OIDC and Octopus variable setup.
+- Deploy the QA environment and verify the end-to-end sign-in path.
+- Validate the smoke-test client against the QA API.
+- Capture QA findings before moving to production planning.
+
+### Production release readiness
+
+- Define the production hosting, database, and monitoring approach.
+- Prepare the production release checklist and rollback plan.
+- Confirm environment-specific configuration, variable placeholders, and
+  deployment approvals.
+- Validate release notes, support steps, and operational ownership.
+
+### Authentication and authorization
+
+- Complete JWT Bearer and Entra ID integration for QA and production.
+- Continue tightening authorization around ownership and resource access.
+- Keep token, claim, and environment settings documented and environment-specific.
+
+### Frontend and mobile-first client experience
+
+- Build future frontend work as mobile-first and responsive across all browser
+  widths.
+- Keep the client accessible, fast, and usable across web and mobile devices.
+- Preserve the API-first approach so multiple client types can share the same
+  backend.
+
+### Performance and scalability
+
+- Target stateless API scaling for horizontal growth.
+- Keep database queries efficient and predictable.
+- Use pagination everywhere it makes sense.
+- Apply caching where appropriate.
+- Prefer async I/O for long-running or I/O-heavy operations.
+- Use load testing and metrics-driven performance tuning before production.
+
+### Data, caching, and search
+
+- Continue refining EF Core queries, indexes, and projections.
+- Add caching where it improves hot-path reads without complicating freshness.
+- Expand search support when the data model and usage patterns justify it.
+- Keep data access patterns simple enough to support future growth.
+
+### Observability and operations
+
+- Improve health checks, logging, and operational dashboards.
+- Add metrics that help explain latency, errors, and capacity trends.
+- Keep deployment and support steps documented for QA and production.
+- Maintain clear ownership for monitoring and incident response.
+
+### Security and compliance
+
+- Keep authentication and authorization aligned with least privilege.
+- Continue reviewing secrets handling, environment isolation, and access paths.
+- Validate production settings before release and avoid committing sensitive
+  values.
+- Add security reviews and compliance checks as the platform matures.
+
+### Background processing and notifications
+
+- Introduce background workers for long-running tasks.
+- Add notifications when they improve team, event, or join-request workflows.
+- Keep queued or delayed work out of request/response paths.
+
+### API versioning and platform integrations
+
+- Introduce API versioning when breaking changes become necessary.
+- Keep integrations with external platforms explicit and documented.
+- Preserve compatibility for existing clients while the API evolves.
+
+### Near-term sequence
+
+1. Complete the README References PR.
+2. Finish the Octopus QA variables.
+3. Deploy QA.
+4. Acquire a real Entra token through Postman.
+5. Smoke test the `200`, `401`, `403`, and `409` behavior.
+6. Document the QA findings.
+7. Then plan production hosting, database, monitoring, and the release checklist.
 
 ## Contributing
 
