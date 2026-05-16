@@ -39,7 +39,7 @@ GitHub (source control + CI/CD trigger)
 ```text
 ASPNETCORE_ENVIRONMENT        = Production
 ConnectionStrings__TeamBuilderSql = <managed by Octopus or Key Vault>
-AllowedOrigins                = https://your-frontend-domain.com
+AllowedOrigins                = https://teambuilder.info
 APPLICATIONINSIGHTS_CONNECTION_STRING = <managed by Octopus or Key Vault>
 ```
 
@@ -179,7 +179,7 @@ Recommended Octopus Deploy steps per environment:
 |---|---|---|---|
 | `ConnectionStrings__TeamBuilderSql` | LocalDB | Azure SQL QA | Azure SQL Prod |
 | `ASPNETCORE_ENVIRONMENT` | Development | QA | Production |
-| `AllowedOrigins` | `*` | QA origin | Production origin |
+| `AllowedOrigins` | `*` | `https://qa.teambuilder.info` or TBD | `https://teambuilder.info` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | (optional) | AI QA resource | AI Prod resource |
 
 Store all sensitive values as **Octopus sensitive variables**. Never commit them.
@@ -230,7 +230,8 @@ Recommended telemetry:
 | **CodeQL** | Keep GitHub's default CodeQL setup enabled. Do not disable it. |
 | **Dependabot** | Keep Dependabot and dependency submission enabled. Review and merge security PRs promptly. |
 | **Managed identity** | Use Azure AD managed identity for SQL access where possible to avoid storing SQL credentials. |
-| **CORS** | Set `AllowedOrigins` to specific frontend origins in QA and Production. Avoid `*` in non-Development environments. |
+| **CORS** | Set `AllowedOrigins` to specific frontend origins in QA and Production. Use `https://teambuilder.info` for Production and a QA placeholder or TBD until the QA host is provisioned. Avoid `*` in non-Development environments. |
+| **JWT / OIDC** | Use Entra/OIDC JWT validation with `Jwt__Authority`, `Jwt__Audience`, `Jwt__Issuer`, `Jwt__PlayerIdClaim`, and `Jwt__RequireHttpsMetadata`. Do not set `Jwt__SigningKey` for Entra/OIDC JWT validation. |
 
 ---
 

@@ -81,7 +81,7 @@ Define the following variables in your Octopus Deploy project:
 
 | Variable | Scope | Description | Example |
 |----------|-------|-------------|---------|
-| `AllowedOrigins` | QA, Production | Comma-separated list of allowed origins | `https://app-qa.teambuilder.com,https://admin-qa.teambuilder.com` |
+| `AllowedOrigins` | QA, Production | Comma-separated list of allowed origins | `https://qa.teambuilder.info` (QA) / `https://teambuilder.info` (Production) |
 
 ### Application Insights (Optional)
 
@@ -94,6 +94,17 @@ Define the following variables in your Octopus Deploy project:
 | Variable | Scope | Description | Example |
 |----------|-------|-------------|---------|
 | `ASPNETCORE_ENVIRONMENT` | QA, Production | ASP.NET Core environment name | `QA` or `Production` |
+
+### JWT / OIDC Variables
+
+| Variable | Scope | Description | Example |
+|----------|-------|-------------|---------|
+| `Jwt__Authority` | QA, Production | Entra/OIDC authority URL | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+| `Jwt__Audience` | QA, Production | API audience | `api://teambuilder-api` |
+| `Jwt__Issuer` | QA, Production | Token issuer | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+| `Jwt__PlayerIdClaim` | QA, Production | Claim mapped to Player ID | `oid` or `sub` |
+| `Jwt__RequireHttpsMetadata` | QA, Production | Require HTTPS for metadata discovery | `true` |
+| `Jwt__SigningKey` | QA, Production | Do not set for Entra/OIDC JWT validation | *(not used)* |
 
 ---
 
@@ -224,6 +235,13 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
 - Step Type: **HTTP - Test URL**
 - URL: `https://#{DeploymentUrl}/health`
 - Expected Status: `200 OK`
+
+#### Step 5: Production host and CORS guidance
+
+- **Production public URL**: `https://teambuilder.info`
+- **Production AllowedOrigins**: `https://teambuilder.info`
+- **Support email**: `support@teambuilder.info`
+- **QA host placeholder**: `https://qa.teambuilder.info` if a QA host is provisioned; otherwise keep the value TBD until the host exists
 
 ---
 
