@@ -68,6 +68,14 @@ Uses Octopus Deploy variable substitution. Variables are replaced during deploym
 
 TeamBuilder API can run as a Docker Web Service on Render for QA validation before production rollout.
 
+Live QA behavior on Render:
+- `GET /` returns `200 OK` with `TeamBuilder API Running`
+- `GET /health` is the Render health check endpoint and currently returns `Healthy`
+- `GET /health/ready` may remain `Unhealthy` until database/readiness dependencies are configured
+- `GET /swagger` currently returns `404` in QA if Swagger is not enabled there
+- HTTPS redirection is disabled in QA to avoid Render reverse-proxy HTTPS port warnings
+- Production should still use HTTPS redirection
+
 | Setting | Value |
 |---|---|
 | **Service name** | `teambuilder-api-qa` |
