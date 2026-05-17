@@ -543,6 +543,7 @@ by this project and the QA/OIDC rollout.
 
 | Resource | URL |
 |---|---|
+| Estimated operating costs | [docs/estimated-costs.md](docs/estimated-costs.md) |
 | OIDC rollout plan | [docs/oidc-rollout.md](docs/oidc-rollout.md) |
 | Authentication plan | [docs/auth-plan.md](docs/auth-plan.md) |
 | API reference | [docs/api.md](docs/api.md) |
