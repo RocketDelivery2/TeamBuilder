@@ -91,20 +91,12 @@ jobs:
             exit 0
           fi
 
-          if [[ "$UPDATE_TYPE" != "version-update:semver-minor" && "$UPDATE_TYPE" != "version-update:semver-patch" ]]; then
-            if [[ "$auto_merge_enabled" == "true" ]]; then
-              gh api graphql \
-                -f pullRequestId="$pr_id" \
-                -f query='mutation($pullRequestId:ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) { pullRequest { id } } }' \
-                >/dev/null
-            fi
-
-            echo "Skipping: update type '${UPDATE_TYPE}' is not patch or minor." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          if [[ "$UPDATE_TYPE" == "version-update:semver-minor" || "$UPDATE_TYPE" == "version-update:semver-patch" ]]; then
+            gh pr review "$PR_NUMBER" --repo "$REPO" --approve
+            echo "Approved patch/minor Dependabot update." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Skipped approval: update type '${UPDATE_TYPE}' is not patch or minor." >> "$GITHUB_STEP_SUMMARY"
           fi
-
-          gh pr review "$PR_NUMBER" --repo "$REPO" --approve
-          echo "Approved patch/minor Dependabot update." >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$auto_merge_enabled" == "true" ]]; then
             echo "Auto-merge is already enabled." >> "$GITHUB_STEP_SUMMARY"
