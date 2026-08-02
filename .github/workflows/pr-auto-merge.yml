@@ -1,0 +1,97 @@
+name: PR Auto Merge
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable-auto-merge:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Decide eligibility and enable auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+
+          owner="${BASE_REPO%%/*}"
+          repo="${BASE_REPO##*/}"
+
+          pr_json="$(gh api graphql \
+            -f owner="$owner" \
+            -f repo="$repo" \
+            -f number="$PR_NUMBER" \
+            -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { id autoMergeRequest { enabledAt } } } }')"
+
+          pr_id="$(jq -r '.data.repository.pullRequest.id' <<<"$pr_json")"
+          auto_merge_enabled="$(jq -r '.data.repository.pullRequest.autoMergeRequest.enabledAt // empty' <<<"$pr_json")"
+
+          {
+            echo "## Trusted PR auto-merge decision"
+            echo ""
+            echo "- PR: #${PR_NUMBER}"
+            echo "- Author: ${AUTHOR}"
+            echo "- Draft: ${DRAFT}"
+            echo "- Head repo: ${HEAD_REPO}"
+            echo "- Base repo: ${BASE_REPO}"
+            echo "- Base ref: ${BASE_REF}"
+            echo "- Auto-merge already enabled: ${auto_merge_enabled:-false}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$BASE_REF" != "main" ]]; then
+            echo "Skipping: base ref is not main." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ "$DRAFT" == "true" ]]; then
+            echo "Skipping: draft pull request." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ "$HEAD_REPO" != "$BASE_REPO" ]]; then
+            echo "Skipping: fork pull request is not eligible for auto-merge." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          case "$AUTHOR" in
+            RocketDelivery2|Copilot)
+              ;;
+            *)
+              echo "Skipping: author '${AUTHOR}' is not in the trusted actor allowlist." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
+          if [[ -n "$auto_merge_enabled" ]]; then
+            echo "Auto-merge is already enabled." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          gh api graphql \
+            -f pullRequestId="$pr_id" \
+            -f query='mutation($pullRequestId:ID!) { enablePullRequestAutoMerge(input:{pullRequestId:$pullRequestId, mergeMethod:SQUASH}) { pullRequest { id } } }' \
+            >/dev/null
+
+          echo "Enabled squash auto-merge." >> "$GITHUB_STEP_SUMMARY"
