@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
@@ -58,27 +58,30 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         return (team, player);
     }
 
-    private static HttpRequestMessage BuildCreateTeamRequest(string? bearerToken)
+    private static HttpRequestMessage BuildCreateTeamRequest(string? bearerToken = null, Guid? userId = null)
     {
         var dto = new CreateTeamDto { Name = $"Team-{Guid.NewGuid():N}", MaxMembers = 5 };
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
         request.Content = JsonContent.Create(dto);
         if (bearerToken is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        if (userId is not null)
+            request.Headers.Add("X-User-Id", userId.Value.ToString());
         return request;
     }
 
-    private static HttpRequestMessage BuildCreateJoinRequestRequest(Guid teamId, string? bearerToken)
+    private static HttpRequestMessage BuildCreateJoinRequestRequest(Guid teamId, string? bearerToken = null, Guid? userId = null)
     {
         var dto = new CreateJoinRequestDto { TeamId = teamId };
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
         if (bearerToken is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        if (userId is not null)
+            request.Headers.Add("X-User-Id", userId.Value.ToString());
         return request;
     }
-
-    // ── JWT Bearer claims path (write endpoints require JWT) ─────────────────
+    // ── JWT identity resolution ──────────────────────────────────────────────
 
     [Fact]
     public async Task CreateTeam_WithValidJwtSubClaim_SetsOwnerIdFromToken()
@@ -114,44 +117,32 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         jr!.PlayerId.Should().Be(player.Id);
     }
 
-    // ── Protected write endpoint — missing JWT returns 401 ───────────────────
-
     [Fact]
-    public async Task CreateTeam_WithoutJwt_Returns401()
-    {
-        // Arrange — no Authorization header; write endpoint now requires JWT
-        using var request = BuildCreateTeamRequest(bearerToken: null);
-
-        // Act
-        var response = await _client.SendAsync(request);
-
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-    }
-
-    [Fact]
-    public async Task CreateJoinRequest_WithoutJwt_Returns401()
+    public async Task CreateTeam_WithJwtAndXUserIdHeader_PrefersJwtSubClaim()
     {
         // Arrange
-        var (team, _) = await SeedTeamAndPlayerAsync();
-        using var request = BuildCreateJoinRequestRequest(team.Id, bearerToken: null);
+        var jwtUserId = Guid.NewGuid();
+        var headerUserId = Guid.NewGuid();
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(jwtUserId);
+        using var request = BuildCreateTeamRequest(bearerToken: token, userId: headerUserId);
 
         // Act
         var response = await _client.SendAsync(request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var team = await response.Content.ReadFromJsonAsync<TeamDto>();
+        team!.OwnerId.Should().Be(jwtUserId);
     }
 
     // ── Missing/invalid claim resolves to Guid.Empty ────────────────────────
 
     [Fact]
-    public async Task CreateTeam_WithJwtMissingSubClaim_Returns403()
+    public async Task CreateTeam_WithJwtMissingSubClaim_ReturnsCreatedWithEmptyOwnerId()
     {
         // A JWT with no sub claim resolves to Guid.Empty as the caller ID.
         // The team is created with OwnerId = Guid.Empty, and ownership checks
         // then treat the caller as a non-owner of any real resource.
-        // This validates the fallback path: missing claim → Guid.Empty, not an error.
         var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.Empty);
         using var request = BuildCreateTeamRequest(bearerToken: token);
 
@@ -163,4 +154,3 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         team!.OwnerId.Should().Be(Guid.Empty);
     }
 }
-

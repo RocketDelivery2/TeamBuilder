@@ -180,7 +180,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     [Fact]
     public async Task Create_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var dto = new CreateTeamDto { Name = $"Unauth-{Guid.NewGuid():N}", MaxMembers = 5 };
 
         // Act
@@ -400,7 +400,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var player = await SeedPlayerAsync($"leaverunauthplayer-{Guid.NewGuid():N}");
         await AddMemberAsync(team.Id, player.Id);
 
-        // Act — no Authorization header
+        // Act
         var response = await _client.PostAsync(
             $"/api/v1/teams/{team.Id}/members/{player.Id}/leave", null);
 
