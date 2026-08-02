@@ -4,15 +4,9 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - "**/*.md"
-      - ".github/workflows/markdown.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.md"
-      - ".github/workflows/markdown.yml"
 
 permissions:
   contents: read
