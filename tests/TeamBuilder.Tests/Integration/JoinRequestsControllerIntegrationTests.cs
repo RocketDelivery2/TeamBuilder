@@ -130,7 +130,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     [Fact]
     public async Task Create_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var (team, _) = await SeedTeamAndPlayerAsync();
         var dto = new CreateJoinRequestDto { TeamId = team.Id };
 
@@ -233,7 +233,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
 
-        // Act — no Authorization header
+        // Act
         var response = await _client.PutAsJsonAsync($"/api/v1/joinrequests/{jr.Id}/process", processDto);
 
         // Assert

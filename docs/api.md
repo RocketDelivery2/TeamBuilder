@@ -1,4 +1,4 @@
-# TeamBuilder API
+﻿# TeamBuilder API
 
 ## Overview
 
@@ -8,7 +8,7 @@ middle layer between any client-side frontend and the backend data platform.
 
 - **Base path:** `api/v1`
 - **Format:** JSON (request and response)
-- **Authentication:** JWT Bearer required on write endpoints; read and health endpoints are public.
+- **Authentication:** JWT bearer auth is required on write endpoints; read and health endpoints remain public.
   See [Authentication](#authentication) for details and local dev token setup.
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
 - **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
@@ -132,43 +132,28 @@ X-Request-Id: my-client-trace-001
 
 ## Authentication
 
-> **Status: Phase 3 — Ownership authorization enforced on team, event, and roster import mutation endpoints.**
+> **Status: Phase 2 — JWT bearer auth is required on write endpoints.**
 > See [`docs/auth-plan.md`](auth-plan.md) for the full phased implementation plan.
 
-### Ownership authorization (Phase 3)
+### Protected write endpoints
 
-Mutation endpoints enforce ownership in addition to authentication.
-Authenticated users who do not own the resource receive `403 Forbidden`.
-Unauthenticated requests continue to receive `401 Unauthorized`.
-
-| Method | Path | Owner field | Ownership check |
-|---|---|---|---|
-| `PUT` | `/api/v1/teams/{id}` | `OwnerId` | `sub` claim must match `OwnerId`. |
-| `DELETE` | `/api/v1/teams/{id}` | `OwnerId` | `sub` claim must match `OwnerId`. |
-| `PUT` | `/api/v1/events/{id}` | `HostId` | `sub` claim must match `HostId`. |
-| `DELETE` | `/api/v1/events/{id}` | `HostId` | `sub` claim must match `HostId`. |
-| `PUT` | `/api/v1/rosterimports/{id}/process` | `ImportedByUserId` | `sub` claim must match `ImportedByUserId`. |
-| `DELETE` | `/api/v1/rosterimports/{id}` | `ImportedByUserId` | `sub` claim must match `ImportedByUserId`. |
-
-### Protected endpoints (require `Authorization: Bearer <token>`)
-
-The following write endpoints require a valid JWT Bearer token. Requests
-without a valid token receive `401 Unauthorized`.
+Write endpoints require a valid `Authorization: Bearer <token>` header. Requests
+without a token receive `401 Unauthorized`.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/v1/teams` | Sets `OwnerId` from `sub` claim. |
-| `PUT` | `/api/v1/teams/{id}` | Requires authentication; owner only (see above). |
-| `DELETE` | `/api/v1/teams/{id}` | Requires authentication; owner only (see above). |
+| `POST` | `/api/v1/teams` | Sets `OwnerId` from the JWT `sub` claim. |
+| `PUT` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
+| `DELETE` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
 | `POST` | `/api/v1/teams/{teamId}/members/{playerId}/leave` | Requires authentication. |
-| `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from `sub` claim. |
-| `PUT` | `/api/v1/joinrequests/{id}/process` | Identifies processing user from `sub` claim. |
-| `POST` | `/api/v1/events` | Sets `HostId` from `sub` claim. |
-| `PUT` | `/api/v1/events/{id}` | Requires authentication; host only (see above). |
-| `DELETE` | `/api/v1/events/{id}` | Requires authentication; host only (see above). |
-| `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from `sub` claim. |
-| `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication; importer only (see above). |
-| `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication; importer only (see above). |
+| `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from the JWT `sub` claim. |
+| `PUT` | `/api/v1/joinrequests/{id}/process` | Identifies the processing user from the JWT `sub` claim. |
+| `POST` | `/api/v1/events` | Sets `HostId` from the JWT `sub` claim. |
+| `PUT` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
+| `DELETE` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
+| `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from the JWT `sub` claim. |
+| `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication; importer only (see below). |
+| `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication; importer only (see below). |
 
 ### Anonymous endpoints (no token required)
 
@@ -183,7 +168,7 @@ without a valid token receive `401 Unauthorized`.
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
 | `GET` | `/swagger` (Development only) |
 
-### Caller identity — JWT Bearer
+### Caller identity — JWT bearer
 
 `Authorization: Bearer <token>` is the supported caller identity mechanism for
 all protected write endpoints. The configured `Jwt:PlayerIdClaim` (default
@@ -192,16 +177,10 @@ all protected write endpoints. The configured `Jwt:PlayerIdClaim` (default
 | Scenario | `UserId` value |
 |---|---|
 | Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
-| Invalid / expired JWT on a **protected** endpoint | `401 Unauthorized` |
-| No JWT on a **protected** endpoint | `401 Unauthorized` |
+| Invalid / expired JWT on a protected endpoint | `401 Unauthorized` |
+| No JWT on a protected endpoint | `401 Unauthorized` |
 | Invalid / missing claim on an authenticated JWT | `Guid.Empty` |
 | Anonymous request to a public endpoint | `Guid.Empty` |
-
-```http
-POST /api/v1/teams HTTP/1.1
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-Content-Type: application/json
-```
 
 ### Local development — issuing tokens with `dotnet user-jwts`
 
@@ -223,8 +202,6 @@ dotnet user-secrets set "Jwt:Issuer"     "dotnet-user-jwts"
 ```
 
 See [`docs/auth-plan.md`](auth-plan.md) for all configuration keys.
-
----
 
 ## Error Responses
 

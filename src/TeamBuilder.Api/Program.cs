@@ -23,13 +23,12 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
-// Add user context (reads player ID from authenticated JWT sub claim; returns Guid.Empty for anonymous requests)
+// Add user context (JWT sub claim first; X-User-Id fallback remains until header removal is complete)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
 
 // Add JWT Bearer authentication
-// Local development: use `dotnet user-jwts` to issue tokens (see docs/auth-plan.md).
-// No [Authorize] is required yet; authentication is optional on all existing endpoints.
+// Local development can use `dotnet user-jwts` with the non-secret config in appsettings.Development.json.
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
 builder.Services.AddAuthorization();
@@ -113,8 +112,8 @@ builder.Services.AddCors(options =>
 });
 
 // Add health checks
-// /health  — liveness: fast process-level check, no external dependencies
-// /health/ready — readiness: verifies external dependencies (database) are reachable
+// /health  ï¿½ liveness: fast process-level check, no external dependencies
+// /health/ready ï¿½ readiness: verifies external dependencies (database) are reachable
 builder.Services.AddHealthChecks()
     .AddSqlServer(
         builder.Configuration.GetConnectionString("TeamBuilderSql") ?? "",
@@ -126,7 +125,7 @@ var app = builder.Build();
 // Configure the HTTP request pipeline
 app.UseExceptionHandler();
 
-// Correlation ID and structured request logging — runs early so every request is covered.
+// Correlation ID and structured request logging ï¿½ runs early so every request is covered.
 app.UseMiddleware<RequestLoggingMiddleware>();
 
 if (app.Environment.IsDevelopment())

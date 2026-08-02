@@ -120,7 +120,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     [Fact]
     public async Task Create_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var dto = new CreateRosterImportDto
         {
             SourceName = $"Unauth-{Guid.NewGuid():N}",
@@ -159,7 +159,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     [Fact]
     public async Task Process_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var import = await SeedRosterImportAsync(isProcessed: false);
 
         // Act
@@ -223,7 +223,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     [Fact]
     public async Task Delete_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var import = await SeedRosterImportAsync();
 
         // Act
