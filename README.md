@@ -16,7 +16,7 @@ Together, let's put the **Capital T** in **Team**.
 
 ## Project Media
 
-![TeamBuilder concept and demo media](docs/project-media/teambuilder-canonical-preview.png)
+![TeamBuilder thumbnail](docs/project-media/teambuilder-thumbnail.png)
 
 *TeamBuilder concept and demo media. Canonical repository: [https://github.com/RocketDelivery2/TeamBuilder](https://github.com/RocketDelivery2/TeamBuilder)*
 
