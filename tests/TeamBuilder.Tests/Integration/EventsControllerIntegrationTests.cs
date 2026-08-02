@@ -121,7 +121,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     [Fact]
     public async Task Create_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var dto = new CreateEventDto
         {
             Name = $"Unauth-{Guid.NewGuid():N}",
@@ -160,7 +160,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     [Fact]
     public async Task Update_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var ev = await SeedEventAsync($"UpdateUnauth-{Guid.NewGuid():N}");
         var dto = new UpdateEventDto { Name = "Should Fail" };
 
@@ -210,7 +210,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     [Fact]
     public async Task Delete_WithoutJwt_Returns401()
     {
-        // Arrange — no Authorization header
+        // Arrange
         var ev = await SeedEventAsync($"DelUnauth-{Guid.NewGuid():N}");
 
         // Act
