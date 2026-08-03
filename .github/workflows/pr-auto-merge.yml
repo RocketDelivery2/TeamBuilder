@@ -85,12 +85,19 @@ jobs:
               ;;
           esac
 
-          if [[ "$review_decision" != "APPROVED" ]]; then
-            gh pr review "$PR_NUMBER" --repo "$BASE_REPO" --approve
-            echo "Approved trusted PR." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "PR is already approved." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          case "$review_decision" in
+            APPROVED)
+              echo "PR is already approved." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            CHANGES_REQUESTED)
+              echo "Skipping: reviewDecision is CHANGES_REQUESTED. Will not approve or enable auto-merge." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+            *)
+              gh pr review "$PR_NUMBER" --repo "$BASE_REPO" --approve
+              echo "Approved trusted PR." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
 
           if [[ -n "$auto_merge_enabled" ]]; then
             echo "Auto-merge is already enabled." >> "$GITHUB_STEP_SUMMARY"
