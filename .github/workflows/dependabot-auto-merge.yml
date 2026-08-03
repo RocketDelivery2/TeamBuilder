@@ -21,6 +21,7 @@ concurrency:
 jobs:
   approve-and-enable:
     name: Approve and enable auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
 
     steps:
@@ -51,7 +52,7 @@ jobs:
           pr_json="$(gh api graphql \
             -f owner="$owner" \
             -f name="$name" \
-            -f number="$PR_NUMBER" \
+            -F number="$PR_NUMBER" \
             -f query='query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { id autoMergeRequest { enabledAt } } } }')"
 
           pr_id="$(jq -r '.data.repository.pullRequest.id' <<<"$pr_json")"
@@ -98,7 +99,7 @@ jobs:
             echo "Skipped approval: update type '${UPDATE_TYPE}' is not patch or minor." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          if [[ "$auto_merge_enabled" == "true" ]]; then
+          if [[ -n "$auto_merge_enabled" ]]; then
             echo "Auto-merge is already enabled." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
