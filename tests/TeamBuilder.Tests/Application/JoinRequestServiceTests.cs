@@ -1128,6 +1128,105 @@ public class JoinRequestServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateAsync_ShouldThrowConflict_WhenSaveHitsRecognizedDuplicatePendingRequestRace()
+    {
+        // Arrange
+        var databaseName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<TeamBuilderDbContext>()
+            .UseInMemoryDatabase(databaseName)
+            .Options;
+
+        Guid teamId;
+        Guid playerId;
+
+        using (var seedContext = new TeamBuilderDbContext(options))
+        {
+            var team = new Team
+            {
+                Id = Guid.NewGuid(),
+                Name = "Test Team",
+                MaxMembers = 5
+            };
+
+            var player = new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = "TestPlayer"
+            };
+
+            teamId = team.Id;
+            playerId = player.Id;
+
+            seedContext.Teams.Add(team);
+            seedContext.Players.Add(player);
+            await seedContext.SaveChangesAsync();
+        }
+
+        using var raceContext = new ThrowingDuplicatePendingJoinRequestTeamBuilderDbContext(options);
+        var service = new JoinRequestService(raceContext);
+
+        var createDto = new CreateJoinRequestDto
+        {
+            TeamId = teamId
+        };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.CreateAsync(createDto, playerId));
+
+        // Assert
+        exception.Message.Should().Contain("A pending join request already exists for this team.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_ShouldNotMislabel_UnrelatedDbUpdateException()
+    {
+        // Arrange
+        var databaseName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<TeamBuilderDbContext>()
+            .UseInMemoryDatabase(databaseName)
+            .Options;
+
+        Guid teamId;
+        Guid playerId;
+
+        using (var seedContext = new TeamBuilderDbContext(options))
+        {
+            var team = new Team
+            {
+                Id = Guid.NewGuid(),
+                Name = "Test Team",
+                MaxMembers = 5
+            };
+
+            var player = new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = "TestPlayer"
+            };
+
+            teamId = team.Id;
+            playerId = player.Id;
+
+            seedContext.Teams.Add(team);
+            seedContext.Players.Add(player);
+            await seedContext.SaveChangesAsync();
+        }
+
+        using var raceContext = new ThrowingUnrelatedDbUpdateExceptionOnCreateTeamBuilderDbContext(options);
+        var service = new JoinRequestService(raceContext);
+
+        var createDto = new CreateJoinRequestDto
+        {
+            TeamId = teamId
+        };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<DbUpdateException>(
+            () => service.CreateAsync(createDto, playerId));
+    }
+
+    [Fact]
     public async Task CreateAsync_ShouldThrowArgumentException_WhenTeamIdIsEmpty()
     {
         // Arrange
@@ -1177,6 +1276,40 @@ public class JoinRequestServiceTests : IDisposable
     /// duplicate-membership conflict.
     /// </summary>
     private sealed class ThrowingUnrelatedDbUpdateExceptionTeamBuilderDbContext(DbContextOptions<TeamBuilderDbContext> options)
+        : TeamBuilderDbContext(options)
+    {
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            var sqlException = SqlExceptionTestFactory.Create(
+                547,
+                "The INSERT statement conflicted with the FOREIGN KEY constraint.");
+            throw new DbUpdateException("Simulated unrelated persistence failure", sqlException);
+        }
+    }
+
+    /// <summary>
+    /// Simulates the SQL Server error that the UX_JoinRequests_TeamId_PlayerId_Pending
+    /// unique filtered index would raise if two concurrent requests both passed the
+    /// application-level duplicate check and raced to insert the same pending
+    /// (TeamId, PlayerId) join request.
+    /// </summary>
+    private sealed class ThrowingDuplicatePendingJoinRequestTeamBuilderDbContext(DbContextOptions<TeamBuilderDbContext> options)
+        : TeamBuilderDbContext(options)
+    {
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            var sqlException = SqlExceptionTestFactory.Create(
+                2627,
+                "Violation of UNIQUE KEY constraint 'UX_JoinRequests_TeamId_PlayerId_Pending'. Cannot insert duplicate key in object 'dbo.JoinRequests'.");
+            throw new DbUpdateException("Simulated duplicate pending join request race", sqlException);
+        }
+    }
+
+    /// <summary>
+    /// Simulates an unrelated persistence failure on CreateAsync that must NOT be
+    /// reinterpreted as a duplicate-pending-request conflict.
+    /// </summary>
+    private sealed class ThrowingUnrelatedDbUpdateExceptionOnCreateTeamBuilderDbContext(DbContextOptions<TeamBuilderDbContext> options)
         : TeamBuilderDbContext(options)
     {
         public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
