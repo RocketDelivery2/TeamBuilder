@@ -136,6 +136,12 @@ public class JoinRequestService : IJoinRequestService
         if (joinRequest.Status != RequestStatus.Pending)
             throw new InvalidOperationException("Only pending requests can be processed.");
 
+        if (joinRequest.Team is null)
+            throw new InvalidOperationException("The team for this join request could not be loaded.");
+
+        if (joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
+            throw new InvalidOperationException("The team is already full.");
+
         joinRequest.Status = processJoinRequestDto.Status;
         joinRequest.ProcessedAtUtc = DateTime.UtcNow;
         joinRequest.ProcessedByUserId = processedByUserId;
@@ -154,17 +160,23 @@ public class JoinRequestService : IJoinRequestService
 
             _context.TeamMembers.Add(teamMember);
 
-            if (joinRequest.Team != null)
+            joinRequest.Team.CurrentMemberCount++;
+            if (joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
             {
-                joinRequest.Team.CurrentMemberCount++;
-                if (joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
-                {
-                    joinRequest.Team.Status = TeamStatus.Full;
-                }
+                joinRequest.Team.Status = TeamStatus.Full;
             }
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new InvalidOperationException(
+                "The team changed while this join request was being processed. Please try again.",
+                ex);
+        }
 
         return MapToDto(joinRequest);
     }
