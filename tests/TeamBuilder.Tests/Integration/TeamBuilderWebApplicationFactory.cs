@@ -31,9 +31,18 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
     /// <summary>
     /// Creates a signed JWT for use in integration tests.
     /// </summary>
-    /// <param name="userId">Value written to the <c>sub</c> claim. Pass <c>null</c> to omit it.</param>
+    /// <param name="userId">Value written to the configured player claim. Pass <c>null</c> to omit it.</param>
     /// <param name="extraClaims">Any additional claims to include.</param>
     internal static string CreateTestJwt(Guid? userId, IEnumerable<Claim>? extraClaims = null)
+        => CreateTestJwtWithPlayerClaim(userId?.ToString(), includePlayerClaim: userId.HasValue, extraClaims);
+
+    /// <summary>
+    /// Creates a signed JWT for use in integration tests with an explicit player-claim value.
+    /// </summary>
+    /// <param name="playerClaimValue">Value written to the configured player claim.</param>
+    /// <param name="includePlayerClaim">Whether to include the configured player claim at all.</param>
+    /// <param name="extraClaims">Any additional claims to include.</param>
+    internal static string CreateTestJwtWithPlayerClaim(string? playerClaimValue, bool includePlayerClaim = true, IEnumerable<Claim>? extraClaims = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestSigningKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -42,8 +51,8 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
         {
             [JwtRegisteredClaimNames.Jti] = Guid.NewGuid().ToString()
         };
-        if (userId.HasValue)
-            claims[JwtRegisteredClaimNames.Sub] = userId.Value.ToString();
+        if (includePlayerClaim)
+            claims[JwtRegisteredClaimNames.Sub] = playerClaimValue ?? string.Empty;
         if (extraClaims is not null)
         {
             foreach (var c in extraClaims)

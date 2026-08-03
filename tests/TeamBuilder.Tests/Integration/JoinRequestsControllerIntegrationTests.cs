@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Domain.Entities;
@@ -74,6 +75,13 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         return jr;
     }
 
+    private async Task<int> GetJoinRequestCountAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        return await db.JoinRequests.CountAsync();
+    }
+
     // ── GET /api/v1/joinrequests/{id} ────────────────────────────────────────
 
     [Fact]
@@ -139,6 +147,26 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Create_WithMissingConfiguredPlayerClaim_Returns401AndDoesNotPersistJoinRequest()
+    {
+        // Arrange
+        var (team, _) = await SeedTeamAndPlayerAsync();
+        var before = await GetJoinRequestCountAsync();
+        var dto = new CreateJoinRequestDto { TeamId = team.Id };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await GetJoinRequestCountAsync()).Should().Be(before);
     }
 
     [Fact]
