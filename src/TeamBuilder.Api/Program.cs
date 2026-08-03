@@ -23,7 +23,7 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
-// Add user context (JWT sub claim first; X-User-Id fallback remains until header removal is complete)
+// Add user context (configured Jwt:PlayerIdClaim, default "sub").
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
 
@@ -48,8 +48,8 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         {
             // Symmetric key path: used for local development (dotnet user-jwts) and tests.
             // No OIDC metadata discovery; Authority is intentionally not set.
-            // MapInboundClaims = false preserves raw JWT claim names (e.g. "sub", not the
-            // WS-Security URI) so that Jwt:PlayerIdClaim = "sub" resolves correctly.
+            // MapInboundClaims = false preserves raw JWT claim names so the configured
+            // Jwt:PlayerIdClaim resolves correctly.
             options.MapInboundClaims = false;
             options.RequireHttpsMetadata = false;
             options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
@@ -75,6 +75,22 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             options.TokenValidationParameters.ValidateAudience = !string.IsNullOrWhiteSpace(jwtAudience);
             options.TokenValidationParameters.ValidateIssuer   = !string.IsNullOrWhiteSpace(jwtAuthority);
         }
+
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                var playerClaimType = config.GetValue<string>("Jwt:PlayerIdClaim") ?? ClaimsCurrentUserContext.DefaultPlayerIdClaim;
+                var playerClaimValue = context.Principal?.FindFirst(playerClaimType)?.Value;
+
+                if (!Guid.TryParse(playerClaimValue, out _))
+                {
+                    context.Fail($"Missing or invalid '{playerClaimType}' claim.");
+                }
+
+                return Task.CompletedTask;
+            }
+        };
     });
 
 // Add ProblemDetails support
