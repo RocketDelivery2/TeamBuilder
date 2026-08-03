@@ -25,7 +25,10 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<(Team team, Player player)> SeedTeamAndPlayerAsync()
+    private async Task<(Team team, Player player)> SeedTeamAndPlayerAsync(
+        int maxMembers = 10,
+        int currentMemberCount = 0,
+        TeamStatus status = TeamStatus.Active)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
@@ -34,8 +37,9 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         {
             Id = Guid.NewGuid(),
             Name = $"Team-{Guid.NewGuid():N}",
-            Status = TeamStatus.Active,
-            MaxMembers = 10,
+            Status = status,
+            MaxMembers = maxMembers,
+            CurrentMemberCount = currentMemberCount,
             CreatedAtUtc = DateTime.UtcNow,
             RowVersion = []
         };
@@ -234,6 +238,28 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
         result!.Status.Should().Be(RequestStatus.Rejected);
+    }
+
+    [Fact]
+    public async Task Process_ApproveFullTeam_Returns409Conflict()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync(maxMembers: 1, currentMemberCount: 1, status: TeamStatus.Full);
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process");
+        request.Content = JsonContent.Create(processDto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        problem.Should().NotBeNull();
+        problem!.Status.Should().Be(StatusCodes.Status409Conflict);
     }
 
     [Fact]
