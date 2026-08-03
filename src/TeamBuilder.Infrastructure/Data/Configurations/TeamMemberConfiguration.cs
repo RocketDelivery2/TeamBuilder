@@ -22,7 +22,15 @@ public class TeamMemberConfiguration : IEntityTypeConfiguration<TeamMember>
         builder.Property(tm => tm.RowVersion)
             .IsRowVersion();
 
-        builder.HasIndex(tm => new { tm.TeamId, tm.PlayerId });
+        // A player can only hold one active membership per team at a time.
+        // Filtered on IsActive so a player who has left a team (soft-deleted,
+        // see TeamService.RemoveMemberAsync) can still rejoin later without
+        // colliding with their own historical inactive membership row.
+        builder.HasIndex(tm => new { tm.TeamId, tm.PlayerId })
+            .IsUnique()
+            .HasFilter("[IsActive] = 1")
+            .HasDatabaseName("UX_TeamMembers_TeamId_PlayerId");
+
         builder.HasIndex(tm => tm.IsActive);
     }
 }

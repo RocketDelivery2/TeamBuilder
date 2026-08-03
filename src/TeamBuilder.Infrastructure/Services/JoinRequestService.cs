@@ -5,6 +5,7 @@ using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
+using TeamBuilder.Infrastructure.Persistence;
 
 namespace TeamBuilder.Infrastructure.Services;
 
@@ -149,6 +150,15 @@ public class JoinRequestService : IJoinRequestService
 
         if (processJoinRequestDto.Status == RequestStatus.Approved)
         {
+            // Friendly early validation: catches the common case without a DB round-trip
+            // failure. The unique index is still the source of truth for concurrent races.
+            var alreadyActiveMember = await _context.TeamMembers.AnyAsync(
+                tm => tm.TeamId == joinRequest.TeamId && tm.PlayerId == joinRequest.PlayerId && tm.IsActive,
+                cancellationToken);
+
+            if (alreadyActiveMember)
+                throw new InvalidOperationException("This player is already an active member of this team.");
+
             var teamMember = new TeamMember
             {
                 Id = Guid.NewGuid(),
@@ -176,6 +186,12 @@ public class JoinRequestService : IJoinRequestService
         {
             throw new InvalidOperationException(
                 "The team changed while this join request was being processed. Please try again.",
+                ex);
+        }
+        catch (DbUpdateException ex) when (TeamMembershipConflictClassifier.IsDuplicateTeamMembership(ex))
+        {
+            throw new InvalidOperationException(
+                "This player is already an active member of this team.",
                 ex);
         }
 
