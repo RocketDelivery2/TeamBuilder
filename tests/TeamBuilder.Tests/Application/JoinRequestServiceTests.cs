@@ -519,6 +519,177 @@ public class JoinRequestServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessAsync_ShouldThrowConflict_WhenPlayerIsAlreadyAnActiveMember()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test Team",
+            MaxMembers = 5,
+            CurrentMemberCount = 1
+        };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "TestPlayer"
+        };
+
+        _context.Teams.Add(team);
+        _context.Players.Add(player);
+        _context.TeamMembers.Add(new TeamMember
+        {
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Role = TeamRole.Member,
+            JoinedAtUtc = DateTime.UtcNow,
+            IsActive = true
+        });
+
+        var joinRequest = new JoinRequest
+        {
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Status = RequestStatus.Pending,
+            RequestedAtUtc = DateTime.UtcNow
+        };
+
+        _context.JoinRequests.Add(joinRequest);
+        await _context.SaveChangesAsync();
+
+        var processDto = new ProcessJoinRequestDto
+        {
+            Status = RequestStatus.Approved
+        };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+
+        // Assert
+        exception.Message.Should().Contain("already an active member of this team");
+
+        var memberCount = await _context.TeamMembers
+            .CountAsync(tm => tm.TeamId == team.Id && tm.PlayerId == player.Id);
+        memberCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldThrowConflict_WhenSaveHitsRecognizedDuplicateMembershipRace()
+    {
+        // Arrange
+        var databaseName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<TeamBuilderDbContext>()
+            .UseInMemoryDatabase(databaseName)
+            .Options;
+
+        using (var seedContext = new TeamBuilderDbContext(options))
+        {
+            var team = new Team
+            {
+                Id = Guid.NewGuid(),
+                Name = "Test Team",
+                MaxMembers = 5,
+                CurrentMemberCount = 1,
+                Status = TeamStatus.Recruiting
+            };
+
+            var player = new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = "TestPlayer"
+            };
+
+            seedContext.Teams.Add(team);
+            seedContext.Players.Add(player);
+            seedContext.JoinRequests.Add(new JoinRequest
+            {
+                Id = Guid.NewGuid(),
+                TeamId = team.Id,
+                PlayerId = player.Id,
+                Status = RequestStatus.Pending,
+                RequestedAtUtc = DateTime.UtcNow
+            });
+            await seedContext.SaveChangesAsync();
+        }
+
+        using var raceContext = new ThrowingDuplicateMembershipTeamBuilderDbContext(options);
+        var service = new JoinRequestService(raceContext);
+
+        var joinRequest = await raceContext.JoinRequests.FirstAsync();
+        var processDto = new ProcessJoinRequestDto
+        {
+            Status = RequestStatus.Approved
+        };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+
+        // Assert
+        exception.Message.Should().Contain("already an active member of this team");
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldNotMislabel_UnrelatedDbUpdateException()
+    {
+        // Arrange
+        var databaseName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<TeamBuilderDbContext>()
+            .UseInMemoryDatabase(databaseName)
+            .Options;
+
+        using (var seedContext = new TeamBuilderDbContext(options))
+        {
+            var team = new Team
+            {
+                Id = Guid.NewGuid(),
+                Name = "Test Team",
+                MaxMembers = 5,
+                CurrentMemberCount = 1,
+                Status = TeamStatus.Recruiting
+            };
+
+            var player = new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = "TestPlayer"
+            };
+
+            seedContext.Teams.Add(team);
+            seedContext.Players.Add(player);
+            seedContext.JoinRequests.Add(new JoinRequest
+            {
+                Id = Guid.NewGuid(),
+                TeamId = team.Id,
+                PlayerId = player.Id,
+                Status = RequestStatus.Pending,
+                RequestedAtUtc = DateTime.UtcNow
+            });
+            await seedContext.SaveChangesAsync();
+        }
+
+        using var unrelatedFailureContext = new ThrowingUnrelatedDbUpdateExceptionTeamBuilderDbContext(options);
+        var service = new JoinRequestService(unrelatedFailureContext);
+
+        var joinRequest = await unrelatedFailureContext.JoinRequests.FirstAsync();
+        var processDto = new ProcessJoinRequestDto
+        {
+            Status = RequestStatus.Approved
+        };
+
+        // Act
+        var act = () => service.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid());
+
+        // Assert: the unrecognized DbUpdateException must propagate as-is, not be
+        // reinterpreted as a duplicate-membership conflict.
+        await act.Should().ThrowAsync<DbUpdateException>();
+    }
+
+    [Fact]
     public async Task ProcessAsync_ShouldThrow_WhenAlreadyProcessed()
     {
         // Arrange
@@ -981,6 +1152,39 @@ public class JoinRequestServiceTests : IDisposable
         public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
             throw new DbUpdateConcurrencyException("Simulated concurrency conflict");
+        }
+    }
+
+    /// <summary>
+    /// Simulates the SQL Server error that the UX_TeamMembers_TeamId_PlayerId unique
+    /// index would raise if two concurrent requests both passed the application-level
+    /// duplicate check and raced to insert the same (TeamId, PlayerId) membership.
+    /// </summary>
+    private sealed class ThrowingDuplicateMembershipTeamBuilderDbContext(DbContextOptions<TeamBuilderDbContext> options)
+        : TeamBuilderDbContext(options)
+    {
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            var sqlException = SqlExceptionTestFactory.Create(
+                2627,
+                "Violation of UNIQUE KEY constraint 'UX_TeamMembers_TeamId_PlayerId'. Cannot insert duplicate key in object 'dbo.TeamMembers'.");
+            throw new DbUpdateException("Simulated duplicate membership race", sqlException);
+        }
+    }
+
+    /// <summary>
+    /// Simulates an unrelated persistence failure that must NOT be reinterpreted as a
+    /// duplicate-membership conflict.
+    /// </summary>
+    private sealed class ThrowingUnrelatedDbUpdateExceptionTeamBuilderDbContext(DbContextOptions<TeamBuilderDbContext> options)
+        : TeamBuilderDbContext(options)
+    {
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            var sqlException = SqlExceptionTestFactory.Create(
+                547,
+                "The INSERT statement conflicted with the FOREIGN KEY constraint.");
+            throw new DbUpdateException("Simulated unrelated persistence failure", sqlException);
         }
     }
 }
