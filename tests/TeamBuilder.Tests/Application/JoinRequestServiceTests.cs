@@ -358,6 +358,111 @@ public class JoinRequestServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessAsync_ShouldThrowConflict_WhenApprovingFullTeam()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test Team",
+            MaxMembers = 3,
+            CurrentMemberCount = 3,
+            Status = TeamStatus.Full
+        };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "TestPlayer"
+        };
+
+        _context.Teams.Add(team);
+        _context.Players.Add(player);
+
+        var joinRequest = new JoinRequest
+        {
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Status = RequestStatus.Pending,
+            RequestedAtUtc = DateTime.UtcNow
+        };
+
+        _context.JoinRequests.Add(joinRequest);
+        await _context.SaveChangesAsync();
+
+        var processDto = new ProcessJoinRequestDto
+        {
+            Status = RequestStatus.Approved
+        };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+
+        // Assert
+        exception.Message.Should().Contain("already full");
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldAllowRejection_WhenTeamIsFull()
+    {
+        // Arrange
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test Team",
+            MaxMembers = 3,
+            CurrentMemberCount = 3,
+            Status = TeamStatus.Full
+        };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "TestPlayer"
+        };
+
+        _context.Teams.Add(team);
+        _context.Players.Add(player);
+
+        var joinRequest = new JoinRequest
+        {
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Status = RequestStatus.Pending,
+            RequestedAtUtc = DateTime.UtcNow
+        };
+
+        _context.JoinRequests.Add(joinRequest);
+        await _context.SaveChangesAsync();
+
+        var processDto = new ProcessJoinRequestDto
+        {
+            Status = RequestStatus.Rejected
+        };
+
+        // Act
+        var result = await _joinRequestService.ProcessAsync(
+            joinRequest.Id,
+            processDto,
+            Guid.NewGuid());
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Status.Should().Be(RequestStatus.Rejected);
+
+        var savedRequest = await _context.JoinRequests.FindAsync(joinRequest.Id);
+        savedRequest!.Status.Should().Be(RequestStatus.Rejected);
+
+        var teamMember = await _context.TeamMembers
+            .FirstOrDefaultAsync(tm => tm.TeamId == team.Id && tm.PlayerId == player.Id);
+
+        teamMember.Should().BeNull();
+    }
+
+    [Fact]
     public async Task ProcessAsync_ShouldThrowConflict_WhenSaveHitsConcurrencyException()
     {
         // Arrange

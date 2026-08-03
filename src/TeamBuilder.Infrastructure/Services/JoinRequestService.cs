@@ -139,7 +139,8 @@ public class JoinRequestService : IJoinRequestService
         if (joinRequest.Team is null)
             throw new InvalidOperationException("The team for this join request could not be loaded.");
 
-        if (joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
+        if (processJoinRequestDto.Status == RequestStatus.Approved &&
+            joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
             throw new InvalidOperationException("The team is already full.");
 
         joinRequest.Status = processJoinRequestDto.Status;
