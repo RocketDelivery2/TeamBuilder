@@ -31,18 +31,19 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
     /// <summary>
     /// Creates a signed JWT for use in integration tests.
     /// </summary>
-    /// <param name="userId">Value written to the <c>sub</c> claim.</param>
+    /// <param name="userId">Value written to the <c>sub</c> claim. Pass <c>null</c> to omit it.</param>
     /// <param name="extraClaims">Any additional claims to include.</param>
-    internal static string CreateTestJwt(Guid userId, IEnumerable<Claim>? extraClaims = null)
+    internal static string CreateTestJwt(Guid? userId, IEnumerable<Claim>? extraClaims = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestSigningKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new Dictionary<string, object>
         {
-            [JwtRegisteredClaimNames.Sub] = userId.ToString(),
             [JwtRegisteredClaimNames.Jti] = Guid.NewGuid().ToString()
         };
+        if (userId.HasValue)
+            claims[JwtRegisteredClaimNames.Sub] = userId.Value.ToString();
         if (extraClaims is not null)
         {
             foreach (var c in extraClaims)

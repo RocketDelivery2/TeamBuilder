@@ -23,7 +23,7 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
-// Add user context (JWT sub claim first; X-User-Id fallback remains until header removal is complete)
+// Add user context (JWT sub claim only).
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
 

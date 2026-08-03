@@ -135,6 +135,23 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         team!.OwnerId.Should().Be(jwtUserId);
     }
 
+    [Fact]
+    public async Task CreateTeam_WithJwtMissingSubClaim_IgnoresXUserIdHeader()
+    {
+        // Arrange
+        var headerUserId = Guid.NewGuid();
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(null);
+        using var request = BuildCreateTeamRequest(bearerToken: token, userId: headerUserId);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var team = await response.Content.ReadFromJsonAsync<TeamDto>();
+        team!.OwnerId.Should().Be(Guid.Empty);
+    }
+
     // ── Missing/invalid claim resolves to Guid.Empty ────────────────────────
 
     [Fact]
