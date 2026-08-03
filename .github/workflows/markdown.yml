@@ -20,7 +20,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Run markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@v24
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          globs: "**/*.md"
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Run markdownlint
+        run: npx --yes markdownlint-cli2@0.23.2 --config .markdownlint-cli2.jsonc "**/*.md"
