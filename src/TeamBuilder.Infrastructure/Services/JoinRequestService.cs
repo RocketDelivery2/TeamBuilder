@@ -116,7 +116,17 @@ public class JoinRequestService : IJoinRequestService
         };
 
         _context.JoinRequests.Add(joinRequest);
-        await _context.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (JoinRequestConflictClassifier.IsDuplicatePendingJoinRequest(ex))
+        {
+            throw new InvalidOperationException(
+                "A pending join request already exists for this team.",
+                ex);
+        }
 
         return MapToDto(joinRequest);
     }
