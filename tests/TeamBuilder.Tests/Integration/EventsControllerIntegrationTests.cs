@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Models;
@@ -44,6 +45,13 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         db.Events.Add(ev);
         await db.SaveChangesAsync();
         return ev;
+    }
+
+    private async Task<int> GetEventCountAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        return await db.Events.CountAsync();
     }
 
     // ── GET /api/v1/events/{id} ───────────────────────────────────────────────
@@ -134,6 +142,30 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Create_WithMissingConfiguredPlayerClaim_Returns401AndDoesNotPersistEvent()
+    {
+        // Arrange
+        var before = await GetEventCountAsync();
+        var dto = new CreateEventDto
+        {
+            Name = $"MissingClaim-{Guid.NewGuid():N}",
+            EventDateUtc = DateTime.UtcNow.AddDays(14),
+            MaxParticipants = 10
+        };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/events");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await GetEventCountAsync()).Should().Be(before);
     }
 
     // ── PUT /api/v1/events/{id} ───────────────────────────────────────────────

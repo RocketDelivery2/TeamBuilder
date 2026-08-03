@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Models;
@@ -43,6 +44,13 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         db.RosterImports.Add(import);
         await db.SaveChangesAsync();
         return import;
+    }
+
+    private async Task<int> GetRosterImportCountAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        return await db.RosterImports.CountAsync();
     }
 
     // ── GET /api/v1/rosterimports/{id} ───────────────────────────────────────
@@ -133,6 +141,30 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Create_WithMissingConfiguredPlayerClaim_Returns401AndDoesNotPersistImport()
+    {
+        // Arrange
+        var before = await GetRosterImportCountAsync();
+        var dto = new CreateRosterImportDto
+        {
+            SourceName = $"MissingClaim-{Guid.NewGuid():N}",
+            SourceType = "CSV",
+            RawData = "Name,Role\nplayer1,Tank"
+        };
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/rosterimports");
+        request.Content = JsonContent.Create(dto);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await GetRosterImportCountAsync()).Should().Be(before);
     }
 
     // ── PUT /api/v1/rosterimports/{id}/process ────────────────────────────────
