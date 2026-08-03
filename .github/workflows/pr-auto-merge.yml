@@ -42,7 +42,7 @@ jobs:
           pr_json="$(gh api graphql \
             -f owner="$owner" \
             -f repo="$repo" \
-            -f number="$PR_NUMBER" \
+            -F number="$PR_NUMBER" \
             -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { id autoMergeRequest { enabledAt } } } }')"
 
           pr_id="$(jq -r '.data.repository.pullRequest.id' <<<"$pr_json")"
