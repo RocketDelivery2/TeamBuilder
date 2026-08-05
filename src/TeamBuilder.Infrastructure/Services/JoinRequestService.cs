@@ -160,8 +160,9 @@ public class JoinRequestService : IJoinRequestService
 
         if (processJoinRequestDto.Status == RequestStatus.Approved)
         {
-            // Friendly early validation: catches the common case without a DB round-trip
-            // failure. The unique index is still the source of truth for concurrent races.
+            // Friendly early validation: catches the common case without a SaveChanges
+            // failure (a raw unique-index violation). The unique index is still the source
+            // of truth for concurrent races.
             var alreadyActiveMember = await _context.TeamMembers.AnyAsync(
                 tm => tm.TeamId == joinRequest.TeamId && tm.PlayerId == joinRequest.PlayerId && tm.IsActive,
                 cancellationToken);

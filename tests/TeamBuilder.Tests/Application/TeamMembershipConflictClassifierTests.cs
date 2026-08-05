@@ -7,14 +7,14 @@ namespace TeamBuilder.Tests.Application;
 public class TeamMembershipConflictClassifierTests
 {
     [Theory]
-    [InlineData(2627)]
-    [InlineData(2601)]
-    public void IsDuplicateTeamMembership_ShouldReturnTrue_ForRecognizedTeamMemberUniqueIndexViolation(int errorNumber)
+    [InlineData(2627, "Violation of UNIQUE KEY constraint 'UX_TeamMembers_TeamId_PlayerId'. Cannot insert duplicate key in object 'dbo.TeamMembers'.")]
+    [InlineData(2601, "Cannot insert duplicate key row in object 'dbo.TeamMembers' with unique index 'UX_TeamMembers_TeamId_PlayerId'.")]
+    public void IsDuplicateTeamMembership_ShouldReturnTrue_ForRecognizedTeamMemberUniqueIndexViolation(int errorNumber, string message)
     {
-        // Arrange
-        var sqlException = SqlExceptionTestFactory.Create(
-            errorNumber,
-            "Violation of UNIQUE KEY constraint 'UX_TeamMembers_TeamId_PlayerId'. Cannot insert duplicate key in object 'dbo.TeamMembers'.");
+        // Arrange: 2627 (constraint violation) and 2601 (index violation) are raised by SQL
+        // Server with distinctly different message shapes, so each case uses its own
+        // realistic message rather than sharing one.
+        var sqlException = SqlExceptionTestFactory.Create(errorNumber, message);
         var dbUpdateException = new DbUpdateException("Update failed.", sqlException);
 
         // Act

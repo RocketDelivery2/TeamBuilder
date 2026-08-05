@@ -7,14 +7,14 @@ namespace TeamBuilder.Tests.Application;
 public class JoinRequestConflictClassifierTests
 {
     [Theory]
-    [InlineData(2627)]
-    [InlineData(2601)]
-    public void IsDuplicatePendingJoinRequest_ShouldReturnTrue_ForRecognizedPendingJoinRequestUniqueIndexViolation(int errorNumber)
+    [InlineData(2627, "Violation of UNIQUE KEY constraint 'UX_JoinRequests_TeamId_PlayerId_Pending'. Cannot insert duplicate key in object 'dbo.JoinRequests'.")]
+    [InlineData(2601, "Cannot insert duplicate key row in object 'dbo.JoinRequests' with unique index 'UX_JoinRequests_TeamId_PlayerId_Pending'.")]
+    public void IsDuplicatePendingJoinRequest_ShouldReturnTrue_ForRecognizedPendingJoinRequestUniqueIndexViolation(int errorNumber, string message)
     {
-        // Arrange
-        var sqlException = SqlExceptionTestFactory.Create(
-            errorNumber,
-            "Violation of UNIQUE KEY constraint 'UX_JoinRequests_TeamId_PlayerId_Pending'. Cannot insert duplicate key in object 'dbo.JoinRequests'.");
+        // Arrange: 2627 (constraint violation) and 2601 (index violation) are raised by SQL
+        // Server with distinctly different message shapes, so each case uses its own
+        // realistic message rather than sharing one.
+        var sqlException = SqlExceptionTestFactory.Create(errorNumber, message);
         var dbUpdateException = new DbUpdateException("Update failed.", sqlException);
 
         // Act
