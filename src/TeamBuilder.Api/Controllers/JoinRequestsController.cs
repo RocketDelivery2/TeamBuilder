@@ -87,7 +87,7 @@ public class JoinRequestsController : ControllerBase
         var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
         if (currentPlayerId is null)
         {
-            _logger.LogInformation("Authenticated caller has no linked player; join request for team {TeamId} forbidden", createJoinRequestDto.TeamId);
+            _logger.LogInformation("Authenticated caller has no linked player; join request creation forbidden");
             return Forbid();
         }
 
