@@ -19,33 +19,48 @@ public class RosterImportService : IRosterImportService
     public async Task<RosterImportDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var rosterImport = await _context.RosterImports
+            .AsNoTracking()
             .FirstOrDefaultAsync(ri => ri.Id == id, cancellationToken);
 
         return rosterImport == null ? null : MapToDto(rosterImport);
     }
 
-    public async Task<PaginatedResult<RosterImportDto>> GetAllAsync(
-        int page, 
-        int pageSize, 
-        bool? isProcessed = null, 
+    public async Task<PaginatedResult<RosterImportSummaryDto>> GetByImporterAsync(
+        Guid importerPlayerId,
+        int page,
+        int pageSize,
+        bool? isProcessed = null,
         CancellationToken cancellationToken = default)
     {
-        var query = _context.RosterImports.AsQueryable();
+        // Scope to the importer in the database before counting and paging.
+        var query = _context.RosterImports
+            .AsNoTracking()
+            .Where(ri => ri.ImportedByUserId == importerPlayerId);
 
         if (isProcessed.HasValue)
             query = query.Where(ri => ri.IsProcessed == isProcessed.Value);
 
         var totalCount = await query.CountAsync(cancellationToken);
 
-        var rosterImports = await query
+        var items = await query
             .OrderByDescending(ri => ri.CreatedAtUtc)
+            .ThenBy(ri => ri.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(ri => new RosterImportSummaryDto
+            {
+                Id = ri.Id,
+                SourceName = ri.SourceName,
+                SourceType = ri.SourceType,
+                IsProcessed = ri.IsProcessed,
+                CreatedAtUtc = ri.CreatedAtUtc,
+                UpdatedAtUtc = ri.UpdatedAtUtc
+            })
             .ToListAsync(cancellationToken);
 
-        return new PaginatedResult<RosterImportDto>
+        return new PaginatedResult<RosterImportSummaryDto>
         {
-            Items = rosterImports.Select(MapToDto).ToList(),
+            Items = items,
             TotalCount = totalCount,
             Page = page,
             PageSize = pageSize

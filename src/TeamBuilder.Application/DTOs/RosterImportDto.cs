@@ -15,6 +15,21 @@ public class RosterImportDto
     public DateTime CreatedAtUtc { get; set; }
 }
 
+/// <summary>
+/// Listing view of a roster import, returned by the importer-scoped collection endpoint.
+/// Omits <see cref="RosterImportDto.RawData"/>, <see cref="RosterImportDto.ProcessingNotes"/> and the
+/// importer ID: the list is always the caller's own imports, and the full detail is importer-only.
+/// </summary>
+public class RosterImportSummaryDto
+{
+    public Guid Id { get; set; }
+    public string SourceName { get; set; } = string.Empty;
+    public string SourceType { get; set; } = string.Empty;
+    public bool IsProcessed { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime? UpdatedAtUtc { get; set; }
+}
+
 public class CreateRosterImportDto
 {
     [Required]
