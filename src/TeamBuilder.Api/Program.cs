@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
 using TeamBuilder.Api.Middleware;
@@ -27,10 +28,19 @@ builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
 
+// External identity (Issuer + Subject) for /players/me, configured by Jwt:ExternalIdentity.
+builder.Services.AddOptions<ExternalIdentityOptions>().BindConfiguration(ExternalIdentityOptions.SectionName);
+builder.Services.AddScoped<IExternalIdentityAccessor, ClaimsExternalIdentityAccessor>();
+builder.Services.AddScoped<IPlayerOnboardingService, PlayerOnboardingService>();
+
 // Add JWT Bearer authentication
 // Local development can use `dotnet user-jwts` with the non-secret config in appsettings.Development.json.
+// The default scheme requires the legacy Jwt:PlayerIdClaim GUID. The ExternalIdentity scheme
+// validates tokens identically but requires Issuer + Subject instead, so callers who have not
+// onboarded yet can reach /players/me; only endpoints that opt into it use it.
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer();
+    .AddJwtBearer()
+    .AddJwtBearer(ExternalIdentityAuthentication.SchemeName);
 builder.Services.AddAuthorization();
 
 // Configure JWT Bearer options via IConfigureOptions so that test overrides via
@@ -38,43 +48,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
     .Configure<IConfiguration>((options, config) =>
     {
-        var jwtSection = config.GetSection("Jwt");
-        var jwtSigningKey = jwtSection["SigningKey"];
-        var jwtAuthority  = jwtSection["Authority"];
-        var jwtIssuer     = jwtSection["Issuer"];
-        var jwtAudience   = jwtSection["Audience"];
-
-        if (!string.IsNullOrWhiteSpace(jwtSigningKey))
-        {
-            // Symmetric key path: used for local development (dotnet user-jwts) and tests.
-            // No OIDC metadata discovery; Authority is intentionally not set.
-            // MapInboundClaims = false preserves raw JWT claim names so the configured
-            // Jwt:PlayerIdClaim resolves correctly.
-            options.MapInboundClaims = false;
-            options.RequireHttpsMetadata = false;
-            options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
-            {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
-                    System.Text.Encoding.UTF8.GetBytes(jwtSigningKey)),
-                ValidateIssuer    = !string.IsNullOrWhiteSpace(jwtIssuer),
-                ValidIssuer       = jwtIssuer,
-                ValidateAudience  = !string.IsNullOrWhiteSpace(jwtAudience),
-                ValidAudience     = jwtAudience,
-                ValidateLifetime  = true,
-                ClockSkew         = System.TimeSpan.Zero
-            };
-        }
-        else
-        {
-            // OIDC authority path: used in staging/production with a real identity provider.
-            options.MapInboundClaims                           = false;
-            options.Authority              = string.IsNullOrWhiteSpace(jwtAuthority) ? null : jwtAuthority;
-            options.Audience               = jwtAudience;
-            options.RequireHttpsMetadata   = jwtSection.GetValue("RequireHttpsMetadata", defaultValue: true);
-            options.TokenValidationParameters.ValidateAudience = !string.IsNullOrWhiteSpace(jwtAudience);
-            options.TokenValidationParameters.ValidateIssuer   = !string.IsNullOrWhiteSpace(jwtAuthority);
-        }
+        ConfigureJwtBearer(options, config);
 
         options.Events = new JwtBearerEvents
         {
@@ -86,6 +60,26 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
                 if (!Guid.TryParse(playerClaimValue, out _))
                 {
                     context.Fail($"Missing or invalid '{playerClaimType}' claim.");
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+    });
+
+builder.Services.AddOptions<JwtBearerOptions>(ExternalIdentityAuthentication.SchemeName)
+    .Configure<IConfiguration, IOptions<ExternalIdentityOptions>>((options, config, externalIdentityOptions) =>
+    {
+        ConfigureJwtBearer(options, config);
+
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                if (!ExternalIdentityAuthentication.TryResolve(
+                        context.Principal, externalIdentityOptions.Value, out _, out var error))
+                {
+                    context.Fail(error!);
                 }
 
                 return Task.CompletedTask;
@@ -177,3 +171,45 @@ app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.Health
 }).AllowAnonymous();
 
 app.Run();
+
+// Token validation shared by both JWT bearer schemes.
+static void ConfigureJwtBearer(JwtBearerOptions options, IConfiguration config)
+{
+    var jwtSection = config.GetSection("Jwt");
+    var jwtSigningKey = jwtSection["SigningKey"];
+    var jwtAuthority  = jwtSection["Authority"];
+    var jwtIssuer     = jwtSection["Issuer"];
+    var jwtAudience   = jwtSection["Audience"];
+
+    if (!string.IsNullOrWhiteSpace(jwtSigningKey))
+    {
+        // Symmetric key path: used for local development (dotnet user-jwts) and tests.
+        // No OIDC metadata discovery; Authority is intentionally not set.
+        // MapInboundClaims = false preserves raw JWT claim names so the configured
+        // Jwt:PlayerIdClaim resolves correctly.
+        options.MapInboundClaims = false;
+        options.RequireHttpsMetadata = false;
+        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+                System.Text.Encoding.UTF8.GetBytes(jwtSigningKey)),
+            ValidateIssuer    = !string.IsNullOrWhiteSpace(jwtIssuer),
+            ValidIssuer       = jwtIssuer,
+            ValidateAudience  = !string.IsNullOrWhiteSpace(jwtAudience),
+            ValidAudience     = jwtAudience,
+            ValidateLifetime  = true,
+            ClockSkew         = System.TimeSpan.Zero
+        };
+    }
+    else
+    {
+        // OIDC authority path: used in staging/production with a real identity provider.
+        options.MapInboundClaims                           = false;
+        options.Authority              = string.IsNullOrWhiteSpace(jwtAuthority) ? null : jwtAuthority;
+        options.Audience               = jwtAudience;
+        options.RequireHttpsMetadata   = jwtSection.GetValue("RequireHttpsMetadata", defaultValue: true);
+        options.TokenValidationParameters.ValidateAudience = !string.IsNullOrWhiteSpace(jwtAudience);
+        options.TokenValidationParameters.ValidateIssuer   = !string.IsNullOrWhiteSpace(jwtAuthority);
+    }
+}

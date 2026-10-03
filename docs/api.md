@@ -158,6 +158,7 @@ without a token receive `401 Unauthorized`.
 | `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication; importer only (see below). |
 
 `POST`, `PUT`, and `DELETE /api/v1/players` currently do not require a JWT.
+`GET` and `POST /api/v1/players/me` require a JWT (see the Players section).
 Do not infer that all write routes are protected.
 
 ### Anonymous endpoints (no token required)
@@ -304,6 +305,36 @@ name:
 ## Endpoint Inventory
 
 ### Players — `api/v1/players`
+
+#### `GET api/v1/players/me`
+
+Returns the player linked to the caller's external identity. Requires a JWT.
+The identity key is the token's `iss` claim plus the claim named by
+`Jwt:ExternalIdentity:SubjectClaim` (default `sub`; use `oid` for Microsoft
+Entra). The subject does not need to be a GUID, and these endpoints do not
+require the legacy `Jwt:PlayerIdClaim` GUID.
+
+- **Response `200`:** `PlayerDto` of the linked player.
+- **Response `401`:** No valid JWT, or the token has no usable issuer or subject.
+- **Response `404`:** Authenticated, but no player is linked to this identity yet.
+
+---
+
+#### `POST api/v1/players/me`
+
+Onboards the caller: creates a new player with a server-generated `id` and
+links the caller's external identity (issuer + subject) to it in one
+transaction. Requires a JWT. The request body is the same as
+`POST api/v1/players`.
+
+- **Response `201`:** Created `PlayerDto` with `Location: /api/v1/players/me`.
+- **Response `400`:** Validation failure.
+- **Response `401`:** No valid JWT, or the token has no usable issuer or subject.
+- **Response `409`:** The identity is already linked to a player, or the
+  username is taken. Concurrent onboarding of the same identity yields one
+  `201` and `409` for the rest.
+
+---
 
 #### `GET api/v1/players/{id}`
 
