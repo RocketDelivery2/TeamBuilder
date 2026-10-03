@@ -9,6 +9,10 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
 
 permissions:
   contents: write # Required for gh pr merge to perform an immediate squash merge.
@@ -82,12 +86,13 @@ jobs:
           }
 
           merge_clean_pr() {
-            local pr_json current_head current_state merge_state review_decision
+            local pr_json current_head current_state merge_state review_decision auto_merge_enabled
             pr_json="$(get_pr_state)"
             current_head="$(jq -r '.data.repository.pullRequest.headRefOid' <<<"$pr_json")"
             current_state="$(jq -r '.data.repository.pullRequest.state' <<<"$pr_json")"
             merge_state="$(jq -r '.data.repository.pullRequest.mergeStateStatus' <<<"$pr_json")"
             review_decision="$(jq -r '.data.repository.pullRequest.reviewDecision // empty' <<<"$pr_json")"
+            auto_merge_enabled="$(jq -r '.data.repository.pullRequest.autoMergeRequest.enabledAt // empty' <<<"$pr_json")"
 
             fail_if_head_moved "$current_head" || return 1
             if [[ "$current_state" != "OPEN" ]]; then
@@ -95,6 +100,11 @@ jobs:
               return 1
             fi
             if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+              if [[ -n "$auto_merge_enabled" ]]; then
+                gh pr merge "$PR_NUMBER" \
+                  --repo "$BASE_REPO" \
+                  --disable-auto
+              fi
               echo "::notice::A review requested changes; refusing to merge."
               return 1
             fi
@@ -149,6 +159,12 @@ jobs:
 
           if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
             echo "Skipping: reviewDecision is CHANGES_REQUESTED." >> "$GITHUB_STEP_SUMMARY"
+            if [[ -n "$auto_merge_enabled" ]]; then
+              gh pr merge "$PR_NUMBER" \
+                --repo "$BASE_REPO" \
+                --disable-auto
+              echo "Disabled existing auto-merge because a review requested changes." >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
 
