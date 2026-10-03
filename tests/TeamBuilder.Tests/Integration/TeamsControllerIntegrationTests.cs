@@ -474,8 +474,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     [Fact]
     public async Task Create_AsLinkedPlayerWithNonGuidSubject_SetsOwnerIdToInternalPlayerId()
     {
-        // Arrange: the subject is opaque and not a GUID, so the legacy Jwt:PlayerIdClaim path
-        // would reject this token outright.
+        // Arrange: the external subject is opaque and not a GUID.
         var player = await SeedPlayerAsync($"linkedowner-{Guid.NewGuid():N}");
         var subject = $"auth0|{Guid.NewGuid():N}";
         await LinkedPlayerTokens.LinkAsync(_factory.Services, player.Id, subject, TeamBuilderWebApplicationFactory.TestIssuer);
@@ -516,11 +515,11 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     public async Task Create_WithGuidSubjectMatchingUnlinkedPlayerId_Returns403()
     {
         // Arrange: a GUID subject equal to an existing Player.Id is not a link. Migrated endpoints
-        // never fall back to treating the token's player claim as the Player.Id.
+        // never fall back to treating the token's subject as the Player.Id.
         var player = await SeedPlayerAsync($"unlinked-{Guid.NewGuid():N}");
         var before = await CountTeamsAsync();
         var dto = new CreateTeamDto { Name = $"GuidSub-{Guid.NewGuid():N}", MaxMembers = 5 };
-        using var request = Authorized(HttpMethod.Post, "/api/v1/teams", TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id), dto);
+        using var request = Authorized(HttpMethod.Post, "/api/v1/teams", TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id.ToString()), dto);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -617,7 +616,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var player = await SeedPlayerAsync($"leaveguidsub-{Guid.NewGuid():N}");
         await AddMemberAsync(team.Id, player.Id);
         using var request = Authorized(HttpMethod.Post, $"/api/v1/teams/{team.Id}/members/{player.Id}/leave",
-            TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id));
+            TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id.ToString()));
 
         // Act
         var response = await _client.SendAsync(request);

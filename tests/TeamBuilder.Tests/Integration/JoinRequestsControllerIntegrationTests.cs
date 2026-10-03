@@ -176,13 +176,13 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     }
 
     [Fact]
-    public async Task Create_WithMissingConfiguredPlayerClaim_Returns401AndDoesNotPersistJoinRequest()
+    public async Task Create_WithMissingSubjectClaim_Returns401AndDoesNotPersistJoinRequest()
     {
         // Arrange
         var (team, _) = await SeedTeamAndPlayerAsync();
         var before = await GetJoinRequestCountAsync();
         var dto = new CreateJoinRequestDto { TeamId = team.Id };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithSubject(null, includeSubject: false);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -551,12 +551,12 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     [Fact]
     public async Task Create_WithGuidSubjectMatchingUnlinkedPlayerId_Returns403()
     {
-        // Arrange: no fallback to the legacy Jwt:PlayerIdClaim GUID.
+        // A GUID-shaped external subject without a PlayerIdentity link is not a player identity.
         var (team, player) = await SeedTeamAndPlayerAsync();
         var before = await GetJoinRequestCountAsync();
 
         // Act
-        using var request = CreateRequest(team.Id, TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id));
+        using var request = CreateRequest(team.Id, TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id.ToString()));
         var response = await _client.SendAsync(request);
 
         // Assert
@@ -598,7 +598,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         {
             Content = JsonContent.Create(new ProcessJoinRequestDto { Status = RequestStatus.Approved })
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", TeamBuilderWebApplicationFactory.CreateTestJwt(team.OwnerId!.Value));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", TeamBuilderWebApplicationFactory.CreateTestJwt(team.OwnerId!.Value.ToString()));
 
         // Act
         var response = await _client.SendAsync(request);

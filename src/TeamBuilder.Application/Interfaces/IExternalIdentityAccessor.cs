@@ -4,8 +4,7 @@ namespace TeamBuilder.Application.Interfaces;
 
 /// <summary>
 /// Resolves the external identity (Issuer + Subject) of the authenticated caller.
-/// Unlike <see cref="ICurrentUserContext"/>, it does not assume the token carries a
-/// TeamBuilder player GUID.
+/// It does not assume the token carries a TeamBuilder player ID.
 /// </summary>
 public interface IExternalIdentityAccessor
 {

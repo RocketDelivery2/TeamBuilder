@@ -2,8 +2,7 @@ namespace TeamBuilder.Api.Auth;
 
 /// <summary>
 /// Settings for resolving the caller's external identity, bound from <c>Jwt:ExternalIdentity</c>.
-/// Separate from the legacy <c>Jwt:PlayerIdClaim</c>, which names a claim that must carry a
-/// TeamBuilder player GUID; the external subject here is an opaque, issuer-scoped string.
+/// The external subject is an opaque, issuer-scoped string.
 /// </summary>
 public sealed class ExternalIdentityOptions
 {

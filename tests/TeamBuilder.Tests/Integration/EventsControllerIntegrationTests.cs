@@ -74,11 +74,11 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         });
         await db.SaveChangesAsync();
 
-        return (playerId.Value, subject, TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(subject));
+        return (playerId.Value, subject, TeamBuilderWebApplicationFactory.CreateTestJwtWithSubject(subject));
     }
 
     private static string CreateUnlinkedIdentityToken()
-        => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim($"unlinked-{Guid.NewGuid():N}");
+        => TeamBuilderWebApplicationFactory.CreateTestJwtWithSubject($"unlinked-{Guid.NewGuid():N}");
 
     // ── GET /api/v1/events/{id} ───────────────────────────────────────────────
 
