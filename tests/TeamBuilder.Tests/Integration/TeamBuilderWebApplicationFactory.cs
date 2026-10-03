@@ -38,6 +38,9 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
     internal static string CreateTestJwt(string subject, IEnumerable<Claim>? extraClaims = null)
         => CreateTestJwtWithSubject(subject, extraClaims: extraClaims);
 
+    internal static string CreateTestJwt(Guid subject, IEnumerable<Claim>? extraClaims = null)
+        => CreateTestJwtWithSubject(subject.ToString(), extraClaims: extraClaims);
+
     /// <summary>
     /// Creates a signed JWT for use in integration tests with an explicit external subject.
     /// </summary>
