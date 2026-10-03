@@ -40,7 +40,8 @@ public class SqlServerMigrationSchemaIntegrationTests : IAsyncLifetime
         {
             MigrationIds.InitialCreate,
             MigrationIds.EnforceUniqueTeamMembership,
-            MigrationIds.EnforceUniquePendingJoinRequest
+            MigrationIds.EnforceUniquePendingJoinRequest,
+            MigrationIds.AddPlayerIdentities
         });
     }
 
@@ -66,6 +67,25 @@ public class SqlServerMigrationSchemaIntegrationTests : IAsyncLifetime
         metadata.FilterDefinition.Should().NotBeNull();
         NormalizeFilter(metadata.FilterDefinition!).Should().Be("[status]=1",
             "the filter must be semantically equivalent to [Status] = 1");
+    }
+
+    [Fact]
+    public async Task PlayerIdentitiesUniqueIndex_IsInstalled_UniqueAndUnfiltered()
+    {
+        var metadata = await GetIndexMetadataAsync("PlayerIdentities", "UX_PlayerIdentities_Issuer_Subject");
+
+        metadata.Exists.Should().BeTrue("the migration must create the Issuer+Subject unique index");
+        metadata.IsUnique.Should().BeTrue();
+        metadata.FilterDefinition.Should().BeNull("every identity row participates in the uniqueness invariant");
+    }
+
+    [Fact]
+    public async Task PlayerIdentitiesPlayerIdIndex_IsInstalled_NonUnique()
+    {
+        var metadata = await GetIndexMetadataAsync("PlayerIdentities", "IX_PlayerIdentities_PlayerId");
+
+        metadata.Exists.Should().BeTrue("reverse lookup from player to identities needs an index");
+        metadata.IsUnique.Should().BeFalse("one player may have many identities");
     }
 
     /// <summary>

@@ -11,6 +11,7 @@ public class TeamBuilderDbContext : DbContext
 
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<Player> Players => Set<Player>();
+    public DbSet<PlayerIdentity> PlayerIdentities => Set<PlayerIdentity>();
     public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
     public DbSet<TeamEvent> Events => Set<TeamEvent>();
     public DbSet<RosterEntry> RosterEntries => Set<RosterEntry>();
