@@ -28,10 +28,12 @@ builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
 
-// External identity (Issuer + Subject) for /players/me, configured by Jwt:ExternalIdentity.
+// External identity (Issuer + Subject, exact keys) and its resolution to a Player.Id,
+// configured by Jwt:ExternalIdentity.
 builder.Services.AddOptions<ExternalIdentityOptions>().BindConfiguration(ExternalIdentityOptions.SectionName);
 builder.Services.AddScoped<IExternalIdentityAccessor, ClaimsExternalIdentityAccessor>();
 builder.Services.AddScoped<IPlayerOnboardingService, PlayerOnboardingService>();
+builder.Services.AddScoped<ICurrentPlayerResolver, CurrentPlayerResolver>();
 
 // Add JWT Bearer authentication
 // Local development can use `dotnet user-jwts` with the non-secret config in appsettings.Development.json.
