@@ -84,9 +84,10 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllAsync_ShouldReturnPaginatedResults()
+    public async Task GetByImporterAsync_ShouldReturnPaginatedResults()
     {
         // Arrange
+        var importerId = Guid.NewGuid();
         for (var i = 0; i < 15; i++)
         {
             _context.RosterImports.Add(new RosterImport
@@ -95,14 +96,15 @@ public class RosterImportServiceTests : IDisposable
                 SourceName = $"Source{i}",
                 SourceType = "CSV",
                 RawData = "test",
-                IsProcessed = i % 2 == 0
+                IsProcessed = i % 2 == 0,
+                ImportedByUserId = importerId
             });
         }
 
         await _context.SaveChangesAsync();
 
         // Act
-        var result = await _rosterImportService.GetAllAsync(1, 10);
+        var result = await _rosterImportService.GetByImporterAsync(importerId, 1, 10);
 
         // Assert
         result.Items.Should().HaveCount(10);
@@ -113,9 +115,10 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllAsync_ShouldFilterByProcessedStatus()
+    public async Task GetByImporterAsync_ShouldFilterByProcessedStatus()
     {
         // Arrange
+        var importerId = Guid.NewGuid();
         for (var i = 0; i < 10; i++)
         {
             _context.RosterImports.Add(new RosterImport
@@ -124,14 +127,15 @@ public class RosterImportServiceTests : IDisposable
                 SourceName = $"Source{i}",
                 SourceType = "CSV",
                 RawData = "test",
-                IsProcessed = i < 5
+                IsProcessed = i < 5,
+                ImportedByUserId = importerId
             });
         }
 
         await _context.SaveChangesAsync();
 
         // Act
-        var result = await _rosterImportService.GetAllAsync(1, 20, isProcessed: true);
+        var result = await _rosterImportService.GetByImporterAsync(importerId, 1, 20, isProcessed: true);
 
         // Assert
         result.Items.Should().HaveCount(5);
@@ -140,9 +144,10 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllAsync_ShouldFilterByUnprocessedStatus()
+    public async Task GetByImporterAsync_ShouldFilterByUnprocessedStatus()
     {
         // Arrange
+        var importerId = Guid.NewGuid();
         for (var i = 0; i < 10; i++)
         {
             _context.RosterImports.Add(new RosterImport
@@ -151,14 +156,15 @@ public class RosterImportServiceTests : IDisposable
                 SourceName = $"Source{i}",
                 SourceType = "CSV",
                 RawData = "test",
-                IsProcessed = i < 3
+                IsProcessed = i < 3,
+                ImportedByUserId = importerId
             });
         }
 
         await _context.SaveChangesAsync();
 
         // Act
-        var result = await _rosterImportService.GetAllAsync(1, 20, isProcessed: false);
+        var result = await _rosterImportService.GetByImporterAsync(importerId, 1, 20, isProcessed: false);
 
         // Assert
         result.Items.Should().HaveCount(7);
@@ -167,46 +173,58 @@ public class RosterImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllAsync_ShouldReturnUnprocessedImports_WhenFilteredByFalse()
+    public async Task GetByImporterAsync_ShouldScopeToImporterBeforePaging()
     {
-        // Arrange
-        _context.RosterImports.AddRange(
-            new RosterImport
+        // Arrange: other importers' and orphaned imports are newer, so unscoped paging would return them first
+        var importerId = Guid.NewGuid();
+        var otherImporterId = Guid.NewGuid();
+        var baseTime = DateTime.UtcNow.AddHours(-1);
+        for (var i = 0; i < 3; i++)
+        {
+            _context.RosterImports.Add(new RosterImport
             {
                 Id = Guid.NewGuid(),
-                SourceName = "Processed",
+                SourceName = $"Mine{i}",
                 SourceType = "CSV",
-                RawData = "data",
-                IsProcessed = true
-            },
-            new RosterImport
+                RawData = "test",
+                ImportedByUserId = importerId
+            });
+        }
+
+        for (var i = 0; i < 5; i++)
+        {
+            _context.RosterImports.Add(new RosterImport
             {
                 Id = Guid.NewGuid(),
-                SourceName = "Unprocessed1",
+                SourceName = $"Other{i}",
                 SourceType = "CSV",
-                RawData = "data",
-                IsProcessed = false
-            },
-            new RosterImport
-            {
-                Id = Guid.NewGuid(),
-                SourceName = "Unprocessed2",
-                SourceType = "CSV",
-                RawData = "data",
-                IsProcessed = false
-            }
-        );
+                RawData = "test",
+                ImportedByUserId = i == 0 ? null : otherImporterId
+            });
+        }
+
+        await _context.SaveChangesAsync();
+
+        // SaveChanges stamps CreatedAtUtc on insert; set deterministic times afterwards (updates leave it alone).
+        foreach (var import in _context.RosterImports.Local)
+        {
+            var offset = int.Parse(import.SourceName[^1..]);
+            import.CreatedAtUtc = baseTime.AddMinutes(import.SourceName.StartsWith("Mine") ? offset : 30 + offset);
+        }
 
         await _context.SaveChangesAsync();
 
         // Act
-        var result = await _rosterImportService.GetAllAsync(1, 20, isProcessed: false);
+        var firstPage = await _rosterImportService.GetByImporterAsync(importerId, 1, 2);
+        var secondPage = await _rosterImportService.GetByImporterAsync(importerId, 2, 2);
 
         // Assert
-        result.TotalCount.Should().Be(2);
-        result.Items.Should().HaveCount(2);
-        result.Items.Should().OnlyContain(ri => !ri.IsProcessed);
+        firstPage.TotalCount.Should().Be(3);
+        firstPage.TotalPages.Should().Be(2);
+        firstPage.Items.Select(ri => ri.SourceName).Should().Equal("Mine2", "Mine1");
+        secondPage.Items.Select(ri => ri.SourceName).Should().Equal("Mine0");
     }
+
 
     [Fact]
     public async Task ProcessAsync_ShouldMarkAsProcessed_AndCreatePlayers()

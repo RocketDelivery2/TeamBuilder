@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -30,9 +31,12 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<RosterImport> SeedRosterImportAsync(bool isProcessed = false, Guid? importedByUserId = null)
+    private async Task<RosterImport> SeedRosterImportAsync(
+        bool isProcessed = false,
+        Guid? importedByUserId = null,
+        IServiceProvider? services = null)
     {
-        using var scope = _factory.Services.CreateScope();
+        using var scope = (services ?? _factory.Services).CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
 
         var import = new RosterImport
@@ -42,6 +46,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
             SourceType = "CSV",
             RawData = "Name,Role\nplayer1,Tank",
             IsProcessed = isProcessed,
+            ProcessingNotes = isProcessed ? "Processed from input row: player1,Tank" : null,
             ImportedByUserId = importedByUserId,
             CreatedAtUtc = DateTime.UtcNow,
             RowVersion = []
@@ -106,49 +111,276 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     private static string CreateUnlinkedIdentityToken()
         => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim($"unlinked-{Guid.NewGuid():N}");
 
+    private static async Task<HttpResponseMessage> GetWithTokenAsync(HttpClient client, string url, string token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return await client.SendAsync(request);
+    }
+
+    private Task<HttpResponseMessage> GetWithTokenAsync(string url, string token)
+        => GetWithTokenAsync(_client, url, token);
+
     // ── GET /api/v1/rosterimports/{id} ───────────────────────────────────────
 
     [Fact]
-    public async Task GetById_WhenImportExists_Returns200()
+    public async Task GetById_WithoutJwt_Returns401()
     {
-        // Arrange
-        var import = await SeedRosterImportAsync();
+        var import = await SeedRosterImportAsync(importedByUserId: Guid.NewGuid());
 
-        // Act
         var response = await _client.GetAsync($"/api/v1/rosterimports/{import.Id}");
 
-        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task GetById_WithAuthenticatedUnlinkedIdentity_Returns403()
+    {
+        var import = await SeedRosterImportAsync(importedByUserId: Guid.NewGuid());
+
+        var response = await GetWithTokenAsync($"/api/v1/rosterimports/{import.Id}", CreateUnlinkedIdentityToken());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetById_ByImporter_Returns200WithFullDetail()
+    {
+        var importer = await CreateLinkedIdentityAsync();
+        var import = await SeedRosterImportAsync(importedByUserId: importer.PlayerId);
+
+        var response = await GetWithTokenAsync($"/api/v1/rosterimports/{import.Id}", importer.Token);
+
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var dto = await response.Content.ReadFromJsonAsync<RosterImportDto>();
         dto!.Id.Should().Be(import.Id);
+        dto.ImportedByUserId.Should().Be(importer.PlayerId);
+        dto.RawData.Should().Be(import.RawData);
+    }
+
+    [Fact]
+    public async Task GetById_ByDifferentLinkedPlayer_Returns403()
+    {
+        var import = await SeedRosterImportAsync(importedByUserId: Guid.NewGuid());
+        var otherPlayer = await CreateLinkedIdentityAsync();
+
+        var response = await GetWithTokenAsync($"/api/v1/rosterimports/{import.Id}", otherPlayer.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().NotContain(import.RawData);
+    }
+
+    [Fact]
+    public async Task GetById_WhenImportedByUserIdIsNull_Returns403()
+    {
+        var import = await SeedRosterImportAsync(importedByUserId: null);
+        var caller = await CreateLinkedIdentityAsync();
+
+        var response = await GetWithTokenAsync($"/api/v1/rosterimports/{import.Id}", caller.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task GetById_WhenImportDoesNotExist_Returns404()
     {
-        // Act
-        var response = await _client.GetAsync($"/api/v1/rosterimports/{Guid.NewGuid()}");
+        var caller = await CreateLinkedIdentityAsync();
 
-        // Assert
+        var response = await GetWithTokenAsync($"/api/v1/rosterimports/{Guid.NewGuid()}", caller.Token);
+
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetById_WithGuidSubjectEqualToImporterPlayerIdButNoIdentityLink_Returns403()
+    {
+        // The player exists and owns the import, but has no PlayerIdentity: sub == Player.Id must not authorize.
+        var playerId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            db.Players.Add(new Player { Id = playerId, Username = $"player-{Guid.NewGuid():N}" });
+            await db.SaveChangesAsync();
+        }
+        var import = await SeedRosterImportAsync(importedByUserId: playerId);
+
+        var response = await GetWithTokenAsync(
+            $"/api/v1/rosterimports/{import.Id}",
+            TeamBuilderWebApplicationFactory.CreateTestJwt(playerId));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── GET /api/v1/rosterimports ────────────────────────────────────────────
 
     [Fact]
-    public async Task GetAll_Returns200WithPaginatedEnvelope()
+    public async Task GetAll_WithoutJwt_Returns401()
     {
-        // Arrange
-        await SeedRosterImportAsync();
-
-        // Act
         var response = await _client.GetAsync("/api/v1/rosterimports?page=1&pageSize=5");
 
-        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task GetAll_WithAuthenticatedUnlinkedIdentity_Returns403()
+    {
+        var response = await GetWithTokenAsync("/api/v1/rosterimports", CreateUnlinkedIdentityToken());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetAll_ReturnsOnlyCallersImports()
+    {
+        var importer = await CreateLinkedIdentityAsync(subject: $"non-guid-subject-{Guid.NewGuid():N}");
+        var other = await CreateLinkedIdentityAsync();
+        var own1 = await SeedRosterImportAsync(importedByUserId: importer.PlayerId);
+        var own2 = await SeedRosterImportAsync(isProcessed: true, importedByUserId: importer.PlayerId);
+        var othersImport = await SeedRosterImportAsync(importedByUserId: other.PlayerId);
+        var orphan = await SeedRosterImportAsync(importedByUserId: null);
+
+        var response = await GetWithTokenAsync("/api/v1/rosterimports?page=1&pageSize=100", importer.Token);
+
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<PaginatedResult<RosterImportDto>>();
-        result.Should().NotBeNull();
-        result!.Items.Should().NotBeNull();
+        var result = await response.Content.ReadFromJsonAsync<PaginatedResult<RosterImportSummaryDto>>();
+        result!.TotalCount.Should().Be(2);
+        result.Items.Select(i => i.Id).Should().BeEquivalentTo(new[] { own1.Id, own2.Id });
+        result.Items.Select(i => i.Id).Should().NotContain(new[] { othersImport.Id, orphan.Id });
+    }
+
+    [Fact]
+    public async Task GetAll_FiltersByIsProcessedWithinCallersImports()
+    {
+        var importer = await CreateLinkedIdentityAsync();
+        var other = await CreateLinkedIdentityAsync();
+        var ownProcessed = await SeedRosterImportAsync(isProcessed: true, importedByUserId: importer.PlayerId);
+        var ownUnprocessed = await SeedRosterImportAsync(isProcessed: false, importedByUserId: importer.PlayerId);
+        await SeedRosterImportAsync(isProcessed: true, importedByUserId: other.PlayerId);
+        await SeedRosterImportAsync(isProcessed: false, importedByUserId: other.PlayerId);
+
+        var processed = await (await GetWithTokenAsync("/api/v1/rosterimports?isProcessed=true", importer.Token))
+            .Content.ReadFromJsonAsync<PaginatedResult<RosterImportSummaryDto>>();
+        var unprocessed = await (await GetWithTokenAsync("/api/v1/rosterimports?isProcessed=false", importer.Token))
+            .Content.ReadFromJsonAsync<PaginatedResult<RosterImportSummaryDto>>();
+
+        processed!.TotalCount.Should().Be(1);
+        processed.Items.Select(i => i.Id).Should().Equal(ownProcessed.Id);
+        unprocessed!.TotalCount.Should().Be(1);
+        unprocessed.Items.Select(i => i.Id).Should().Equal(ownUnprocessed.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_ScopesToCallerBeforePaging()
+    {
+        var importer = await CreateLinkedIdentityAsync();
+        var other = await CreateLinkedIdentityAsync();
+        var ownIds = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+            ownIds.Add((await SeedRosterImportAsync(importedByUserId: importer.PlayerId)).Id);
+        // Newer imports from someone else would fill the first pages if paging ran before scoping.
+        for (var i = 0; i < 5; i++)
+            await SeedRosterImportAsync(importedByUserId: other.PlayerId);
+
+        var page1 = await (await GetWithTokenAsync("/api/v1/rosterimports?page=1&pageSize=2", importer.Token))
+            .Content.ReadFromJsonAsync<PaginatedResult<RosterImportSummaryDto>>();
+        var page2 = await (await GetWithTokenAsync("/api/v1/rosterimports?page=2&pageSize=2", importer.Token))
+            .Content.ReadFromJsonAsync<PaginatedResult<RosterImportSummaryDto>>();
+
+        page1!.TotalCount.Should().Be(3);
+        page1.TotalPages.Should().Be(2);
+        page1.Items.Should().HaveCount(2);
+        page2!.Items.Should().HaveCount(1);
+        page1.Items.Concat(page2.Items).Select(i => i.Id).Should().BeEquivalentTo(ownIds);
+    }
+
+    [Fact]
+    public async Task GetAll_PayloadOmitsRawDataProcessingNotesAndImporterId()
+    {
+        var importer = await CreateLinkedIdentityAsync();
+        var import = await SeedRosterImportAsync(isProcessed: true, importedByUserId: importer.PlayerId);
+
+        var response = await GetWithTokenAsync("/api/v1/rosterimports", importer.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(json);
+        var item = document.RootElement.GetProperty("items").EnumerateArray().Single();
+        item.GetProperty("id").GetGuid().Should().Be(import.Id);
+        item.GetProperty("sourceName").GetString().Should().Be(import.SourceName);
+        item.TryGetProperty("rawData", out _).Should().BeFalse();
+        item.TryGetProperty("processingNotes", out _).Should().BeFalse();
+        item.TryGetProperty("importedByUserId", out _).Should().BeFalse();
+        json.Should().NotContain(import.RawData).And.NotContain(import.ProcessingNotes!);
+    }
+
+    [Fact]
+    public async Task GetAll_WithGuidSubjectEqualToPlayerIdButNoIdentityLink_Returns403()
+    {
+        var playerId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            db.Players.Add(new Player { Id = playerId, Username = $"player-{Guid.NewGuid():N}" });
+            await db.SaveChangesAsync();
+        }
+        await SeedRosterImportAsync(importedByUserId: playerId);
+
+        var response = await GetWithTokenAsync("/api/v1/rosterimports", TeamBuilderWebApplicationFactory.CreateTestJwt(playerId));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Reads_WithSameSubjectUnderDifferentIssuer_DoNotCrossAuthorize()
+    {
+        const string otherIssuer = "https://accounts.example.com";
+        var subject = $"shared-subject-{Guid.NewGuid():N}";
+        var firstPlayerId = Guid.NewGuid();
+        var secondPlayerId = Guid.NewGuid();
+
+        using var factory = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?> { ["Jwt:Issuer"] = "" })));
+        using var client = factory.CreateClient();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            db.Players.AddRange(
+                new Player { Id = firstPlayerId, Username = $"player-{Guid.NewGuid():N}" },
+                new Player { Id = secondPlayerId, Username = $"player-{Guid.NewGuid():N}" });
+            db.PlayerIdentities.AddRange(
+                new PlayerIdentity
+                {
+                    Id = Guid.NewGuid(),
+                    PlayerId = firstPlayerId,
+                    Issuer = TeamBuilderWebApplicationFactory.TestIssuer,
+                    Subject = subject,
+                    Provider = "oidc"
+                },
+                new PlayerIdentity
+                {
+                    Id = Guid.NewGuid(),
+                    PlayerId = secondPlayerId,
+                    Issuer = otherIssuer,
+                    Subject = subject,
+                    Provider = "oidc"
+                });
+            await db.SaveChangesAsync();
+        }
+        var firstPlayersImport = await SeedRosterImportAsync(importedByUserId: firstPlayerId, services: factory.Services);
+        var secondPlayersImport = await SeedRosterImportAsync(importedByUserId: secondPlayerId, services: factory.Services);
+        var otherIssuerToken = CreateIdentityToken(subject, otherIssuer);
+
+        using var detail = await GetWithTokenAsync(client, $"/api/v1/rosterimports/{firstPlayersImport.Id}", otherIssuerToken);
+        using var list = await GetWithTokenAsync(client, "/api/v1/rosterimports?pageSize=100", otherIssuerToken);
+        using var unlinkedIssuer = await GetWithTokenAsync(
+            client, "/api/v1/rosterimports", CreateIdentityToken(subject, "https://unlinked.example.com"));
+
+        detail.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        list.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await list.Content.ReadFromJsonAsync<PaginatedResult<RosterImportSummaryDto>>();
+        result!.Items.Select(i => i.Id).Should().Equal(secondPlayersImport.Id);
+        unlinkedIssuer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── POST /api/v1/rosterimports ────────────────────────────────────────────
