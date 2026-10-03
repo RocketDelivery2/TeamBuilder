@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
@@ -12,6 +13,7 @@ public class JoinRequestServiceTests : IDisposable
 {
     private readonly TeamBuilderDbContext _context;
     private readonly JoinRequestService _joinRequestService;
+    private readonly Guid _teamOwnerId = Guid.NewGuid();
 
     public JoinRequestServiceTests()
     {
@@ -200,6 +202,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 5,
             CurrentMemberCount = 2
@@ -235,7 +238,7 @@ public class JoinRequestServiceTests : IDisposable
         var result = await _joinRequestService.ProcessAsync(
             joinRequest.Id,
             processDto,
-            Guid.NewGuid());
+            _teamOwnerId);
 
         // Assert
         result.Should().NotBeNull();
@@ -260,6 +263,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 5
         };
@@ -294,7 +298,7 @@ public class JoinRequestServiceTests : IDisposable
         var result = await _joinRequestService.ProcessAsync(
             joinRequest.Id,
             processDto,
-            Guid.NewGuid());
+            _teamOwnerId);
 
         // Assert
         result.Should().NotBeNull();
@@ -313,6 +317,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 2,
@@ -349,7 +354,7 @@ public class JoinRequestServiceTests : IDisposable
         await _joinRequestService.ProcessAsync(
             joinRequest.Id,
             processDto,
-            Guid.NewGuid());
+            _teamOwnerId);
 
         // Assert
         var updatedTeam = await _context.Teams.FindAsync(team.Id);
@@ -364,6 +369,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
@@ -398,7 +404,7 @@ public class JoinRequestServiceTests : IDisposable
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, _teamOwnerId));
 
         // Assert
         exception.Message.Should().Contain("already full");
@@ -411,6 +417,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
@@ -447,7 +454,7 @@ public class JoinRequestServiceTests : IDisposable
         var result = await _joinRequestService.ProcessAsync(
             joinRequest.Id,
             processDto,
-            Guid.NewGuid());
+            _teamOwnerId);
 
         // Assert
         result.Should().NotBeNull();
@@ -476,6 +483,7 @@ public class JoinRequestServiceTests : IDisposable
             var team = new Team
             {
                 Id = Guid.NewGuid(),
+                OwnerId = _teamOwnerId,
                 Name = "Test Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 2,
@@ -512,7 +520,7 @@ public class JoinRequestServiceTests : IDisposable
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+            () => service.ProcessAsync(joinRequest.Id, processDto, _teamOwnerId));
 
         // Assert
         exception.Message.Should().Contain("changed while this join request was being processed");
@@ -525,6 +533,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 5,
             CurrentMemberCount = 1
@@ -567,7 +576,7 @@ public class JoinRequestServiceTests : IDisposable
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, _teamOwnerId));
 
         // Assert
         exception.Message.Should().Contain("already an active member of this team");
@@ -591,6 +600,7 @@ public class JoinRequestServiceTests : IDisposable
             var team = new Team
             {
                 Id = Guid.NewGuid(),
+                OwnerId = _teamOwnerId,
                 Name = "Test Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 1,
@@ -627,7 +637,7 @@ public class JoinRequestServiceTests : IDisposable
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+            () => service.ProcessAsync(joinRequest.Id, processDto, _teamOwnerId));
 
         // Assert
         exception.Message.Should().Contain("already an active member of this team");
@@ -647,6 +657,7 @@ public class JoinRequestServiceTests : IDisposable
             var team = new Team
             {
                 Id = Guid.NewGuid(),
+                OwnerId = _teamOwnerId,
                 Name = "Test Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 1,
@@ -682,7 +693,7 @@ public class JoinRequestServiceTests : IDisposable
         };
 
         // Act
-        var act = () => service.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid());
+        var act = () => service.ProcessAsync(joinRequest.Id, processDto, _teamOwnerId);
 
         // Assert: the unrecognized DbUpdateException must propagate as-is, not be
         // reinterpreted as a duplicate-membership conflict.
@@ -696,6 +707,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 5
         };
@@ -729,7 +741,7 @@ public class JoinRequestServiceTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid()));
+            () => _joinRequestService.ProcessAsync(joinRequest.Id, processDto, _teamOwnerId));
     }
 
     [Fact]
@@ -758,6 +770,7 @@ public class JoinRequestServiceTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = _teamOwnerId,
             Name = "Test Team",
             MaxMembers = 5,
             CurrentMemberCount = 1
@@ -793,7 +806,7 @@ public class JoinRequestServiceTests : IDisposable
         var result = await _joinRequestService.ProcessAsync(
             joinRequest.Id,
             processDto,
-            Guid.NewGuid());
+            _teamOwnerId);
 
         // Assert
         result.Should().NotBeNull();
@@ -806,6 +819,155 @@ public class JoinRequestServiceTests : IDisposable
 
         var updatedTeam = await _context.Teams.FindAsync(team.Id);
         updatedTeam!.CurrentMemberCount.Should().Be(1);
+    }
+
+    private async Task<(Team team, Player player, JoinRequest joinRequest)> SeedPendingJoinRequestAsync(
+        Guid? ownerId,
+        RequestStatus status = RequestStatus.Pending)
+    {
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            OwnerId = ownerId,
+            Name = "Owned Team",
+            MaxMembers = 5,
+            CurrentMemberCount = 2,
+            Status = TeamStatus.Recruiting
+        };
+
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = "Applicant"
+        };
+
+        var joinRequest = new JoinRequest
+        {
+            Id = Guid.NewGuid(),
+            TeamId = team.Id,
+            PlayerId = player.Id,
+            Status = status,
+            RequestedAtUtc = DateTime.UtcNow
+        };
+
+        _context.Teams.Add(team);
+        _context.Players.Add(player);
+        _context.JoinRequests.Add(joinRequest);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        return (team, player, joinRequest);
+    }
+
+    private async Task AssertProcessingDidNotChangeStateAsync(Team team, JoinRequest joinRequest, RequestStatus expectedStatus = RequestStatus.Pending)
+    {
+        _context.ChangeTracker.Clear();
+
+        var storedRequest = await _context.JoinRequests.SingleAsync(jr => jr.Id == joinRequest.Id);
+        storedRequest.Status.Should().Be(expectedStatus);
+        storedRequest.ProcessedAtUtc.Should().BeNull();
+        storedRequest.ProcessedByUserId.Should().BeNull();
+
+        var storedTeam = await _context.Teams.SingleAsync(t => t.Id == team.Id);
+        storedTeam.CurrentMemberCount.Should().Be(team.CurrentMemberCount);
+        storedTeam.Status.Should().Be(team.Status);
+
+        (await _context.TeamMembers.AnyAsync(tm => tm.TeamId == team.Id)).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(RequestStatus.Approved)]
+    [InlineData(RequestStatus.Rejected)]
+    [InlineData(RequestStatus.Cancelled)]
+    public async Task ProcessAsync_ShouldThrowForbidden_WhenCallerIsNotTeamOwner(RequestStatus requestedStatus)
+    {
+        // Arrange
+        var (team, _, joinRequest) = await SeedPendingJoinRequestAsync(_teamOwnerId);
+        var unrelatedUserId = Guid.NewGuid();
+
+        // Act
+        var act = () => _joinRequestService.ProcessAsync(
+            joinRequest.Id,
+            new ProcessJoinRequestDto { Status = requestedStatus },
+            unrelatedUserId);
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<JoinRequestProcessingForbiddenException>();
+        exception.Which.JoinRequestId.Should().Be(joinRequest.Id);
+        exception.Which.CallerUserId.Should().Be(unrelatedUserId);
+        await AssertProcessingDidNotChangeStateAsync(team, joinRequest);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldThrowForbidden_WhenApplicantIsNotTeamOwner()
+    {
+        // Arrange
+        var (team, player, joinRequest) = await SeedPendingJoinRequestAsync(_teamOwnerId);
+
+        // Act
+        var act = () => _joinRequestService.ProcessAsync(
+            joinRequest.Id,
+            new ProcessJoinRequestDto { Status = RequestStatus.Approved },
+            player.Id);
+
+        // Assert
+        await act.Should().ThrowAsync<JoinRequestProcessingForbiddenException>();
+        await AssertProcessingDidNotChangeStateAsync(team, joinRequest);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldThrowForbidden_WhenTeamHasNoOwner()
+    {
+        // Arrange
+        var (team, _, joinRequest) = await SeedPendingJoinRequestAsync(ownerId: null);
+
+        // Act
+        var act = () => _joinRequestService.ProcessAsync(
+            joinRequest.Id,
+            new ProcessJoinRequestDto { Status = RequestStatus.Approved },
+            Guid.NewGuid());
+
+        // Assert
+        await act.Should().ThrowAsync<JoinRequestProcessingForbiddenException>();
+        await AssertProcessingDidNotChangeStateAsync(team, joinRequest);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldThrowForbidden_BeforeStatusCheck_WhenCallerIsNotTeamOwner()
+    {
+        // Arrange
+        var (team, _, joinRequest) = await SeedPendingJoinRequestAsync(_teamOwnerId, RequestStatus.Rejected);
+
+        // Act
+        var act = () => _joinRequestService.ProcessAsync(
+            joinRequest.Id,
+            new ProcessJoinRequestDto { Status = RequestStatus.Approved },
+            Guid.NewGuid());
+
+        // Assert
+        await act.Should().ThrowAsync<JoinRequestProcessingForbiddenException>();
+        await AssertProcessingDidNotChangeStateAsync(team, joinRequest, RequestStatus.Rejected);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ShouldRecordOwnerAsProcessor_WhenCallerIsTeamOwner()
+    {
+        // Arrange
+        var (team, player, joinRequest) = await SeedPendingJoinRequestAsync(_teamOwnerId);
+
+        // Act
+        var result = await _joinRequestService.ProcessAsync(
+            joinRequest.Id,
+            new ProcessJoinRequestDto { Status = RequestStatus.Approved },
+            _teamOwnerId);
+
+        // Assert
+        result!.Status.Should().Be(RequestStatus.Approved);
+        _context.ChangeTracker.Clear();
+        var storedRequest = await _context.JoinRequests.SingleAsync(jr => jr.Id == joinRequest.Id);
+        storedRequest.ProcessedByUserId.Should().Be(_teamOwnerId);
+        (await _context.TeamMembers.CountAsync(tm => tm.TeamId == team.Id && tm.PlayerId == player.Id && tm.IsActive))
+            .Should().Be(1);
     }
 
     [Fact]

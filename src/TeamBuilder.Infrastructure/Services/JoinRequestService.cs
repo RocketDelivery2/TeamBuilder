@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
@@ -144,11 +145,16 @@ public class JoinRequestService : IJoinRequestService
 
         if (joinRequest == null) return null;
 
-        if (joinRequest.Status != RequestStatus.Pending)
-            throw new InvalidOperationException("Only pending requests can be processed.");
-
         if (joinRequest.Team is null)
             throw new InvalidOperationException("The team for this join request could not be loaded.");
+
+        // Only the team owner may process a join request. Checked before any state checks so a
+        // non-owner learns nothing about the request beyond its existence.
+        if (joinRequest.Team.OwnerId != processedByUserId)
+            throw new JoinRequestProcessingForbiddenException(id, processedByUserId);
+
+        if (joinRequest.Status != RequestStatus.Pending)
+            throw new InvalidOperationException("Only pending requests can be processed.");
 
         if (processJoinRequestDto.Status == RequestStatus.Approved &&
             joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)

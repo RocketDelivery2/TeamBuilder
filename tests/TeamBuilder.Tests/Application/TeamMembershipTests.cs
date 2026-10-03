@@ -242,6 +242,7 @@ public class TeamMembershipTests : IDisposable
         var team = new Team
         {
             Id = Guid.NewGuid(),
+            OwnerId = Guid.NewGuid(),
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
@@ -307,7 +308,7 @@ public class TeamMembershipTests : IDisposable
             Status = RequestStatus.Approved
         };
 
-        await joinRequestService.ProcessAsync(joinRequest.Id, processDto, Guid.NewGuid());
+        await joinRequestService.ProcessAsync(joinRequest.Id, processDto, team.OwnerId!.Value);
 
         var teamAfterRefill = await _context.Teams.FindAsync(team.Id);
         teamAfterRefill!.CurrentMemberCount.Should().Be(3);
