@@ -8,7 +8,7 @@ middle layer between any client-side frontend and the backend data platform.
 
 - **Base path:** `api/v1`
 - **Format:** JSON (request and response)
-- **Authentication:** JWT bearer auth is required on write endpoints; read and health endpoints remain public.
+- **Authentication:** JWT bearer auth is required on protected routes; public reads remain available. Player create/update/delete routes currently have no `[Authorize]` requirement.
   See [Authentication](#authentication) for details and local dev token setup.
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
 - **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
@@ -132,8 +132,10 @@ X-Request-Id: my-client-trace-001
 
 ## Authentication
 
-> **Status: Phase 2 — JWT bearer auth is required on write endpoints.**
-> See [`docs/auth-plan.md`](auth-plan.md) for the full phased implementation plan.
+JWT bearer validation is implemented. `[Authorize]` is applied to the protected
+routes listed below; authorization is endpoint-specific rather than a global
+write-route policy. Player create/update/delete routes currently do not require
+a JWT. See [`docs/auth-plan.md`](auth-plan.md) for identity and rollout details.
 
 ### Protected write endpoints
 
@@ -145,15 +147,18 @@ without a token receive `401 Unauthorized`.
 | `POST` | `/api/v1/teams` | Sets `OwnerId` from the JWT `sub` claim. |
 | `PUT` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
 | `DELETE` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
-| `POST` | `/api/v1/teams/{teamId}/members/{playerId}/leave` | Requires authentication. |
+| `POST` | `/api/v1/teams/{teamId}/members/{playerId}/leave` | Only the authenticated player matching `{playerId}` may leave; owners cannot remove another player through this route. |
 | `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from the JWT `sub` claim. |
-| `PUT` | `/api/v1/joinrequests/{id}/process` | Identifies the processing user from the JWT `sub` claim. |
+| `PUT` | `/api/v1/joinrequests/{id}/process` | Only the team owner may process the request. |
 | `POST` | `/api/v1/events` | Sets `HostId` from the JWT `sub` claim. |
 | `PUT` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
 | `DELETE` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
 | `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from the JWT `sub` claim. |
 | `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication; importer only (see below). |
 | `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication; importer only (see below). |
+
+`POST`, `PUT`, and `DELETE /api/v1/players` currently do not require a JWT.
+Do not infer that all write routes are protected.
 
 ### Anonymous endpoints (no token required)
 
@@ -179,7 +184,7 @@ all protected write endpoints. The configured `Jwt:PlayerIdClaim` (default
 | Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
 | Invalid / expired JWT on a protected endpoint | `401 Unauthorized` |
 | No JWT on a protected endpoint | `401 Unauthorized` |
-| Invalid / missing claim on an authenticated JWT | `Guid.Empty` |
+| Missing or non-GUID configured player claim | `401 Unauthorized` during token validation |
 | Anonymous request to a public endpoint | `Guid.Empty` |
 
 ### Local development — issuing tokens with `dotnet user-jwts`
@@ -205,8 +210,9 @@ See [`docs/auth-plan.md`](auth-plan.md) for all configuration keys.
 
 ## Error Responses
 
-All API errors are returned as `application/problem+json` using the
-[RFC 9457 ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) envelope.
+Validation errors use ASP.NET Core validation responses. The global exception
+handler writes a JSON `ProblemDetails` response for unhandled exceptions;
+controllers may also return route-specific error bodies.
 
 ### ProblemDetails envelope
 
@@ -216,7 +222,7 @@ All API errors are returned as `application/problem+json` using the
 | `title`    | string | Short, human-readable summary of the problem type.               |
 | `status`   | int    | HTTP status code.                                                |
 | `detail`   | string | Human-readable explanation specific to this occurrence.          |
-| `traceId`  | string | ASP.NET Core request trace ID. Include this when reporting bugs. |
+| `traceId`  | string | May be added by ASP.NET Core error handling. |
 
 ### Status code mappings
 
@@ -225,10 +231,10 @@ All API errors are returned as `application/problem+json` using the
 | Model validation failure (data annotations) | `400`  | `ValidationProblemDetails`      |
 | Invalid argument (business rule)            | `400`  | `ArgumentException`             |
 | Unauthenticated request on protected route  | `401`  | Auth middleware                 |
-| Authenticated but not resource owner        | `403`  | Ownership check in controller   |
-| Resource not found                          | `404`  | `KeyNotFoundException`          |
+| Authenticated but not resource owner        | `403`  | Route-specific authorization check |
+| Resource not found                          | `404`  | Controller/service result         |
 | Conflict (duplicate or invalid state)       | `409`  | `InvalidOperationException`     |
-| Unexpected server error                     | `500`  | Unhandled exception             |
+| Unexpected server error                     | `500`  | Unhandled exception; generic client detail |
 
 ### ValidationProblemDetails (400 — model validation)
 
@@ -286,9 +292,9 @@ name:
 ```json
 {
   "type": "https://tools.ietf.org/html/rfc9110#section-15.6.1",
-  "title": "Internal Server Error",
+  "title": "An unexpected error occurred.",
   "status": 500,
-  "detail": "An unexpected error occurred. Please try again later.",
+  "detail": "An unexpected error occurred.",
   "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 }
 ```
@@ -399,6 +405,9 @@ Deletes a player.
 **Response `204`:** Deleted.  
 **Response `404`:** Player not found.
 
+Player create, update, and delete routes currently do not require a JWT; the
+caller is not checked against the player being modified.
+
 ---
 
 ### Teams — `api/v1/teams`
@@ -501,6 +510,8 @@ An explicit empty string for `description` clears the value.
 **Response `200`:** Updated `TeamDto`.  
 **Response `404`:** Team not found.  
 **Response `400`:** Validation failure.
+**Response `401`:** No valid JWT provided.
+**Response `403`:** Authenticated caller is not the team owner.
 
 ---
 
@@ -510,16 +521,22 @@ Deletes a team.
 
 **Response `204`:** Deleted.  
 **Response `404`:** Team not found.
+**Response `401`:** No valid JWT provided.
+**Response `403`:** Authenticated caller is not the team owner.
 
 ---
 
 #### `POST api/v1/teams/{teamId}/members/{playerId}/leave`
 
-Removes a player from a team. Marks the `TeamMember` record as inactive.
+Allows a player to leave their own team membership only: the authenticated
+player ID must match `{playerId}`. A team owner cannot remove another player
+through this voluntary-leave route. Marks the `TeamMember` record as inactive.
 Decrements `CurrentMemberCount`. If the team was `Full` and now has capacity,
 the status transitions to `Recruiting`.
 
 **Response `204`:** Member removed.  
+**Response `401`:** No valid JWT provided.
+**Response `403`:** Authenticated caller does not match `{playerId}`.
 **Response `404`:** Active team member not found.
 
 ---
@@ -599,14 +616,16 @@ Requires `Authorization: Bearer <token>`. Sets `PlayerId` from the JWT `sub` cla
 ```
 
 **Response `201`:** Created `JoinRequestDto`.  
-**Response `400`:** Validation failure or duplicate pending request.
+**Response `400`:** Validation failure.
+**Response `409`:** A pending request already exists for this player and team.
 
 ---
 
 #### `PUT api/v1/joinrequests/{id}/process`
 
-Processes (approves, rejects, or cancels) a pending join request.
-Only `Pending` requests can be processed. Approving a request:
+Processes (approves, rejects, or cancels) a pending join request. Only the
+team owner may process the request, and only `Pending` requests can be
+processed. Approving a request:
 
 - Creates a new `TeamMember` record.
 - Increments `Team.CurrentMemberCount`.
@@ -629,8 +648,10 @@ Requires `Authorization: Bearer <token>` for the processing user.
 ```
 
 **Response `200`:** Updated `JoinRequestDto`.  
+**Response `401`:** No valid JWT provided.
+**Response `403`:** Authenticated caller is not the team owner.
 **Response `404`:** Join request not found.  
-**Response `400`:** Request is not in `Pending` status.
+**Response `409`:** Request is not pending, or the team is already full.
 
 ---
 
@@ -900,7 +921,7 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 
 | Limitation | Detail |
 |---|---|
-| **Ownership authorization is caller-scoped** | Any authenticated caller can still modify resources they do not own unless the controller explicitly checks ownership. Ownership checks are implemented for Teams, Events, and RosterImports. |
+| **Authorization is endpoint-specific** | Ownership checks are implemented for team, event, roster-import, and join-request processing routes. Player create/update/delete routes are currently unauthenticated; do not infer that other resources are protected without checking their endpoint behavior. |
 | **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
@@ -910,8 +931,11 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 
 ## Recommended Future API Improvements
 
-See [deployment-next-steps.md](deployment-next-steps.md) for the full list.
+See [deployment-next-steps.md](deployment-next-steps.md) for historical hosting
+and deployment recommendations; verify them against current source before use.
 Short-term API-only improvements:
 
-1. Add ownership/role authorization policies (team owner, admin roles).
-2. Select and integrate an identity provider (Azure AD B2C, Auth0, etc.).
+1. Require authentication and enforce appropriate player-level authorization
+   on player create/update/delete routes.
+2. Verify the selected identity provider and its deployed configuration;
+   provider-side state is not established by this repository.

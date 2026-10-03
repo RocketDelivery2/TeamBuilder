@@ -1,8 +1,13 @@
 # TeamBuilder — Deployment Next Steps
 
-This document describes the recommended future hosting, database, and deployment
-strategy for TeamBuilder. Nothing in this document has been implemented yet.
-Each section identifies what needs to be done, why, and suggested sequencing.
+> **Historical planning document:** Some recommendations below have since been
+> implemented or superseded, and provider-side deployment state is not verified
+> by this repository. Do not use this as a current runbook. Check the current
+> source and [`deployment.md`](deployment.md) before acting. EF Core migrations
+> are already committed; do not recreate an `InitialCreate` migration.
+
+This document preserves an earlier proposed hosting, database, and deployment
+strategy for TeamBuilder. Its recommendations and sequencing are historical.
 
 ---
 

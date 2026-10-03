@@ -66,44 +66,47 @@ Uses Octopus Deploy variable substitution. Variables are replaced during deploym
 
 ## Render QA Hosting
 
-TeamBuilder API can run as a Docker Web Service on Render for QA validation before production rollout.
+This section records a possible QA hosting configuration only. Repository
+contents do not verify that a Render service, URL, Entra application, or live
+environment variables currently exist or are configured as shown. Confirm
+provider-side state before relying on these values.
 
-Live QA behavior on Render:
-- `GET /` returns `200 OK` with `TeamBuilder API Running`
-- `GET /health` is the Render health check endpoint and currently returns `Healthy`
-- `GET /health/ready` may remain `Unhealthy` until database/readiness dependencies are configured
-- `GET /swagger` currently returns `404` in QA if Swagger is not enabled there
-- HTTPS redirection is disabled in QA to avoid Render reverse-proxy HTTPS port warnings
-- Production should still use HTTPS redirection
+In the application, `GET /health` is a liveness check that does not contact
+external dependencies. `GET /health/ready` checks SQL Server connectivity via
+the configured `ConnectionStrings:TeamBuilderSql`. Swagger is enabled only in
+Development. HTTPS redirection is disabled in the `QA` environment.
 
 | Setting | Value |
 |---|---|
-| **Service name** | `teambuilder-api-qa` |
-| **Render URL** | `https://teambuilder-api-qa.onrender.com` |
-| **Runtime** | Docker |
-| **Environment** | QA |
-| **Production URL** | `https://teambuilder.info` |
+| **Suggested service name** | `teambuilder-api-qa` (unverified) |
+| **Recorded Render URL** | `https://teambuilder-api-qa.onrender.com` (unverified) |
+| **Example runtime** | Docker (unverified) |
+| **Example environment** | QA (unverified) |
+| **Recorded production URL** | `https://teambuilder.info` (unverified) |
 
-### Required Render environment variables
+### Example Render environment variables
 
 | Variable | Value | Notes |
 |---|---|---|
 | `ASPNETCORE_ENVIRONMENT` | `QA` | Keep the app in QA mode. |
 | `ASPNETCORE_URLS` | `http://0.0.0.0:${PORT}` | Bind to Render's assigned port. |
-| `AllowedOrigins` | `https://teambuilder.info,https://teambuilder-api-qa.onrender.com` | Allow production UI and QA API access. |
-| `Jwt__Authority` | `https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0` | Entra authority for QA JWT validation. |
-| `Jwt__Audience` | `api://5457c4d7-0746-4337-ab67-c5c1061b2963` | API audience value. |
-| `Jwt__Issuer` | `https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0` | Entra issuer for QA JWT validation. |
+| `AllowedOrigins` | `https://teambuilder.info,https://teambuilder-api-qa.onrender.com` | Illustrative only; replace with confirmed origins. |
+| `Jwt__Authority` | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Set to the confirmed OIDC authority. |
+| `Jwt__Audience` | `<api-audience>` | Set to the audience expected by the API registration. |
+| `Jwt__Issuer` | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Set to the confirmed token issuer. |
 | `Jwt__PlayerIdClaim` | `sub` | Player identifier claim. |
 | `Jwt__RequireHttpsMetadata` | `true` | Keep metadata retrieval secure. |
 | `Jwt__SigningKey` | *(do not set)* | Do not set for Entra/OIDC JWT validation. |
-| `ConnectionStrings__DefaultConnection` | *(do not set yet)* | Leave unset until the real database is ready. |
+| `ConnectionStrings__TeamBuilderSql` | *(set when SQL is provisioned)* | The API reads this exact connection-string key. |
 
 ---
 
 ## Octopus Deploy Variables
 
-Define the following variables in your Octopus Deploy project:
+The checked-in environment appsettings files use these variable names. Their
+presence does not verify that an Octopus project, environment, or variable is
+currently configured. Example values below are illustrative and must be
+confirmed with the deployment operators.
 
 ### Azure SQL Variables
 
@@ -126,6 +129,10 @@ Define the following variables in your Octopus Deploy project:
 |----------|-------|-------------|---------|
 | `ApplicationInsights.ConnectionString` | QA, Production | Azure Application Insights connection string | `InstrumentationKey=...` |
 
+The connection-string placeholder is present in the environment appsettings
+files, but the API project does not currently register the Application
+Insights SDK. The placeholder alone does not enable telemetry.
+
 ### Environment Variable
 
 | Variable | Scope | Description | Example |
@@ -142,6 +149,11 @@ Define the following variables in your Octopus Deploy project:
 | `Jwt__PlayerIdClaim` | QA, Production | Claim mapped to Player ID | `oid` or `sub` |
 | `Jwt__RequireHttpsMetadata` | QA, Production | Require HTTPS for metadata discovery | `true` |
 | `Jwt__SigningKey` | QA, Production | Do not set for Entra/OIDC JWT validation | *(not used)* |
+
+The API supports symmetric-key and OIDC-authority JWT validation, selected by
+configuration. The repository does not establish which identity provider or
+credentials are currently deployed; validate the authority, issuer, audience,
+and player-ID claim with the provider actually in use.
 
 ---
 
@@ -190,6 +202,9 @@ az sql server firewall-rule create \
 
 ### 4. Create SQL User for API
 
+The names and commands below are examples, not evidence that these Azure SQL
+resources or credentials exist in any environment.
+
 Connect to the database and run:
 
 ```sql
@@ -205,10 +220,13 @@ EXEC sp_addrolemember 'db_owner', 'teambuilder-api';
 ### Local Development
 
 ```bash
-cd src/TeamBuilder.Infrastructure
-dotnet ef migrations add InitialCreate --startup-project ../TeamBuilder.Api
-dotnet ef database update --startup-project ../TeamBuilder.Api
+dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api
 ```
+
+The initial and subsequent migrations are already committed under
+`src/TeamBuilder.Infrastructure/Persistence/Migrations/`. Do not recreate an
+`InitialCreate` migration. Add a new named migration only when changing the
+EF Core model, then review and commit it.
 
 ### QA/Production
 
@@ -217,13 +235,13 @@ dotnet ef database update --startup-project ../TeamBuilder.Api
 Add a deployment step that runs:
 
 ```bash
-dotnet ef database update --startup-project TeamBuilder.Api --configuration Release
+dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api --configuration Release
 ```
 
 **Option 2: Generate SQL scripts and review before applying**
 
 ```bash
-dotnet ef migrations script --startup-project ../TeamBuilder.Api --idempotent --output migration.sql
+dotnet ef migrations script --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api --idempotent --output migration.sql
 ```
 
 Review the `migration.sql` file and apply it manually or through a deployment pipeline.
@@ -263,8 +281,7 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
 - Step Type: **Run a Script**
 - Script:
   ```bash
-  cd TeamBuilder.Api
-  dotnet ef database update --no-build
+  dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api --configuration Release --no-build
   ```
 
 #### Step 4: Health Check
@@ -275,10 +292,12 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
 
 #### Step 5: Production host and CORS guidance
 
-- **Production public URL**: `https://teambuilder.info`
-- **Production AllowedOrigins**: `https://teambuilder.info`
-- **Support email**: `support@teambuilder.info`
-- **QA host placeholder**: `https://qa.teambuilder.info` if a QA host is provisioned; otherwise keep the value TBD until the host exists
+- The URLs and support address below are recorded examples only; confirm
+  provider-side configuration before using them.
+- **Recorded production public URL**: `https://teambuilder.info` (unverified)
+- **Example Production AllowedOrigins**: `https://teambuilder.info` (unverified)
+- **Recorded support email**: `support@teambuilder.info` (unverified)
+- **Example QA host**: `https://qa.teambuilder.info` (unverified)
 
 ---
 
@@ -296,10 +315,10 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
 
 - [ ] API is accessible at the deployment URL
 - [ ] Health check endpoint (`/health`) returns 200 OK
-- [ ] Swagger UI is accessible (Development/QA only)
+- [ ] Swagger UI is accessible in Development (disabled outside Development)
 - [ ] Database connection is successful
 - [ ] CORS configuration allows expected frontend origins
-- [ ] Logging is working (check Application Insights or file logs)
+- [ ] Logging is working in the configured hosting environment (Application Insights is not currently wired into the API)
 
 ---
 
@@ -321,18 +340,21 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
 
 ### API Security
 
-- Enable HTTPS redirection (already configured)
+- HTTPS redirection is configured except in the `QA` environment.
 - Configure CORS to allow only known frontend origins
-- Add authentication and authorization before going live
+- JWT bearer validation and endpoint-specific authorization are implemented.
+  Player create/update/delete routes currently do not require authentication.
 - Consider API rate limiting for production
 
 ---
 
 ## Monitoring
 
-### Application Insights (Recommended)
+### Application Insights (Not currently wired)
 
-Configure Application Insights connection string in Octopus variables:
+An Application Insights connection-string placeholder exists in the environment
+configuration, but Application Insights telemetry is not currently wired into
+the API. Do not treat this setting as proof that telemetry is being collected.
 
 ```json
 {
@@ -342,15 +364,10 @@ Configure Application Insights connection string in Octopus variables:
 }
 ```
 
-Add the Application Insights SDK package:
-
-```bash
-dotnet add src/TeamBuilder.Api package Microsoft.ApplicationInsights.AspNetCore
-```
-
 ### Health Check Monitoring
 
-Set up monitoring tools to poll the `/health` endpoint:
+Poll `/health` for process liveness and `/health/ready` to verify the configured
+SQL Server dependency. The liveness endpoint intentionally does not check SQL.
 
 - Azure Monitor
 - Datadog
@@ -375,9 +392,12 @@ Set up monitoring tools to poll the `/health` endpoint:
 
 ### API Returns 500 Error
 
-**Error**: "An unhandled exception occurred"
+**Client response**: `An unexpected error occurred.`
 
-**Solution**: Check Application Insights or server logs for detailed error messages.
+**Solution**: Inspect the server-side logs available in the hosting environment
+for the original exception. Application Insights is not currently wired into
+the API. The API does not return internal exception messages in unexpected 500
+responses.
 
 ---
 
@@ -388,7 +408,7 @@ If a deployment fails:
 1. **Rollback Code**: Use Octopus Deploy's "Redeploy previous release" feature
 2. **Rollback Database**: If migrations were applied, manually revert using migration rollback:
    ```bash
-   dotnet ef database update <PreviousMigrationName> --startup-project ../TeamBuilder.Api
+   dotnet ef database update <PreviousMigrationName> --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api
    ```
 
 ---
