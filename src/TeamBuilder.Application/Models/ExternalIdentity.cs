@@ -5,5 +5,7 @@ namespace TeamBuilder.Application.Models;
 /// <see cref="Issuer"/> + <see cref="Subject"/> is the canonical key used to find the linked
 /// TeamBuilder player; <see cref="Provider"/> and <see cref="TenantId"/> are metadata only.
 /// <see cref="Subject"/> is an opaque string and is never used as a <c>Player.Id</c>.
+/// Issuer and Subject are exact keys: they are compared ordinally and never lowercased,
+/// trimmed, or URI-normalized.
 /// </summary>
 public sealed record ExternalIdentity(string Issuer, string Subject, string Provider, string? TenantId);
