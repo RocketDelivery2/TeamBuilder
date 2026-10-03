@@ -1,5 +1,7 @@
 using System;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TeamBuilder.Api.Auth;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
@@ -32,6 +34,59 @@ public class PlayersController : ControllerBase
         }
 
         return Ok(player);
+    }
+
+    /// <summary>
+    /// Returns the player linked to the caller's external identity (Issuer + Subject).
+    /// 404 when the caller is authenticated but has not onboarded yet.
+    /// </summary>
+    [HttpGet("me")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(PlayerDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PlayerDto>> GetMe(
+        [FromServices] IExternalIdentityAccessor externalIdentityAccessor,
+        [FromServices] IPlayerOnboardingService onboardingService,
+        CancellationToken cancellationToken)
+    {
+        var identity = externalIdentityAccessor.Current;
+        if (identity == null)
+            return Unauthorized();
+
+        var player = await onboardingService.GetByExternalIdentityAsync(identity, cancellationToken);
+        if (player == null)
+            return NotFound();
+
+        return Ok(player);
+    }
+
+    /// <summary>
+    /// Creates a new player for the caller and links the caller's external identity to it.
+    /// 409 when the identity is already linked or the username is taken.
+    /// </summary>
+    [HttpPost("me")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(PlayerDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<PlayerDto>> CreateMe(
+        [FromBody] CreatePlayerDto createPlayerDto,
+        [FromServices] IExternalIdentityAccessor externalIdentityAccessor,
+        [FromServices] IPlayerOnboardingService onboardingService,
+        CancellationToken cancellationToken)
+    {
+        var identity = externalIdentityAccessor.Current;
+        if (identity == null)
+            return Unauthorized();
+
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var player = await onboardingService.OnboardAsync(identity, createPlayerDto, cancellationToken);
+        _logger.LogInformation("Onboarded player {PlayerId} with username {Username}", player.Id, SanitizeForLog(player.Username));
+        return CreatedAtAction(nameof(GetMe), null, player);
     }
 
     [HttpGet("username/{username}")]
