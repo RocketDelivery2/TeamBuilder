@@ -64,10 +64,28 @@ All keys live under the `Jwt` section:
 | `Jwt:PlayerIdClaim` | JWT claim name that carries the TeamBuilder player ID. | `sub` |
 | `Jwt:Authority` | OIDC authority URL for staging/production. Ignored when `Jwt:SigningKey` is set. | _(empty)_ |
 | `Jwt:RequireHttpsMetadata` | Whether HTTPS is required for OIDC metadata. Only applies to the authority path. | `true` |
+| `Jwt:ExternalIdentity:SubjectClaim` | Claim carrying the caller's issuer-scoped external subject, used by `/api/v1/players/me`. Any string; not required to be a GUID. Use `oid` for Microsoft Entra. | `sub` |
+| `Jwt:ExternalIdentity:TenantIdClaim` | Optional claim stored as `PlayerIdentity.TenantId` metadata when present. | `tid` |
+| `Jwt:ExternalIdentity:Provider` | Provider name stored as `PlayerIdentity.Provider` metadata (e.g. `entra`). | `oidc` |
 
 > **Never commit a real `Jwt:SigningKey` to source control.** Use
 > `dotnet user-secrets` or environment variables for any value that must be
 > kept out of `appsettings*.json`.
+
+---
+
+## Player Onboarding (`/api/v1/players/me`)
+
+`GET` and `POST /api/v1/players/me` resolve the caller by external identity
+instead of by player GUID. They use a separate JWT bearer scheme,
+`ExternalIdentity`, which validates tokens with the same `Jwt` settings as the
+default scheme but does not require `Jwt:PlayerIdClaim` to be a GUID. It
+requires the token's `iss` claim and the `Jwt:ExternalIdentity:SubjectClaim`
+claim instead. Issuer + subject is looked up in `PlayerIdentities`; the
+subject is never used as `Player.Id`.
+
+All other protected endpoints still use the default scheme and
+`Jwt:PlayerIdClaim` unchanged.
 
 ---
 
