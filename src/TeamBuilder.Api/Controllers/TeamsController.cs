@@ -137,11 +137,22 @@ public class TeamsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> LeaveTeam(
         Guid teamId,
         Guid playerId,
         CancellationToken cancellationToken)
     {
+        if (_currentUser.UserId != playerId)
+        {
+            _logger.LogInformation(
+                "User {UserId} cannot leave team {TeamId} on behalf of player {PlayerId}",
+                _currentUser.UserId,
+                teamId,
+                playerId);
+            return Forbid();
+        }
+
         var result = await _teamService.RemoveMemberAsync(teamId, playerId, cancellationToken);
         if (!result)
         {
