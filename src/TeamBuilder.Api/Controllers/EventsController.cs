@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TeamBuilder.Api.Auth;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
@@ -12,13 +13,16 @@ namespace TeamBuilder.Api.Controllers;
 public class EventsController : ControllerBase
 {
     private readonly IEventService _eventService;
-    private readonly ICurrentUserContext _currentUser;
+    private readonly ICurrentPlayerResolver _currentPlayerResolver;
     private readonly ILogger<EventsController> _logger;
 
-    public EventsController(IEventService eventService, ICurrentUserContext currentUser, ILogger<EventsController> logger)
+    public EventsController(
+        IEventService eventService,
+        ICurrentPlayerResolver currentPlayerResolver,
+        ILogger<EventsController> logger)
     {
         _eventService = eventService;
-        _currentUser = currentUser;
+        _currentPlayerResolver = currentPlayerResolver;
         _logger = logger;
     }
 
@@ -55,10 +59,11 @@ public class EventsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(EventDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<EventDto>> Create(
         [FromBody] CreateEventDto createEventDto,
         CancellationToken cancellationToken = default)
@@ -66,14 +71,18 @@ public class EventsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var teamEvent = await _eventService.CreateAsync(createEventDto, _currentUser.UserId, cancellationToken);
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
+        var teamEvent = await _eventService.CreateAsync(createEventDto, playerId.Value, cancellationToken);
         var safeEventName = SanitizeForLog(teamEvent.Name);
         _logger.LogInformation("Created event {EventId} with name {EventName}", teamEvent.Id, safeEventName);
         return CreatedAtAction(nameof(GetById), new { id = teamEvent.Id }, teamEvent);
     }
 
     [HttpPut("{id}")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(EventDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -88,6 +97,10 @@ public class EventsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
         var existing = await _eventService.GetByIdAsync(id, cancellationToken);
         if (existing == null)
         {
@@ -101,9 +114,9 @@ public class EventsController : ControllerBase
             return Conflict(new { message = "This event has no host and cannot be updated. Contact an administrator." });
         }
 
-        if (existing.HostId != _currentUser.UserId)
+        if (existing.HostId != playerId.Value)
         {
-            _logger.LogInformation("User {UserId} is not the host of event {EventId}", _currentUser.UserId, id);
+            _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, id);
             return Forbid();
         }
 
@@ -113,7 +126,7 @@ public class EventsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -121,6 +134,10 @@ public class EventsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
         var existing = await _eventService.GetByIdAsync(id, cancellationToken);
         if (existing == null)
         {
@@ -134,9 +151,9 @@ public class EventsController : ControllerBase
             return Conflict(new { message = "This event has no host and cannot be deleted. Contact an administrator." });
         }
 
-        if (existing.HostId != _currentUser.UserId)
+        if (existing.HostId != playerId.Value)
         {
-            _logger.LogInformation("User {UserId} is not the host of event {EventId}", _currentUser.UserId, id);
+            _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, id);
             return Forbid();
         }
 
