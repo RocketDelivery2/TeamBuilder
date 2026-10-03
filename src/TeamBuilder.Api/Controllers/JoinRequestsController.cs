@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Enums;
@@ -92,6 +93,8 @@ public class JoinRequestsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<JoinRequestDto>> Process(
         Guid id,
         [FromBody] ProcessJoinRequestDto processJoinRequestDto,
@@ -100,7 +103,17 @@ public class JoinRequestsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, _currentUser.UserId, cancellationToken);
+        JoinRequestDto? joinRequest;
+        try
+        {
+            joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, _currentUser.UserId, cancellationToken);
+        }
+        catch (JoinRequestProcessingForbiddenException)
+        {
+            _logger.LogInformation("User {UserId} is not the owner of the team for join request {JoinRequestId}", _currentUser.UserId, id);
+            return Forbid();
+        }
+
         if (joinRequest == null)
         {
             _logger.LogInformation("Join request with ID {JoinRequestId} not found for processing", id);
