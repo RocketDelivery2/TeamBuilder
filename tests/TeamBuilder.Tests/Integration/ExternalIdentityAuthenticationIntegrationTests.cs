@@ -2,9 +2,14 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
@@ -17,12 +22,12 @@ namespace TeamBuilder.Tests.Integration;
 /// <c>PlayerIdentity</c>. A missing or empty subject fails authentication (401); an authenticated
 /// subject with no linked player is forbidden (403), whatever the subject looks like.
 /// </summary>
-public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
+public sealed class ExternalIdentityAuthenticationIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
 {
     private readonly HttpClient _client;
     private readonly TeamBuilderWebApplicationFactory _factory;
 
-    public CurrentUserContextIntegrationTests(TeamBuilderWebApplicationFactory factory)
+    public ExternalIdentityAuthenticationIntegrationTests(TeamBuilderWebApplicationFactory factory)
     {
         _factory = factory;
         _client = factory.CreateClient();
@@ -93,13 +98,92 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
     }
 
     private static string CreateEmptySubjectJwt()
-        => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(string.Empty);
+        => TeamBuilderWebApplicationFactory.CreateTestJwtWithSubject(string.Empty);
 
     private static string CreateNonGuidSubjectJwt()
-        => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim("not-a-guid");
+        => TeamBuilderWebApplicationFactory.CreateTestJwtWithSubject("not-a-guid");
 
     private static string CreateMissingSubjectJwt()
-        => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
+        => TeamBuilderWebApplicationFactory.CreateTestJwtWithSubject(null, includeSubject: false);
+
+    [Fact]
+    public void ExternalIdentity_IsDefaultAuthenticateAndChallengeScheme()
+    {
+        var options = _factory.Services.GetRequiredService<IOptions<AuthenticationOptions>>().Value;
+
+        options.DefaultAuthenticateScheme.Should().Be(TeamBuilder.Api.Auth.ExternalIdentityAuthentication.SchemeName);
+        options.DefaultChallengeScheme.Should().Be(TeamBuilder.Api.Auth.ExternalIdentityAuthentication.SchemeName);
+    }
+
+    [Fact]
+    public async Task PlainAuthorize_AcceptsOpaqueNonGuidSubject()
+    {
+        _factory.Services.GetRequiredService<IActionDescriptorCollectionProvider>()
+            .ActionDescriptors.Items.Select(action => action.DisplayName)
+            .Should().Contain(name => name!.Contains(nameof(PlainAuthorizeTestController)));
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/__test/plain-authorize");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CreateNonGuidSubjectJwt());
+
+        using var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("not-a-guid");
+    }
+
+    [Fact]
+    public async Task PlainAuthorize_AcceptsGuidShapedSubjectAsOpaque()
+    {
+        var subject = Guid.NewGuid().ToString();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/__test/plain-authorize");
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            TeamBuilderWebApplicationFactory.CreateTestJwt(subject));
+
+        using var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync()).Should().Contain(subject);
+    }
+
+    [Fact]
+    public async Task PlainAuthorize_WithoutConfiguredSubject_Returns401()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/__test/plain-authorize");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CreateMissingSubjectJwt());
+
+        using var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task PlainAuthorize_WithInvalidJwt_Returns401()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/__test/plain-authorize");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "not.a.valid.jwt");
+
+        using var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public void LegacyCurrentUserContextTypeAndRegistration_AreAbsent()
+    {
+        var interfaceTypeName = string.Concat("ICurrent", "UserContext");
+        var implementationTypeName = "TeamBuilder.Api.Auth." + string.Concat("ClaimsCurrent", "UserContext");
+        var legacyInterface = typeof(ICurrentPlayerResolver).Assembly.GetType(interfaceTypeName);
+        var legacyImplementation = typeof(Program).Assembly.GetType(implementationTypeName);
+
+        legacyInterface.Should().BeNull();
+        legacyImplementation.Should().BeNull();
+
+        _factory.Services.GetRequiredService<IConfiguration>()
+            .AsEnumerable()
+            .Should()
+            .NotContain(setting => setting.Key == string.Concat("Jwt:Player", "IdClaim"));
+    }
 
     // ── JWT identity resolution ──────────────────────────────────────────────
 

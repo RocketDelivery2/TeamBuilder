@@ -225,7 +225,7 @@ public class PlayerOnboardingSqlServerIntegrationTests : IAsyncLifetime
         await using var factory = new SqlServerApiFactory(_db.ConnectionString);
         var client = factory.CreateClient();
         var subject = $"ext-{Guid.NewGuid():N}";
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(subject);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithSubject(subject);
         using var start = new SemaphoreSlim(0);
 
         var tasks = Enumerable.Range(0, attempts).Select(async _ =>

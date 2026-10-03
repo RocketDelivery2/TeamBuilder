@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,18 +33,21 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
     /// <summary>
     /// Creates a signed JWT for use in integration tests.
     /// </summary>
-    /// <param name="userId">Value written to the configured player claim. Pass <c>null</c> to omit it.</param>
+    /// <param name="subject">Opaque external identity subject.</param>
     /// <param name="extraClaims">Any additional claims to include.</param>
-    internal static string CreateTestJwt(Guid? userId, IEnumerable<Claim>? extraClaims = null)
-        => CreateTestJwtWithPlayerClaim(userId?.ToString(), includePlayerClaim: userId.HasValue, extraClaims);
+    internal static string CreateTestJwt(string subject, IEnumerable<Claim>? extraClaims = null)
+        => CreateTestJwtWithSubject(subject, extraClaims: extraClaims);
+
+    internal static string CreateTestJwt(Guid subject, IEnumerable<Claim>? extraClaims = null)
+        => CreateTestJwtWithSubject(subject.ToString(), extraClaims: extraClaims);
 
     /// <summary>
-    /// Creates a signed JWT for use in integration tests with an explicit player-claim value.
+    /// Creates a signed JWT for use in integration tests with an explicit external subject.
     /// </summary>
-    /// <param name="playerClaimValue">Value written to the configured player claim.</param>
-    /// <param name="includePlayerClaim">Whether to include the configured player claim at all.</param>
+    /// <param name="subject">Value written to the configured external subject claim.</param>
+    /// <param name="includeSubject">Whether to include the configured subject claim.</param>
     /// <param name="extraClaims">Any additional claims to include.</param>
-    internal static string CreateTestJwtWithPlayerClaim(string? playerClaimValue, bool includePlayerClaim = true, IEnumerable<Claim>? extraClaims = null)
+    internal static string CreateTestJwtWithSubject(string? subject, bool includeSubject = true, IEnumerable<Claim>? extraClaims = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestSigningKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -51,8 +56,8 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
         {
             [JwtRegisteredClaimNames.Jti] = Guid.NewGuid().ToString()
         };
-        if (includePlayerClaim)
-            claims[JwtRegisteredClaimNames.Sub] = playerClaimValue ?? string.Empty;
+        if (includeSubject)
+            claims[JwtRegisteredClaimNames.Sub] = subject ?? string.Empty;
         if (extraClaims is not null)
         {
             foreach (var c in extraClaims)
@@ -71,6 +76,9 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
         return new JsonWebTokenHandler().CreateToken(descriptor);
     }
 
+    internal static string CreateTestJwtWithPlayerClaim(string? subject)
+        => CreateTestJwtWithSubject(subject);
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // Inject test JWT configuration so Program.cs uses the symmetric key path
@@ -82,7 +90,6 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
                 ["Jwt:SigningKey"] = TestSigningKey,
                 ["Jwt:Issuer"]    = TestIssuer,
                 ["Jwt:Audience"]  = TestAudience,
-                ["Jwt:PlayerIdClaim"] = "sub"
             });
         });
 
@@ -116,8 +123,19 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
             // Register an in-memory database isolated per factory instance.
             services.AddDbContext<TeamBuilderDbContext>(options =>
                 options.UseInMemoryDatabase(_databaseName));
+
+            services.AddControllers().AddApplicationPart(typeof(PlainAuthorizeTestController).Assembly);
         });
 
         builder.UseEnvironment("Development");
     }
+}
+
+[ApiController]
+[Route("__test/plain-authorize")]
+[Authorize]
+public sealed class PlainAuthorizeTestController : ControllerBase
+{
+    [HttpGet]
+    public IActionResult Get() => Ok(User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value);
 }

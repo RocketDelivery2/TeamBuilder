@@ -24,9 +24,7 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
-// Add user context (configured Jwt:PlayerIdClaim, default "sub").
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<ICurrentUserContext, ClaimsCurrentUserContext>();
 
 // External identity (Issuer + Subject, exact keys) and its resolution to a Player.Id,
 // configured by Jwt:ExternalIdentity.
@@ -37,38 +35,19 @@ builder.Services.AddScoped<ICurrentPlayerResolver, CurrentPlayerResolver>();
 
 // Add JWT Bearer authentication
 // Local development can use `dotnet user-jwts` with the non-secret config in appsettings.Development.json.
-// The default scheme requires the legacy Jwt:PlayerIdClaim GUID. The ExternalIdentity scheme
-// validates tokens identically but requires Issuer + Subject instead, so callers who have not
-// onboarded yet can reach /players/me; only endpoints that opt into it use it.
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer()
+// All authenticated endpoints use the validated external identity scheme. The subject is opaque
+// and maps to an internal player only where ICurrentPlayerResolver is used.
+builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = ExternalIdentityAuthentication.SchemeName;
+        options.DefaultChallengeScheme = ExternalIdentityAuthentication.SchemeName;
+        options.DefaultScheme = ExternalIdentityAuthentication.SchemeName;
+    })
     .AddJwtBearer(ExternalIdentityAuthentication.SchemeName);
 builder.Services.AddAuthorization();
 
 // Configure JWT Bearer options via IConfigureOptions so that test overrides via
 // ConfigureAppConfiguration are read at options resolution time, not registration time.
-builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
-    .Configure<IConfiguration>((options, config) =>
-    {
-        ConfigureJwtBearer(options, config);
-
-        options.Events = new JwtBearerEvents
-        {
-            OnTokenValidated = context =>
-            {
-                var playerClaimType = config.GetValue<string>("Jwt:PlayerIdClaim") ?? ClaimsCurrentUserContext.DefaultPlayerIdClaim;
-                var playerClaimValue = context.Principal?.FindFirst(playerClaimType)?.Value;
-
-                if (!Guid.TryParse(playerClaimValue, out _))
-                {
-                    context.Fail($"Missing or invalid '{playerClaimType}' claim.");
-                }
-
-                return Task.CompletedTask;
-            }
-        };
-    });
-
 builder.Services.AddOptions<JwtBearerOptions>(ExternalIdentityAuthentication.SchemeName)
     .Configure<IConfiguration, IOptions<ExternalIdentityOptions>>((options, config, externalIdentityOptions) =>
     {
@@ -187,8 +166,7 @@ static void ConfigureJwtBearer(JwtBearerOptions options, IConfiguration config)
     {
         // Symmetric key path: used for local development (dotnet user-jwts) and tests.
         // No OIDC metadata discovery; Authority is intentionally not set.
-        // MapInboundClaims = false preserves raw JWT claim names so the configured
-        // Jwt:PlayerIdClaim resolves correctly.
+        // MapInboundClaims = false preserves the configured external subject claim name.
         options.MapInboundClaims = false;
         options.RequireHttpsMetadata = false;
         options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters

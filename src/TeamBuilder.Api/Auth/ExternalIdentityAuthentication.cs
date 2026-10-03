@@ -6,9 +6,8 @@ namespace TeamBuilder.Api.Auth;
 
 /// <summary>
 /// The JWT bearer scheme used by endpoints that work with the caller's external identity
-/// (<c>/api/v1/players/me</c>). It validates tokens exactly like the default scheme but does not
-/// require the legacy <c>Jwt:PlayerIdClaim</c> to be a GUID, because a caller who has not
-/// onboarded yet has no TeamBuilder player ID. Instead it requires a usable Issuer + Subject.
+/// (<c>/api/v1/players/me</c>). It requires a usable Issuer + Subject; the subject is an opaque,
+/// issuer-scoped identifier and is not a TeamBuilder player ID.
 /// </summary>
 public static class ExternalIdentityAuthentication
 {

@@ -27,7 +27,7 @@ public sealed class ValidationIntegrationTests : IClassFixture<TeamBuilderWebApp
     /// </summary>
     private Task<HttpResponseMessage> PostWithJwtAsync<T>(string url, T dto, Guid? userId = null)
     {
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(userId ?? Guid.NewGuid());
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt((userId ?? Guid.NewGuid()).ToString());
         var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = JsonContent.Create(dto)
@@ -38,7 +38,7 @@ public sealed class ValidationIntegrationTests : IClassFixture<TeamBuilderWebApp
 
     private Task<HttpResponseMessage> PostJsonStringWithJwtAsync(string url, string json, Guid? userId = null)
     {
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(userId ?? Guid.NewGuid());
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt((userId ?? Guid.NewGuid()).ToString());
         var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
@@ -136,7 +136,7 @@ public sealed class ValidationIntegrationTests : IClassFixture<TeamBuilderWebApp
     public async Task ProcessJoinRequest_WithInvalidEnumValue_Returns400()
     {
         var json = """{"status": 99}""";
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid().ToString());
         var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{Guid.NewGuid()}/process")
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
