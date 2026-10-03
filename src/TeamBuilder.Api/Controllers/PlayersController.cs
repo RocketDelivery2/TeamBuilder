@@ -13,11 +13,13 @@ namespace TeamBuilder.Api.Controllers;
 public class PlayersController : ControllerBase
 {
     private readonly IPlayerService _playerService;
+    private readonly ICurrentPlayerResolver _currentPlayer;
     private readonly ILogger<PlayersController> _logger;
 
-    public PlayersController(IPlayerService playerService, ILogger<PlayersController> logger)
+    public PlayersController(IPlayerService playerService, ICurrentPlayerResolver currentPlayer, ILogger<PlayersController> logger)
     {
         _playerService = playerService;
+        _currentPlayer = currentPlayer;
         _logger = logger;
     }
 
@@ -145,10 +147,16 @@ public class PlayersController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = player.Id }, player);
     }
 
+    /// <summary>
+    /// Updates a player. Only the player linked to the caller's external identity may update itself.
+    /// </summary>
     [HttpPut("{id}")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(PlayerDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<PlayerDto>> Update(
         Guid id,
         [FromBody] UpdatePlayerDto updatePlayerDto,
@@ -156,6 +164,9 @@ public class PlayersController : ControllerBase
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
+
+        if (!await IsCurrentPlayerAsync(id, "update", cancellationToken))
+            return Forbid();
 
         var player = await _playerService.UpdateAsync(id, updatePlayerDto, cancellationToken);
         if (player == null)
@@ -168,11 +179,20 @@ public class PlayersController : ControllerBase
         return Ok(player);
     }
 
+    /// <summary>
+    /// Deletes a player. Only the player linked to the caller's external identity may delete itself.
+    /// </summary>
     [HttpDelete("{id}")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
+        if (!await IsCurrentPlayerAsync(id, "delete", cancellationToken))
+            return Forbid();
+
         var result = await _playerService.DeleteAsync(id, cancellationToken);
         if (!result)
         {
@@ -182,5 +202,28 @@ public class PlayersController : ControllerBase
 
         _logger.LogInformation("Deleted player {PlayerId}", id);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Resolves the caller's internal <c>Player.Id</c> from their external identity (once per request)
+    /// and checks it against the route <paramref name="id"/>. False when the caller's identity is not
+    /// linked to a player or is linked to a different player.
+    /// </summary>
+    private async Task<bool> IsCurrentPlayerAsync(Guid id, string operation, CancellationToken cancellationToken)
+    {
+        var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (currentPlayerId is null)
+        {
+            _logger.LogInformation("Authenticated caller has no linked player; {Operation} of player {PlayerId} forbidden", operation, id);
+            return false;
+        }
+
+        if (currentPlayerId.Value != id)
+        {
+            _logger.LogInformation("Player {CurrentPlayerId} may not {Operation} player {PlayerId}", currentPlayerId.Value, operation, id);
+            return false;
+        }
+
+        return true;
     }
 }
