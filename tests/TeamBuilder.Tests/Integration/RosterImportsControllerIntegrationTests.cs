@@ -1,9 +1,15 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
@@ -52,6 +58,53 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
         return await db.RosterImports.CountAsync();
     }
+
+    private async Task<(Guid PlayerId, string Subject, string Token)> CreateLinkedIdentityAsync(
+        Guid? playerId = null,
+        string? subject = null,
+        string? issuer = null)
+    {
+        playerId ??= Guid.NewGuid();
+        subject ??= $"external-{Guid.NewGuid():N}";
+        issuer ??= TeamBuilderWebApplicationFactory.TestIssuer;
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        db.Players.Add(new Player { Id = playerId.Value, Username = $"player-{Guid.NewGuid():N}" });
+        db.PlayerIdentities.Add(new PlayerIdentity
+        {
+            Id = Guid.NewGuid(),
+            PlayerId = playerId.Value,
+            Issuer = issuer,
+            Subject = subject,
+            Provider = "oidc"
+        });
+        await db.SaveChangesAsync();
+
+        var token = issuer == TeamBuilderWebApplicationFactory.TestIssuer
+            ? TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(subject)
+            : CreateIdentityToken(subject, issuer);
+        return (playerId.Value, subject, token);
+    }
+
+    private static string CreateIdentityToken(string subject, string issuer)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TeamBuilderWebApplicationFactory.TestSigningKey));
+        return new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+        {
+            Issuer = issuer,
+            Audience = TeamBuilderWebApplicationFactory.TestAudience,
+            Claims = new Dictionary<string, object>
+            {
+                [JwtRegisteredClaimNames.Sub] = subject,
+                [JwtRegisteredClaimNames.Jti] = Guid.NewGuid().ToString()
+            },
+            Expires = DateTime.UtcNow.AddHours(1),
+            SigningCredentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
+        });
+    }
+
+    private static string CreateUnlinkedIdentityToken()
+        => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim($"unlinked-{Guid.NewGuid():N}");
 
     // ── GET /api/v1/rosterimports/{id} ───────────────────────────────────────
 
@@ -110,10 +163,10 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
             SourceType = "CSV",
             RawData = "Name,Role\nstriker99,Tank"
         };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync(subject: $"non-guid-subject-{Guid.NewGuid():N}");
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/rosterimports");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -122,6 +175,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await response.Content.ReadFromJsonAsync<RosterImportDto>();
         created!.SourceName.Should().Be(dto.SourceName);
+        created.ImportedByUserId.Should().Be(caller.PlayerId);
         response.Headers.Location.Should().NotBeNull();
     }
 
@@ -144,7 +198,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     }
 
     [Fact]
-    public async Task Create_WithMissingConfiguredPlayerClaim_Returns401AndDoesNotPersistImport()
+    public async Task Create_WithAuthenticatedUnlinkedIdentity_Returns403AndDoesNotPersistImport()
     {
         // Arrange
         var before = await GetRosterImportCountAsync();
@@ -154,7 +208,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
             SourceType = "CSV",
             RawData = "Name,Role\nplayer1,Tank"
         };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
+        var token = CreateUnlinkedIdentityToken();
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/rosterimports");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -163,7 +217,7 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         var response = await _client.SendAsync(request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await GetRosterImportCountAsync()).Should().Be(before);
     }
 
@@ -175,9 +229,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         // Arrange
         var importerId = Guid.NewGuid();
         var import = await SeedRosterImportAsync(isProcessed: false, importedByUserId: importerId);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(importerId);
+        var importer = await CreateLinkedIdentityAsync(importerId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", importer.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -205,9 +259,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     public async Task Process_WhenImportDoesNotExist_Returns404()
     {
         // Arrange
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{Guid.NewGuid()}/process");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -222,9 +276,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         // Arrange
         var importerId = Guid.NewGuid();
         var import = await SeedRosterImportAsync(isProcessed: true, importedByUserId: importerId);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(importerId);
+        var importer = await CreateLinkedIdentityAsync(importerId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", importer.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -241,9 +295,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         // Arrange
         var importerId = Guid.NewGuid();
         var import = await SeedRosterImportAsync(importedByUserId: importerId);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(importerId);
+        var importer = await CreateLinkedIdentityAsync(importerId);
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/rosterimports/{import.Id}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", importer.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -269,9 +323,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     public async Task Delete_WhenImportDoesNotExist_Returns404()
     {
         // Arrange
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/rosterimports/{Guid.NewGuid()}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -286,9 +340,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         // Arrange — import seeded with a different owner
         var importerId = Guid.NewGuid();
         var import = await SeedRosterImportAsync(isProcessed: false, importedByUserId: importerId);
-        var nonImporterToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var nonImporter = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonImporterToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonImporter.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -303,9 +357,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
         // Arrange — import seeded with a different owner
         var importerId = Guid.NewGuid();
         var import = await SeedRosterImportAsync(importedByUserId: importerId);
-        var nonImporterToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var nonImporter = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/rosterimports/{import.Id}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonImporterToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonImporter.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -319,9 +373,9 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     {
         // Arrange — import seeded without an importer (orphaned)
         var import = await SeedRosterImportAsync(isProcessed: false, importedByUserId: null);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/rosterimports/{import.Id}/process");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -335,14 +389,72 @@ public sealed class RosterImportsControllerIntegrationTests : IClassFixture<Team
     {
         // Arrange — import seeded without an importer (orphaned)
         var import = await SeedRosterImportAsync(importedByUserId: null);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/rosterimports/{import.Id}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task Create_WithSameSubjectUnderDifferentIssuers_ResolvesMatchingIssuerPlayer()
+    {
+        const string otherIssuer = "https://accounts.example.com";
+        var subject = $"shared-subject-{Guid.NewGuid():N}";
+        var firstPlayerId = Guid.NewGuid();
+        var secondPlayerId = Guid.NewGuid();
+
+        using var factory = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?> { ["Jwt:Issuer"] = "" })));
+        using var client = factory.CreateClient();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            db.Players.AddRange(
+                new Player { Id = firstPlayerId, Username = $"player-{Guid.NewGuid():N}" },
+                new Player { Id = secondPlayerId, Username = $"player-{Guid.NewGuid():N}" });
+            db.PlayerIdentities.AddRange(
+                new PlayerIdentity
+                {
+                    Id = Guid.NewGuid(),
+                    PlayerId = firstPlayerId,
+                    Issuer = TeamBuilderWebApplicationFactory.TestIssuer,
+                    Subject = subject,
+                    Provider = "oidc"
+                },
+                new PlayerIdentity
+                {
+                    Id = Guid.NewGuid(),
+                    PlayerId = secondPlayerId,
+                    Issuer = otherIssuer,
+                    Subject = subject,
+                    Provider = "oidc"
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var dto = new CreateRosterImportDto
+        {
+            SourceName = $"Import-{Guid.NewGuid():N}",
+            SourceType = "CSV",
+            RawData = "Name,Role\nplayer1,Tank"
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/rosterimports")
+        {
+            Content = JsonContent.Create(dto)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CreateIdentityToken(subject, otherIssuer));
+
+        using var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<RosterImportDto>();
+        created!.ImportedByUserId.Should().Be(secondPlayerId);
+        created.ImportedByUserId.Should().NotBe(firstPlayerId);
     }
 }

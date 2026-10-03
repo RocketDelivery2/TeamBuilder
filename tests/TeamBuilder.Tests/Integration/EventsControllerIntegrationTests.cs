@@ -54,6 +54,32 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         return await db.Events.CountAsync();
     }
 
+    private async Task<(Guid PlayerId, string Subject, string Token)> CreateLinkedIdentityAsync(
+        Guid? playerId = null,
+        string? subject = null,
+        string? issuer = null)
+    {
+        playerId ??= Guid.NewGuid();
+        subject ??= $"external-{Guid.NewGuid():N}";
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        db.Players.Add(new Player { Id = playerId.Value, Username = $"player-{Guid.NewGuid():N}" });
+        db.PlayerIdentities.Add(new PlayerIdentity
+        {
+            Id = Guid.NewGuid(),
+            PlayerId = playerId.Value,
+            Issuer = issuer ?? TeamBuilderWebApplicationFactory.TestIssuer,
+            Subject = subject,
+            Provider = "oidc"
+        });
+        await db.SaveChangesAsync();
+
+        return (playerId.Value, subject, TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(subject));
+    }
+
+    private static string CreateUnlinkedIdentityToken()
+        => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim($"unlinked-{Guid.NewGuid():N}");
+
     // ── GET /api/v1/events/{id} ───────────────────────────────────────────────
 
     [Fact]
@@ -111,10 +137,10 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
             EventDateUtc = DateTime.UtcNow.AddDays(14),
             MaxParticipants = 64
         };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync(subject: $"non-guid-subject-{Guid.NewGuid():N}");
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/events");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -123,6 +149,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await response.Content.ReadFromJsonAsync<EventDto>();
         created!.Name.Should().Be(dto.Name);
+        created.HostId.Should().Be(caller.PlayerId);
         response.Headers.Location.Should().NotBeNull();
     }
 
@@ -145,7 +172,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     }
 
     [Fact]
-    public async Task Create_WithMissingConfiguredPlayerClaim_Returns401AndDoesNotPersistEvent()
+    public async Task Create_WithAuthenticatedUnlinkedIdentity_Returns403AndDoesNotPersistEvent()
     {
         // Arrange
         var before = await GetEventCountAsync();
@@ -155,7 +182,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
             EventDateUtc = DateTime.UtcNow.AddDays(14),
             MaxParticipants = 10
         };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
+        var token = CreateUnlinkedIdentityToken();
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/events");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -164,7 +191,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         var response = await _client.SendAsync(request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await GetEventCountAsync()).Should().Be(before);
     }
 
@@ -177,10 +204,10 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         var hostId = Guid.NewGuid();
         var ev = await SeedEventAsync($"Update-{Guid.NewGuid():N}", hostId);
         var dto = new UpdateEventDto { Name = $"Updated-{Guid.NewGuid():N}" };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(hostId);
+        var host = await CreateLinkedIdentityAsync(hostId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{ev.Id}");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -208,10 +235,10 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     {
         // Arrange
         var dto = new UpdateEventDto { Name = "Ghost Event" };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{Guid.NewGuid()}");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -228,9 +255,9 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         // Arrange
         var hostId = Guid.NewGuid();
         var ev = await SeedEventAsync($"Del-{Guid.NewGuid():N}", hostId);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(hostId);
+        var host = await CreateLinkedIdentityAsync(hostId);
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{ev.Id}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -256,9 +283,9 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     public async Task Delete_WhenEventDoesNotExist_Returns404()
     {
         // Arrange
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{Guid.NewGuid()}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -274,10 +301,10 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         var hostId = Guid.NewGuid();
         var ev = await SeedEventAsync($"UpdNonHost-{Guid.NewGuid():N}", hostId);
         var dto = new UpdateEventDto { Name = "Non-host rename" };
-        var nonHostToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var nonHost = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{ev.Id}");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonHostToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonHost.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -292,9 +319,9 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         // Arrange — event seeded with a different host
         var hostId = Guid.NewGuid();
         var ev = await SeedEventAsync($"DelNonHost-{Guid.NewGuid():N}", hostId);
-        var nonHostToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var nonHost = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{ev.Id}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonHostToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonHost.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -309,10 +336,10 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         // Arrange — event seeded without a host (orphaned)
         var ev = await SeedEventAsync($"UpdOrphan-{Guid.NewGuid():N}", hostId: null);
         var dto = new UpdateEventDto { Name = "Orphan Rename" };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{ev.Id}");
         request.Content = JsonContent.Create(dto);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
@@ -326,9 +353,9 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
     {
         // Arrange — event seeded without a host (orphaned)
         var ev = await SeedEventAsync($"DelOrphan-{Guid.NewGuid():N}", hostId: null);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var caller = await CreateLinkedIdentityAsync();
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{ev.Id}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", caller.Token);
 
         // Act
         var response = await _client.SendAsync(request);
