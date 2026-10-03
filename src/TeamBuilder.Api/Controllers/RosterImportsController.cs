@@ -26,10 +26,17 @@ public class RosterImportsController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(RosterImportDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<RosterImportDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
         var rosterImport = await _rosterImportService.GetByIdAsync(id, cancellationToken);
         if (rosterImport == null)
         {
@@ -37,21 +44,35 @@ public class RosterImportsController : ControllerBase
             return NotFound();
         }
 
+        // Importer-only: the detail includes RawData. Orphaned imports (no importer) are readable by no one.
+        if (rosterImport.ImportedByUserId == null || rosterImport.ImportedByUserId != playerId.Value)
+        {
+            _logger.LogInformation("Player {PlayerId} is not the importer of roster import {RosterImportId}", playerId.Value, id);
+            return Forbid();
+        }
+
         return Ok(rosterImport);
     }
 
     [HttpGet]
-    [ProducesResponseType(typeof(PaginatedResult<RosterImportDto>), StatusCodes.Status200OK)]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(PaginatedResult<RosterImportSummaryDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] bool? isProcessed = null,
         CancellationToken cancellationToken = default)
     {
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
         if (page < 1) page = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 20;
 
-        var result = await _rosterImportService.GetAllAsync(page, pageSize, isProcessed, cancellationToken);
+        var result = await _rosterImportService.GetByImporterAsync(playerId.Value, page, pageSize, isProcessed, cancellationToken);
         return Ok(result);
     }
 
