@@ -356,11 +356,13 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
-    // ── legacy behavior is unchanged ─────────────────────────────────────────
+    // ── migrated team endpoints accept the same identity ─────────────────────
 
     [Fact]
-    public async Task NonGuidSubjectToken_StillRejectedByLegacyProtectedEndpoints()
+    public async Task NonGuidSubjectToken_IsAuthenticatedOnTeamsButForbiddenUntilLinked()
     {
+        // POST /api/v1/teams now uses the ExternalIdentity scheme: a non-GUID subject authenticates
+        // (no 401), and an identity with no linked player is forbidden.
         var token = SubjectToken(NewSubject());
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams")
         {
@@ -370,6 +372,6 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
 
         using var response = await _client.SendAsync(request);
 
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }

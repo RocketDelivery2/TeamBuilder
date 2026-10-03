@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TeamBuilder.Api.Auth;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
@@ -12,13 +13,13 @@ namespace TeamBuilder.Api.Controllers;
 public class TeamsController : ControllerBase
 {
     private readonly ITeamService _teamService;
-    private readonly ICurrentUserContext _currentUser;
+    private readonly ICurrentPlayerResolver _currentPlayer;
     private readonly ILogger<TeamsController> _logger;
 
-    public TeamsController(ITeamService teamService, ICurrentUserContext currentUser, ILogger<TeamsController> logger)
+    public TeamsController(ITeamService teamService, ICurrentPlayerResolver currentPlayer, ILogger<TeamsController> logger)
     {
         _teamService = teamService;
-        _currentUser = currentUser;
+        _currentPlayer = currentPlayer;
         _logger = logger;
     }
 
@@ -55,10 +56,11 @@ public class TeamsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(TeamDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<TeamDto>> Create(
         [FromBody] CreateTeamDto createTeamDto,
         CancellationToken cancellationToken = default)
@@ -66,14 +68,21 @@ public class TeamsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var team = await _teamService.CreateAsync(createTeamDto, _currentUser.UserId, cancellationToken);
+        var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (currentPlayerId is null)
+        {
+            _logger.LogInformation("Authenticated caller has no linked player; team creation forbidden");
+            return Forbid();
+        }
+
+        var team = await _teamService.CreateAsync(createTeamDto, currentPlayerId.Value, cancellationToken);
         var safeTeamName = SanitizeForLog(team.Name);
         _logger.LogInformation("Created team {TeamId} with name {TeamName}", team.Id, safeTeamName);
         return CreatedAtAction(nameof(GetById), new { id = team.Id }, team);
     }
 
     [HttpPut("{id}")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(TeamDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -87,6 +96,13 @@ public class TeamsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
+        var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (currentPlayerId is null)
+        {
+            _logger.LogInformation("Authenticated caller has no linked player; {Operation} of team {TeamId} forbidden", "update", id);
+            return Forbid();
+        }
+
         var existing = await _teamService.GetByIdAsync(id, cancellationToken);
         if (existing == null)
         {
@@ -94,9 +110,9 @@ public class TeamsController : ControllerBase
             return NotFound();
         }
 
-        if (existing.OwnerId != _currentUser.UserId)
+        if (existing.OwnerId != currentPlayerId)
         {
-            _logger.LogInformation("User {UserId} is not the owner of team {TeamId}", _currentUser.UserId, id);
+            _logger.LogInformation("Player {PlayerId} is not the owner of team {TeamId}", currentPlayerId, id);
             return Forbid();
         }
 
@@ -106,13 +122,20 @@ public class TeamsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
+        var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (currentPlayerId is null)
+        {
+            _logger.LogInformation("Authenticated caller has no linked player; {Operation} of team {TeamId} forbidden", "deletion", id);
+            return Forbid();
+        }
+
         var existing = await _teamService.GetByIdAsync(id, cancellationToken);
         if (existing == null)
         {
@@ -120,9 +143,9 @@ public class TeamsController : ControllerBase
             return NotFound();
         }
 
-        if (existing.OwnerId != _currentUser.UserId)
+        if (existing.OwnerId != currentPlayerId)
         {
-            _logger.LogInformation("User {UserId} is not the owner of team {TeamId}", _currentUser.UserId, id);
+            _logger.LogInformation("Player {PlayerId} is not the owner of team {TeamId}", currentPlayerId, id);
             return Forbid();
         }
 
@@ -132,7 +155,7 @@ public class TeamsController : ControllerBase
     }
 
     [HttpPost("{teamId}/members/{playerId}/leave")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -143,11 +166,18 @@ public class TeamsController : ControllerBase
         Guid playerId,
         CancellationToken cancellationToken)
     {
-        if (_currentUser.UserId != playerId)
+        var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (currentPlayerId is null)
+        {
+            _logger.LogInformation("Authenticated caller has no linked player; {Operation} of team {TeamId} forbidden", "leave", teamId);
+            return Forbid();
+        }
+
+        if (currentPlayerId != playerId)
         {
             _logger.LogInformation(
-                "User {UserId} cannot leave team {TeamId} on behalf of player {PlayerId}",
-                _currentUser.UserId,
+                "Player {CurrentPlayerId} cannot leave team {TeamId} on behalf of player {PlayerId}",
+                currentPlayerId,
                 teamId,
                 playerId);
             return Forbid();

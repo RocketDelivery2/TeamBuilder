@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Domain.Entities;
@@ -102,7 +104,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{joinRequestId}/process");
         request.Content = JsonContent.Create(new ProcessJoinRequestDto { Status = status });
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", TeamBuilderWebApplicationFactory.CreateTestJwt(callerId));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, callerId));
         return await _client.SendAsync(request);
     }
 
@@ -143,7 +145,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         // Arrange
         var (team, player) = await SeedTeamAndPlayerAsync();
         var dto = new CreateJoinRequestDto { TeamId = team.Id, Message = "Please let me join!" };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, player.Id);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -201,7 +203,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         await SeedPendingJoinRequestAsync(team.Id, player.Id);
 
         var dto = new CreateJoinRequestDto { TeamId = team.Id };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, player.Id);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -225,7 +227,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         var (team, player) = await SeedTeamAndPlayerAsync();
         var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(team.OwnerId!.Value);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, team.OwnerId!.Value);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process");
         request.Content = JsonContent.Create(processDto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -246,7 +248,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         var (team, player) = await SeedTeamAndPlayerAsync();
         var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Rejected };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(team.OwnerId!.Value);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, team.OwnerId!.Value);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process");
         request.Content = JsonContent.Create(processDto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -267,7 +269,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         var (team, player) = await SeedTeamAndPlayerAsync(maxMembers: 1, currentMemberCount: 1, status: TeamStatus.Full);
         var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(team.OwnerId!.Value);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, team.OwnerId!.Value);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process");
         request.Content = JsonContent.Create(processDto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -287,7 +289,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     {
         // Arrange
         var processDto = new ProcessJoinRequestDto { Status = RequestStatus.Approved };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, Guid.NewGuid());
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{Guid.NewGuid()}/process");
         request.Content = JsonContent.Create(processDto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -494,5 +496,147 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    // ── external identity resolution (ExternalIdentity scheme + PlayerIdentity) ──
+
+    private static HttpRequestMessage CreateRequest(Guid teamId, string token)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/joinrequests")
+        {
+            Content = JsonContent.Create(new CreateJoinRequestDto { TeamId = teamId })
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return request;
+    }
+
+    [Fact]
+    public async Task Create_AsLinkedPlayerWithNonGuidSubject_StoresInternalPlayerId()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var subject = $"auth0|{Guid.NewGuid():N}";
+        await LinkedPlayerTokens.LinkAsync(_factory.Services, player.Id, subject, TeamBuilderWebApplicationFactory.TestIssuer);
+
+        // Act
+        using var request = CreateRequest(team.Id, LinkedPlayerTokens.ForSubject(subject));
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
+        created!.PlayerId.Should().Be(player.Id);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        (await db.JoinRequests.AsNoTracking().SingleAsync(jr => jr.Id == created.Id)).PlayerId.Should().Be(player.Id);
+    }
+
+    [Fact]
+    public async Task Create_AsUnlinkedIdentity_Returns403AndDoesNotPersistJoinRequest()
+    {
+        // Arrange
+        var (team, _) = await SeedTeamAndPlayerAsync();
+        var before = await GetJoinRequestCountAsync();
+
+        // Act
+        using var request = CreateRequest(team.Id, LinkedPlayerTokens.ForSubject(LinkedPlayerTokens.NewSubject()));
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetJoinRequestCountAsync()).Should().Be(before);
+    }
+
+    [Fact]
+    public async Task Create_WithGuidSubjectMatchingUnlinkedPlayerId_Returns403()
+    {
+        // Arrange: no fallback to the legacy Jwt:PlayerIdClaim GUID.
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var before = await GetJoinRequestCountAsync();
+
+        // Act
+        using var request = CreateRequest(team.Id, TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id));
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetJoinRequestCountAsync()).Should().Be(before);
+    }
+
+    [Fact]
+    public async Task Process_AsUnlinkedIdentity_Returns403AndLeavesStateUnchanged()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process")
+        {
+            Content = JsonContent.Create(new ProcessJoinRequestDto { Status = RequestStatus.Approved })
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", LinkedPlayerTokens.ForSubject(LinkedPlayerTokens.NewSubject()));
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var (joinRequest, updatedTeam, teamMemberCount) = await GetProcessingStateAsync(jr.Id, team.Id);
+        joinRequest.Status.Should().Be(RequestStatus.Pending);
+        joinRequest.ProcessedByUserId.Should().BeNull();
+        updatedTeam.CurrentMemberCount.Should().Be(0);
+        teamMemberCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Process_WithGuidSubjectEqualToUnlinkedOwnerId_Returns403()
+    {
+        // Arrange: the owner's Player.Id as a raw GUID subject is not a link.
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/joinrequests/{jr.Id}/process")
+        {
+            Content = JsonContent.Create(new ProcessJoinRequestDto { Status = RequestStatus.Approved })
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", TeamBuilderWebApplicationFactory.CreateTestJwt(team.OwnerId!.Value));
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetProcessingStateAsync(jr.Id, team.Id)).joinRequest.Status.Should().Be(RequestStatus.Pending);
+    }
+
+    [Fact]
+    public async Task SameSubjectUnderDifferentIssuers_ResolvesToDifferentPlayers()
+    {
+        // Arrange: clearing Jwt:Issuer disables issuer validation so one host accepts both issuers.
+        var factory = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?> { ["Jwt:Issuer"] = "" })));
+        var client = factory.CreateClient();
+        const string firstIssuer = "https://login.example.com/tenant-a/v2.0";
+        const string secondIssuer = "https://login.example.com/tenant-b/v2.0";
+        var subject = $"shared|{Guid.NewGuid():N}";
+        var (team, firstPlayer) = await SeedTeamAndPlayerAsync();
+        var secondPlayerId = Guid.NewGuid();
+        await LinkedPlayerTokens.LinkAsync(factory.Services, firstPlayer.Id, subject, firstIssuer);
+        await LinkedPlayerTokens.LinkAsync(factory.Services, secondPlayerId, subject, secondIssuer);
+
+        // Act
+        using var first = CreateRequest(team.Id, LinkedPlayerTokens.ForSubject(subject, firstIssuer));
+        var firstResponse = await client.SendAsync(first);
+        using var second = CreateRequest(team.Id, LinkedPlayerTokens.ForSubject(subject, secondIssuer));
+        var secondResponse = await client.SendAsync(second);
+        using var unlinked = CreateRequest(team.Id, LinkedPlayerTokens.ForSubject(subject, "https://login.example.com/tenant-c/v2.0"));
+        var unlinkedResponse = await client.SendAsync(unlinked);
+
+        // Assert
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        (await firstResponse.Content.ReadFromJsonAsync<JoinRequestDto>())!.PlayerId.Should().Be(firstPlayer.Id);
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        (await secondResponse.Content.ReadFromJsonAsync<JoinRequestDto>())!.PlayerId.Should().Be(secondPlayerId);
+        unlinkedResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }

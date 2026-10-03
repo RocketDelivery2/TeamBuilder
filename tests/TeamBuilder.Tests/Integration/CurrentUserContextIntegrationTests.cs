@@ -12,9 +12,10 @@ using TeamBuilder.Infrastructure.Data;
 namespace TeamBuilder.Tests.Integration;
 
 /// <summary>
-/// Verifies that <c>ICurrentUserContext</c> resolves the caller identity correctly.
-/// The authenticated JWT uses the configured player claim (default <c>sub</c>).
-/// Write endpoints fail closed when that claim is missing, empty, or invalid.
+/// Verifies caller identity resolution on the team and join-request write endpoints. They use the
+/// ExternalIdentity scheme: the token's Issuer + Subject resolve to an internal player through
+/// <c>PlayerIdentity</c>. A missing or empty subject fails authentication (401); an authenticated
+/// subject with no linked player is forbidden (403), whatever the subject looks like.
 /// </summary>
 public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
 {
@@ -91,23 +92,23 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
         return request;
     }
 
-    private static string CreateEmptyPlayerClaimJwt()
+    private static string CreateEmptySubjectJwt()
         => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(string.Empty);
 
-    private static string CreateMalformedPlayerClaimJwt()
+    private static string CreateNonGuidSubjectJwt()
         => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim("not-a-guid");
 
-    private static string CreateMissingPlayerClaimJwt()
+    private static string CreateMissingSubjectJwt()
         => TeamBuilderWebApplicationFactory.CreateTestJwtWithPlayerClaim(null, includePlayerClaim: false);
 
     // ── JWT identity resolution ──────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateTeam_WithValidConfiguredPlayerClaim_SetsOwnerIdFromToken()
+    public async Task CreateTeam_AsLinkedPlayer_SetsOwnerIdToResolvedPlayerId()
     {
         // Arrange
         var ownerId = Guid.NewGuid();
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(ownerId);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, ownerId);
         using var request = BuildCreateTeamRequest(bearerToken: token);
 
         // Act
@@ -120,11 +121,11 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
     }
 
     [Fact]
-    public async Task CreateJoinRequest_WithValidConfiguredPlayerClaim_SetsPlayerIdFromToken()
+    public async Task CreateJoinRequest_AsLinkedPlayer_SetsPlayerIdToResolvedPlayerId()
     {
         // Arrange
         var (team, player) = await SeedTeamAndPlayerAsync();
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, player.Id);
         using var request = BuildCreateJoinRequestRequest(team.Id, bearerToken: token);
 
         // Act
@@ -137,12 +138,12 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
     }
 
     [Fact]
-    public async Task CreateTeam_WithValidConfiguredPlayerClaim_IgnoresXUserIdHeader()
+    public async Task CreateTeam_AsLinkedPlayer_IgnoresXUserIdHeader()
     {
         // Arrange
         var jwtUserId = Guid.NewGuid();
         var headerUserId = Guid.NewGuid();
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(jwtUserId);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, jwtUserId);
         using var request = BuildCreateTeamRequest(bearerToken: token, userId: headerUserId);
 
         // Act
@@ -155,12 +156,12 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
     }
 
     [Fact]
-    public async Task CreateTeam_WithMissingConfiguredPlayerClaimAndXUserIdHeader_ReturnsUnauthorizedAndDoesNotPersistTeam()
+    public async Task CreateTeam_WithMissingSubjectClaimAndXUserIdHeader_ReturnsUnauthorizedAndDoesNotPersistTeam()
     {
         // Arrange
         var before = await GetCountsAsync();
         var headerUserId = Guid.NewGuid();
-        var token = CreateMissingPlayerClaimJwt();
+        var token = CreateMissingSubjectJwt();
         using var request = BuildCreateTeamRequest(bearerToken: token, userId: headerUserId);
 
         // Act
@@ -174,11 +175,11 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
     }
 
     [Fact]
-    public async Task CreateTeam_WithEmptyConfiguredPlayerClaim_ReturnsUnauthorizedAndDoesNotPersistTeam()
+    public async Task CreateTeam_WithEmptySubjectClaim_ReturnsUnauthorizedAndDoesNotPersistTeam()
     {
         // Arrange
         var before = await GetCountsAsync();
-        var token = CreateEmptyPlayerClaimJwt();
+        var token = CreateEmptySubjectJwt();
         using var request = BuildCreateTeamRequest(bearerToken: token);
 
         // Act
@@ -192,30 +193,32 @@ public sealed class CurrentUserContextIntegrationTests : IClassFixture<TeamBuild
     }
 
     [Fact]
-    public async Task CreateTeam_WithMalformedConfiguredPlayerClaim_ReturnsUnauthorizedAndDoesNotPersistTeam()
+    public async Task CreateTeam_WithUnlinkedNonGuidSubject_ReturnsForbiddenAndDoesNotPersistTeam()
     {
+        // A non-GUID subject is a valid external identity, so authentication succeeds; the caller
+        // is forbidden only because no player is linked to it.
         // Arrange
         var before = await GetCountsAsync();
-        var token = CreateMalformedPlayerClaimJwt();
+        var token = CreateNonGuidSubjectJwt();
         using var request = BuildCreateTeamRequest(bearerToken: token);
 
         // Act
         var response = await _client.SendAsync(request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var after = await GetCountsAsync();
         after.Teams.Should().Be(before.Teams);
         after.JoinRequests.Should().Be(before.JoinRequests);
     }
 
     [Fact]
-    public async Task CreateJoinRequest_WithMissingConfiguredPlayerClaim_ReturnsUnauthorizedAndDoesNotPersistJoinRequest()
+    public async Task CreateJoinRequest_WithMissingSubjectClaim_ReturnsUnauthorizedAndDoesNotPersistJoinRequest()
     {
         // Arrange
         var (team, _) = await SeedTeamAndPlayerAsync();
         var before = await GetCountsAsync();
-        var token = CreateMissingPlayerClaimJwt();
+        var token = CreateMissingSubjectJwt();
         using var request = BuildCreateJoinRequestRequest(team.Id, bearerToken: token);
 
         // Act
