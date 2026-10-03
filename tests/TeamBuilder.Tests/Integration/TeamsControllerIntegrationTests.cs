@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Models;
@@ -24,7 +25,11 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<Team> SeedTeamAsync(string name = "Test Team", Guid? ownerId = null)
+    private async Task<Team> SeedTeamAsync(
+        string name = "Test Team",
+        Guid? ownerId = null,
+        TeamStatus status = TeamStatus.Active,
+        int maxMembers = 10)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
@@ -33,8 +38,8 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         {
             Id = Guid.NewGuid(),
             Name = name,
-            Status = TeamStatus.Active,
-            MaxMembers = 10,
+            Status = status,
+            MaxMembers = maxMembers,
             CurrentMemberCount = 0,
             OwnerId = ownerId,
             CreatedAtUtc = DateTime.UtcNow,
@@ -360,7 +365,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     public async Task LeaveTeam_WhenMemberExists_Returns204()
     {
         // Arrange
-        var team = await SeedTeamAsync($"Leave-{Guid.NewGuid():N}");
+        var team = await SeedTeamAsync($"Leave-{Guid.NewGuid():N}", status: TeamStatus.Full, maxMembers: 1);
         var player = await SeedPlayerAsync($"leaver-{Guid.NewGuid():N}");
         await AddMemberAsync(team.Id, player.Id);
         var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
@@ -373,6 +378,45 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        var membership = await db.TeamMembers.SingleAsync(tm => tm.TeamId == team.Id && tm.PlayerId == player.Id);
+        var updatedTeam = await db.Teams.FindAsync(team.Id);
+        membership.IsActive.Should().BeFalse();
+        updatedTeam!.CurrentMemberCount.Should().Be(0);
+        updatedTeam.Status.Should().Be(TeamStatus.Recruiting);
+    }
+
+    [Fact]
+    public async Task LeaveTeam_ByAnotherAuthenticatedPlayer_Returns403WithoutChangingMembershipOrTeam()
+    {
+        // Arrange: even the team owner cannot remove another player through the voluntary-leave route.
+        var owner = await SeedPlayerAsync($"leaveowner-{Guid.NewGuid():N}");
+        var member = await SeedPlayerAsync($"leavemember-{Guid.NewGuid():N}");
+        var team = await SeedTeamAsync(
+            $"LeaveForbidden-{Guid.NewGuid():N}",
+            owner.Id,
+            TeamStatus.Full,
+            maxMembers: 1);
+        await AddMemberAsync(team.Id, member.Id);
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(owner.Id);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/teams/{team.Id}/members/{member.Id}/leave");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        var membership = await db.TeamMembers.SingleAsync(tm => tm.TeamId == team.Id && tm.PlayerId == member.Id);
+        var unchangedTeam = await db.Teams.FindAsync(team.Id);
+        membership.IsActive.Should().BeTrue();
+        unchangedTeam!.CurrentMemberCount.Should().Be(1);
+        unchangedTeam.Status.Should().Be(TeamStatus.Full);
     }
 
     [Fact]
@@ -380,9 +424,10 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     {
         // Arrange
         var team = await SeedTeamAsync($"LeaveNotFound-{Guid.NewGuid():N}");
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var playerId = Guid.NewGuid();
+        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(playerId);
         using var request = new HttpRequestMessage(HttpMethod.Post,
-            $"/api/v1/teams/{team.Id}/members/{Guid.NewGuid()}/leave");
+            $"/api/v1/teams/{team.Id}/members/{playerId}/leave");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act
