@@ -85,14 +85,14 @@ The ASP.NET Core Web API acts as the **middle layer** between any client-side fr
 
 ### Join Request Flow
 - Players request to join teams
-- Team owners/admins approve or reject requests
+- The team owner approves or rejects requests
 - Automatic team member creation on approval
 - Automatic status updates (Recruiting → Full) when team reaches capacity
 - Refill support: when a member leaves a full team, status changes back to Recruiting
 
 ### Team Membership
 - Players can join multiple teams
-- Role-based membership (Owner, Admin, Member)
+- Membership roles are `Member`, `Leader`, `CoLeader`, `Officer`, and `Recruit`
 - Leave team functionality with automatic refill support
 - Active/inactive member tracking
 
@@ -183,7 +183,8 @@ TeamBuilder/
 - `DELETE /api/v1/rosterimports/{id}` - Delete import
 
 ### Health
-- `GET /health` - Health check endpoint (includes SQL Server connectivity)
+- `GET /health` - Liveness check; reports whether the API process is running
+- `GET /health/ready` - Readiness check; verifies SQL Server connectivity
 
 ## Getting Started
 
@@ -218,11 +219,9 @@ TeamBuilder/
    }
    ```
 
-4. **Create database migration**
+4. **Apply the committed database migrations**
    ```bash
-   cd src/TeamBuilder.Infrastructure
-   dotnet ef migrations add InitialCreate --startup-project ../TeamBuilder.Api
-   dotnet ef database update --startup-project ../TeamBuilder.Api
+   dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api
    ```
 
 5. **Run the API**
@@ -241,7 +240,7 @@ TeamBuilder/
 dotnet test
 ```
 
-All 35 unit tests validate:
+The test suite validates:
 - Domain entity behavior
 - Team/Player/Event CRUD operations
 - Join request workflow (create, approve, reject)
@@ -262,7 +261,10 @@ TeamBuilder supports three environments with separate configuration files:
 
 ### Octopus Deploy Variables
 
-The following Octopus Deploy variables are expected for QA and Production:
+The checked-in QA and Production appsettings files contain Octopus-style
+variable placeholders. The examples below describe those templates; repository
+contents do not verify whether Octopus projects, environments, or variables
+currently exist or are configured:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -271,10 +273,12 @@ The following Octopus Deploy variables are expected for QA and Production:
 | `AzureSql.UserName` | SQL authentication username | `teambuilder-api` |
 | `AzureSql.Password` | SQL authentication password (sensitive) | `***` |
 | `AllowedOrigins` | Comma-separated CORS origins | `https://qa.teambuilder.info` (QA) / `https://teambuilder.info` (Production) |
-| `ApplicationInsights.ConnectionString` | Azure Application Insights connection string | `InstrumentationKey=...` |
 | `ASPNETCORE_ENVIRONMENT` | Environment name | `QA` or `Production` |
 
-**Important**: No secrets are committed to source control. All sensitive values use Octopus placeholder syntax: `#{VariableName}`
+**Important**: Do not commit secrets. The checked-in environment templates use
+Octopus placeholder syntax (`#{VariableName}`); deployment-side values must be
+verified with the operators of the relevant environment.
+The appsettings files include an Application Insights connection-string placeholder, but the API does not currently register the Application Insights SDK.
 
 ### Database Migrations
 
@@ -334,11 +338,12 @@ TeamBuilder uses **Entity Framework Core Code First** approach:
 
 - **HTTPS Redirection**: Enabled in production
 - **CORS**: Configurable per environment; use specific origins in production (not `*`)
-- **Production origin**: `https://teambuilder.info`
-- **Support email**: `support@teambuilder.info`
-- **Sensitive Data**: Exception details hidden outside Development
-- **Authentication**: Ready for integration with Identity, JWT, or Azure AD (not yet implemented)
-- **Secrets Management**: No hardcoded secrets; all sensitive config uses Octopus variables
+- **Recorded production origin**: `https://teambuilder.info` (deployment not verified)
+- **Recorded support email**: `support@teambuilder.info` (not verified)
+- **Sensitive Data**: Unexpected 500 responses return a generic detail; the original exception is logged internally. Handled 400 and 409 responses retain their useful exception detail.
+- **Authentication**: JWT bearer validation is implemented. `[Authorize]` is applied to selected write routes; player create/update/delete routes are not currently protected.
+- **Authorization**: Team update/delete are owner-only, join-request processing is team-owner-only, and voluntary team leave is self-only. Event and roster-import changes are restricted to their host/importer.
+- **Secrets Management**: Do not commit secrets; use user-secrets for local development and verified environment-specific secret configuration for deployments.
 - **Input Validation**: DTOs validate incoming requests; ModelState checked in controllers
 
 ## Performance & Scalability
@@ -353,14 +358,17 @@ TeamBuilder uses **Entity Framework Core Code First** approach:
 
 ## Future Enhancements
 
-TeamBuilder is at the QA planning and rollout stage. The roadmap below is a
-high-level production-readiness guide rather than a commitment to a specific
-release date.
+The repository contains QA and production rollout guidance, but does not
+establish the current deployment or provider-side configuration state. The
+roadmap below is a high-level production-readiness guide rather than a
+commitment to a specific release date.
 
 ### QA and staging rollout
 
-- Finish the QA OIDC and Octopus variable setup.
-- Deploy the QA environment and verify the end-to-end sign-in path.
+- Verify the QA OIDC provider and Octopus variables with the environment
+  operators; configure them if needed.
+- Verify the QA deployment and end-to-end sign-in path; deploy or correct them
+  if needed.
 - Validate the smoke-test client against the QA API.
 - Capture QA findings before moving to production planning.
 
@@ -374,8 +382,10 @@ release date.
 
 ### Authentication and authorization
 
-- Complete JWT Bearer and Entra ID integration for QA and production.
-- Continue tightening authorization around ownership and resource access.
+- JWT bearer validation and route-specific authorization are implemented; the
+  identity-provider settings for QA/production must be verified with the
+  environment operators and configured if needed.
+- Protect player create/update/delete routes and define any additional resource-authorization requirements.
 - Keep token, claim, and environment settings documented and environment-specific.
 
 ### Frontend and mobile-first client experience
@@ -431,13 +441,11 @@ release date.
 
 ### Near-term sequence
 
-1. Complete the README References PR.
-2. Finish the Octopus QA variables.
-3. Deploy QA.
-4. Acquire a real Entra token through Postman.
-5. Smoke test the `200`, `401`, `403`, and `409` behavior.
-6. Document the QA findings.
-7. Then plan production hosting, database, monitoring, and the release checklist.
+1. Verify QA hosting and Octopus configuration with the environment operators.
+2. Verify the selected QA identity provider and acquire a valid provider token.
+3. Smoke test the `200`, `401`, `403`, and `409` behavior against QA.
+4. Document verified QA findings.
+5. Then plan production hosting, database, monitoring, and the release checklist.
 
 ## Contributing
 
@@ -470,7 +478,13 @@ For questions or issues, please contact the development team or create an issue 
 A consolidated list of URLs, products, companies, tools, and technologies used
 by this project and the QA/OIDC rollout.
 
+Identity-provider and deployment entries below identify reference locations
+only; the repository does not verify that named provider-side resources exist.
+
 ### Project URLs
+
+The domain and email below are recorded references only; the repository does
+not verify their current ownership, availability, or operational status.
 
 | Resource | URL |
 |---|---|
@@ -548,7 +562,7 @@ by this project and the QA/OIDC rollout.
 | Authentication plan | [docs/auth-plan.md](docs/auth-plan.md) |
 | API reference | [docs/api.md](docs/api.md) |
 | Deployment guide | [docs/deployment.md](docs/deployment.md) |
-| Deployment next steps | [docs/deployment-next-steps.md](docs/deployment-next-steps.md) |
+| Historical deployment recommendations | [docs/deployment-next-steps.md](docs/deployment-next-steps.md) |
 | Postman smoke-test guide | [docs/postman-smoke-test.md](docs/postman-smoke-test.md) |
 | Markdownlint | <https://github.com/DavidAnson/markdownlint> |
 | OWASP Log Injection | <https://owasp.org/www-community/attacks/Log_Injection> |
