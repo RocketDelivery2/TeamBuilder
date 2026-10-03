@@ -166,7 +166,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
             Name = $"NewTeam-{Guid.NewGuid():N}",
             MaxMembers = 5
         };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, Guid.NewGuid());
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/teams");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -203,7 +203,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         // Arrange
         var ownerId = Guid.NewGuid();
         var team = await SeedTeamAsync($"Del-{Guid.NewGuid():N}", ownerId);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(ownerId);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, ownerId);
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/teams/{team.Id}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -218,7 +218,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     public async Task Delete_WhenTeamDoesNotExist_Returns404()
     {
         // Arrange
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, Guid.NewGuid());
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/teams/{Guid.NewGuid()}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -256,7 +256,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
             Description = "New description",
             Region = "EU"
         };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(ownerId);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, ownerId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/teams/{team.Id}");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -278,7 +278,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
     {
         // Arrange
         var dto = new UpdateTeamDto { Name = "Ghost Team" };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, Guid.NewGuid());
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/teams/{Guid.NewGuid()}");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -297,7 +297,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var ownerId = Guid.NewGuid();
         var team = await SeedTeamAsync($"InvUpd-{Guid.NewGuid():N}", ownerId);
         var dto = new UpdateTeamDto { MaxMembers = 0 };
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(ownerId);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, ownerId);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/teams/{team.Id}");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -330,7 +330,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var ownerId = Guid.NewGuid();
         var team = await SeedTeamAsync($"UpdNonOwner-{Guid.NewGuid():N}", ownerId);
         var dto = new UpdateTeamDto { Name = "Non-owner rename" };
-        var nonOwnerToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var nonOwnerToken = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, Guid.NewGuid());
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/teams/{team.Id}");
         request.Content = JsonContent.Create(dto);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonOwnerToken);
@@ -348,7 +348,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         // Arrange — team has a different owner
         var ownerId = Guid.NewGuid();
         var team = await SeedTeamAsync($"DelNonOwner-{Guid.NewGuid():N}", ownerId);
-        var nonOwnerToken = TeamBuilderWebApplicationFactory.CreateTestJwt(Guid.NewGuid());
+        var nonOwnerToken = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, Guid.NewGuid());
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/teams/{team.Id}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", nonOwnerToken);
 
@@ -368,7 +368,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var team = await SeedTeamAsync($"Leave-{Guid.NewGuid():N}", status: TeamStatus.Full, maxMembers: 1);
         var player = await SeedPlayerAsync($"leaver-{Guid.NewGuid():N}");
         await AddMemberAsync(team.Id, player.Id);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, player.Id);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"/api/v1/teams/{team.Id}/members/{player.Id}/leave");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -400,7 +400,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
             TeamStatus.Full,
             maxMembers: 1);
         await AddMemberAsync(team.Id, member.Id);
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(owner.Id);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, owner.Id);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"/api/v1/teams/{team.Id}/members/{member.Id}/leave");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -425,7 +425,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         // Arrange
         var team = await SeedTeamAsync($"LeaveNotFound-{Guid.NewGuid():N}");
         var playerId = Guid.NewGuid();
-        var token = TeamBuilderWebApplicationFactory.CreateTestJwt(playerId);
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, playerId);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"/api/v1/teams/{team.Id}/members/{playerId}/leave");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -451,5 +451,178 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    // ── external identity resolution (ExternalIdentity scheme + PlayerIdentity) ──
+
+    private async Task<int> CountTeamsAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        return await db.Teams.CountAsync();
+    }
+
+    private static HttpRequestMessage Authorized(HttpMethod method, string url, string token, object? body = null)
+    {
+        var request = new HttpRequestMessage(method, url);
+        if (body is not null)
+            request.Content = JsonContent.Create(body);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return request;
+    }
+
+    [Fact]
+    public async Task Create_AsLinkedPlayerWithNonGuidSubject_SetsOwnerIdToInternalPlayerId()
+    {
+        // Arrange: the subject is opaque and not a GUID, so the legacy Jwt:PlayerIdClaim path
+        // would reject this token outright.
+        var player = await SeedPlayerAsync($"linkedowner-{Guid.NewGuid():N}");
+        var subject = $"auth0|{Guid.NewGuid():N}";
+        await LinkedPlayerTokens.LinkAsync(_factory.Services, player.Id, subject, TeamBuilderWebApplicationFactory.TestIssuer);
+        var dto = new CreateTeamDto { Name = $"Linked-{Guid.NewGuid():N}", MaxMembers = 5 };
+        using var request = Authorized(HttpMethod.Post, "/api/v1/teams", LinkedPlayerTokens.ForSubject(subject), dto);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<TeamDto>();
+        created!.OwnerId.Should().Be(player.Id);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        var stored = await db.Teams.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        stored.OwnerId.Should().Be(player.Id);
+    }
+
+    [Fact]
+    public async Task Create_AsUnlinkedIdentity_Returns403AndDoesNotPersistTeam()
+    {
+        // Arrange
+        var before = await CountTeamsAsync();
+        var dto = new CreateTeamDto { Name = $"Unlinked-{Guid.NewGuid():N}", MaxMembers = 5 };
+        using var request = Authorized(HttpMethod.Post, "/api/v1/teams", LinkedPlayerTokens.ForSubject(LinkedPlayerTokens.NewSubject()), dto);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await CountTeamsAsync()).Should().Be(before);
+    }
+
+    [Fact]
+    public async Task Create_WithGuidSubjectMatchingUnlinkedPlayerId_Returns403()
+    {
+        // Arrange: a GUID subject equal to an existing Player.Id is not a link. Migrated endpoints
+        // never fall back to treating the token's player claim as the Player.Id.
+        var player = await SeedPlayerAsync($"unlinked-{Guid.NewGuid():N}");
+        var before = await CountTeamsAsync();
+        var dto = new CreateTeamDto { Name = $"GuidSub-{Guid.NewGuid():N}", MaxMembers = 5 };
+        using var request = Authorized(HttpMethod.Post, "/api/v1/teams", TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id), dto);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await CountTeamsAsync()).Should().Be(before);
+    }
+
+    [Fact]
+    public async Task Update_AsUnlinkedIdentity_Returns403AndLeavesTeamUnchanged()
+    {
+        // Arrange
+        var owner = await SeedPlayerAsync($"updowner-{Guid.NewGuid():N}");
+        var team = await SeedTeamAsync($"UpdUnlinked-{Guid.NewGuid():N}", owner.Id);
+        var dto = new UpdateTeamDto { Name = "Unlinked rename" };
+        using var request = Authorized(HttpMethod.Put, $"/api/v1/teams/{team.Id}", LinkedPlayerTokens.ForSubject(LinkedPlayerTokens.NewSubject()), dto);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        (await db.Teams.AsNoTracking().SingleAsync(t => t.Id == team.Id)).Name.Should().Be(team.Name);
+    }
+
+    [Fact]
+    public async Task Delete_AsUnlinkedIdentity_Returns403AndKeepsTeam()
+    {
+        // Arrange
+        var owner = await SeedPlayerAsync($"delowner-{Guid.NewGuid():N}");
+        var team = await SeedTeamAsync($"DelUnlinked-{Guid.NewGuid():N}", owner.Id);
+        using var request = Authorized(HttpMethod.Delete, $"/api/v1/teams/{team.Id}", LinkedPlayerTokens.ForSubject(LinkedPlayerTokens.NewSubject()));
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        (await db.Teams.AnyAsync(t => t.Id == team.Id)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateAndDelete_AsOwnerLinkedThroughNonGuidSubject_Succeed()
+    {
+        // Arrange
+        var owner = await SeedPlayerAsync($"nonguidowner-{Guid.NewGuid():N}");
+        var subject = $"google-oauth2|{Guid.NewGuid():N}";
+        await LinkedPlayerTokens.LinkAsync(_factory.Services, owner.Id, subject, TeamBuilderWebApplicationFactory.TestIssuer);
+        var team = await SeedTeamAsync($"NonGuidOwner-{Guid.NewGuid():N}", owner.Id);
+        var token = LinkedPlayerTokens.ForSubject(subject);
+
+        // Act
+        using var update = Authorized(HttpMethod.Put, $"/api/v1/teams/{team.Id}", token, new UpdateTeamDto { Name = "Owner rename" });
+        var updateResponse = await _client.SendAsync(update);
+        using var delete = Authorized(HttpMethod.Delete, $"/api/v1/teams/{team.Id}", token);
+        var deleteResponse = await _client.SendAsync(delete);
+
+        // Assert
+        updateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await updateResponse.Content.ReadFromJsonAsync<TeamDto>())!.Name.Should().Be("Owner rename");
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task LeaveTeam_AsUnlinkedIdentity_Returns403AndKeepsMembership()
+    {
+        // Arrange
+        var team = await SeedTeamAsync($"LeaveUnlinked-{Guid.NewGuid():N}");
+        var player = await SeedPlayerAsync($"leaveunlinked-{Guid.NewGuid():N}");
+        await AddMemberAsync(team.Id, player.Id);
+        using var request = Authorized(HttpMethod.Post, $"/api/v1/teams/{team.Id}/members/{player.Id}/leave",
+            LinkedPlayerTokens.ForSubject(LinkedPlayerTokens.NewSubject()));
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        (await db.TeamMembers.SingleAsync(tm => tm.TeamId == team.Id && tm.PlayerId == player.Id)).IsActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LeaveTeam_WithGuidSubjectEqualToRoutePlayerIdButNoLink_Returns403()
+    {
+        // Arrange: under the legacy context a sub equal to the route playerId was enough to leave.
+        var team = await SeedTeamAsync($"LeaveGuidSub-{Guid.NewGuid():N}");
+        var player = await SeedPlayerAsync($"leaveguidsub-{Guid.NewGuid():N}");
+        await AddMemberAsync(team.Id, player.Id);
+        using var request = Authorized(HttpMethod.Post, $"/api/v1/teams/{team.Id}/members/{player.Id}/leave",
+            TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id));
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }

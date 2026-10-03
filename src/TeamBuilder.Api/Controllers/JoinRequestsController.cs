@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TeamBuilder.Api.Auth;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
@@ -13,13 +14,13 @@ namespace TeamBuilder.Api.Controllers;
 public class JoinRequestsController : ControllerBase
 {
     private readonly IJoinRequestService _joinRequestService;
-    private readonly ICurrentUserContext _currentUser;
+    private readonly ICurrentPlayerResolver _currentPlayer;
     private readonly ILogger<JoinRequestsController> _logger;
 
-    public JoinRequestsController(IJoinRequestService joinRequestService, ICurrentUserContext currentUser, ILogger<JoinRequestsController> logger)
+    public JoinRequestsController(IJoinRequestService joinRequestService, ICurrentPlayerResolver currentPlayer, ILogger<JoinRequestsController> logger)
     {
         _joinRequestService = joinRequestService;
-        _currentUser = currentUser;
+        _currentPlayer = currentPlayer;
         _logger = logger;
     }
 
@@ -71,10 +72,11 @@ public class JoinRequestsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(JoinRequestDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<JoinRequestDto>> Create(
         [FromBody] CreateJoinRequestDto createJoinRequestDto,
         CancellationToken cancellationToken = default)
@@ -82,13 +84,20 @@ public class JoinRequestsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, _currentUser.UserId, cancellationToken);
+        var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (currentPlayerId is null)
+        {
+            _logger.LogInformation("Authenticated caller has no linked player; join request for team {TeamId} forbidden", createJoinRequestDto.TeamId);
+            return Forbid();
+        }
+
+        var joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, currentPlayerId.Value, cancellationToken);
         _logger.LogInformation("Created join request {JoinRequestId} for team {TeamId}", joinRequest.Id, joinRequest.TeamId);
         return CreatedAtAction(nameof(GetById), new { id = joinRequest.Id }, joinRequest);
     }
 
     [HttpPut("{id}/process")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(JoinRequestDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -103,14 +112,21 @@ public class JoinRequestsController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
+        var currentPlayerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (currentPlayerId is null)
+        {
+            _logger.LogInformation("Authenticated caller has no linked player; processing join request {JoinRequestId} forbidden", id);
+            return Forbid();
+        }
+
         JoinRequestDto? joinRequest;
         try
         {
-            joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, _currentUser.UserId, cancellationToken);
+            joinRequest = await _joinRequestService.ProcessAsync(id, processJoinRequestDto, currentPlayerId.Value, cancellationToken);
         }
         catch (JoinRequestProcessingForbiddenException)
         {
-            _logger.LogInformation("User {UserId} is not the owner of the team for join request {JoinRequestId}", _currentUser.UserId, id);
+            _logger.LogInformation("Player {PlayerId} is not the owner of the team for join request {JoinRequestId}", currentPlayerId, id);
             return Forbid();
         }
 
