@@ -11,7 +11,7 @@ on:
       - ready_for_review
 
 permissions:
-  contents: read
+  contents: write # Required for gh pr merge to perform an immediate squash merge.
   pull-requests: write
 
 concurrency:
@@ -24,12 +24,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Decide eligibility and enable auto-merge
+      - name: Decide eligibility and merge safely
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_REPO: ${{ github.repository }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           DRAFT: ${{ github.event.pull_request.draft }}
@@ -39,27 +40,73 @@ jobs:
           owner="${BASE_REPO%%/*}"
           repo="${BASE_REPO##*/}"
 
-          pr_json="$(gh api graphql \
-            -f owner="$owner" \
-            -f repo="$repo" \
-            -F number="$PR_NUMBER" \
-            -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { id reviewDecision autoMergeRequest { enabledAt } } } }')"
+          get_pr_state() {
+            gh api graphql \
+              -f owner="$owner" \
+              -f repo="$repo" \
+              -F number="$PR_NUMBER" \
+              -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { id state headRefOid mergeStateStatus reviewDecision autoMergeRequest { enabledAt } } } }'
+          }
 
-          pr_id="$(jq -r '.data.repository.pullRequest.id' <<<"$pr_json")"
-          review_decision="$(jq -r '.data.repository.pullRequest.reviewDecision // empty' <<<"$pr_json")"
-          auto_merge_enabled="$(jq -r '.data.repository.pullRequest.autoMergeRequest.enabledAt // empty' <<<"$pr_json")"
+          write_pr_summary() {
+            local state="$1"
+            local head_sha="$2"
+            local merge_state="$3"
+            local review_decision="$4"
+            local auto_merge_enabled="$5"
 
-          {
-            echo "## Trusted PR auto-merge decision"
-            echo ""
-            echo "- PR: #${PR_NUMBER}"
-            echo "- Author: ${AUTHOR}"
-            echo "- Draft: ${DRAFT}"
-            echo "- Head repo: ${HEAD_REPO}"
-            echo "- Base repo: ${BASE_REPO}"
-            echo "- Base ref: ${BASE_REF}"
-            echo "- Auto-merge already enabled: ${auto_merge_enabled:-false}"
-          } >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "## Trusted PR auto-merge decision"
+              echo ""
+              echo "- PR: #${PR_NUMBER}"
+              echo "- Author: ${AUTHOR}"
+              echo "- Draft: ${DRAFT}"
+              echo "- Head repo: ${HEAD_REPO}"
+              echo "- Base repo: ${BASE_REPO}"
+              echo "- Base ref: ${BASE_REF}"
+              echo "- Event head: ${EVENT_HEAD_SHA}"
+              echo "- Current head: ${head_sha}"
+              echo "- PR state: ${state}"
+              echo "- Merge state: ${merge_state}"
+              echo "- Review decision: ${review_decision:-NONE}"
+              echo "- Auto-merge already enabled: ${auto_merge_enabled:-false}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          fail_if_head_moved() {
+            local current_head="$1"
+            if [[ "$current_head" != "$EVENT_HEAD_SHA" ]]; then
+              echo "::error::PR head moved from event SHA ${EVENT_HEAD_SHA} to ${current_head}; refusing to merge or enable auto-merge."
+              return 1
+            fi
+          }
+
+          merge_clean_pr() {
+            local pr_json current_head current_state merge_state review_decision
+            pr_json="$(get_pr_state)"
+            current_head="$(jq -r '.data.repository.pullRequest.headRefOid' <<<"$pr_json")"
+            current_state="$(jq -r '.data.repository.pullRequest.state' <<<"$pr_json")"
+            merge_state="$(jq -r '.data.repository.pullRequest.mergeStateStatus' <<<"$pr_json")"
+            review_decision="$(jq -r '.data.repository.pullRequest.reviewDecision // empty' <<<"$pr_json")"
+
+            fail_if_head_moved "$current_head" || return 1
+            if [[ "$current_state" != "OPEN" ]]; then
+              echo "::error::PR is no longer open; refusing to merge."
+              return 1
+            fi
+            if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+              echo "::notice::A review requested changes; refusing to merge."
+              return 1
+            fi
+            if [[ "$merge_state" != "CLEAN" ]]; then
+              return 2
+            fi
+
+            gh pr merge "$PR_NUMBER" \
+              --repo "$BASE_REPO" \
+              --squash \
+              --match-head-commit "$EVENT_HEAD_SHA"
+          }
 
           if [[ "$BASE_REF" != "main" ]]; then
             echo "Skipping: base ref is not main." >> "$GITHUB_STEP_SUMMARY"
@@ -85,28 +132,65 @@ jobs:
               ;;
           esac
 
-          case "$review_decision" in
-            APPROVED)
-              echo "PR is already approved." >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            CHANGES_REQUESTED)
-              echo "Skipping: reviewDecision is CHANGES_REQUESTED. Will not approve or enable auto-merge." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-              ;;
-            *)
-              gh pr review "$PR_NUMBER" --repo "$BASE_REPO" --approve
-              echo "Approved trusted PR." >> "$GITHUB_STEP_SUMMARY"
-              ;;
-          esac
+          pr_json="$(get_pr_state)"
+          current_state="$(jq -r '.data.repository.pullRequest.state' <<<"$pr_json")"
+          current_head="$(jq -r '.data.repository.pullRequest.headRefOid' <<<"$pr_json")"
+          merge_state="$(jq -r '.data.repository.pullRequest.mergeStateStatus' <<<"$pr_json")"
+          review_decision="$(jq -r '.data.repository.pullRequest.reviewDecision // empty' <<<"$pr_json")"
+          auto_merge_enabled="$(jq -r '.data.repository.pullRequest.autoMergeRequest.enabledAt // empty' <<<"$pr_json")"
 
-          if [[ -n "$auto_merge_enabled" ]]; then
-            echo "Auto-merge is already enabled." >> "$GITHUB_STEP_SUMMARY"
+          write_pr_summary "$current_state" "$current_head" "$merge_state" "$review_decision" "$auto_merge_enabled"
+          fail_if_head_moved "$current_head"
+
+          if [[ "$current_state" != "OPEN" ]]; then
+            echo "Skipping: PR is no longer open." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          gh api graphql \
-            -f pullRequestId="$pr_id" \
-            -f query='mutation($pullRequestId:ID!) { enablePullRequestAutoMerge(input:{pullRequestId:$pullRequestId, mergeMethod:SQUASH}) { pullRequest { id } } }' \
-            >/dev/null
+          if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+            echo "Skipping: reviewDecision is CHANGES_REQUESTED." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
-          echo "Enabled squash auto-merge." >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$merge_state" == "CLEAN" ]]; then
+            if merge_clean_pr; then
+              echo "Merged clean PR with squash using the exact event head SHA." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            else
+              merge_status=$?
+              if [[ "$merge_status" -ne 2 ]]; then
+                exit "$merge_status"
+              fi
+            fi
+          fi
+
+          if [[ -n "$auto_merge_enabled" ]]; then
+            echo "Auto-merge is already enabled for the current head." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if merge_error="$(gh pr merge "$PR_NUMBER" \
+            --repo "$BASE_REPO" \
+            --squash \
+            --auto \
+            --match-head-commit "$EVENT_HEAD_SHA" 2>&1)"; then
+            echo "Enabled normal squash auto-merge for the pending PR." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "$merge_error" >&2
+          pr_json="$(get_pr_state)"
+          current_state="$(jq -r '.data.repository.pullRequest.state' <<<"$pr_json")"
+          current_head="$(jq -r '.data.repository.pullRequest.headRefOid' <<<"$pr_json")"
+          merge_state="$(jq -r '.data.repository.pullRequest.mergeStateStatus' <<<"$pr_json")"
+          review_decision="$(jq -r '.data.repository.pullRequest.reviewDecision // empty' <<<"$pr_json")"
+
+          fail_if_head_moved "$current_head"
+          if [[ "$current_state" == "OPEN" && "$review_decision" != "CHANGES_REQUESTED" && "$merge_state" == "CLEAN" ]]; then
+            echo "PR became clean while auto-merge was being enabled; retrying as an exact-head squash merge." >> "$GITHUB_STEP_SUMMARY"
+            merge_clean_pr
+            exit 0
+          fi
+
+          echo "::error::Could not enable squash auto-merge and PR is not clean for an immediate merge."
+          exit 1
