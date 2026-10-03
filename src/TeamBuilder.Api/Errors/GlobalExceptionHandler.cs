@@ -30,7 +30,9 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
         {
             Status = statusCode,
             Title = title,
-            Detail = exception.Message
+            Detail = statusCode == StatusCodes.Status500InternalServerError
+                ? "An unexpected error occurred."
+                : exception.Message
         };
 
         httpContext.Response.StatusCode = statusCode;
