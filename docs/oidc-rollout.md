@@ -1,247 +1,94 @@
-﻿# TeamBuilder — OIDC Staging/Production Rollout Plan
+# OIDC Provider Configuration Guidance
 
-This document describes how to connect TeamBuilder to a real OIDC identity
-provider (IdP) for staging and production environments. No code changes are
-needed; the application already supports the OIDC authority path. Only
-environment-specific configuration values need to be supplied.
+TeamBuilder supports JWT validation through an OIDC authority. This guide
+describes repository-supported settings and deployment checks; it does not
+verify that an IdP, tenant, audience, QA environment, or Production deployment
+has been configured.
 
-**Do not commit real secrets, client secrets, or signing keys to source control.**
-Use Octopus Deploy variables, Azure App Service application settings, or
-Azure Key Vault references for all sensitive values.
+Do not commit signing keys, client credentials, or other secrets. Use the
+deployment environment's approved secret/configuration store.
 
----
+## Runtime configuration
 
-## Background
+The API binds these keys from `Jwt`:
 
-TeamBuilder JWT Bearer configuration supports two paths:
+| Key | Purpose |
+|---|---|
+| `Jwt:Authority` | OIDC authority used to retrieve discovery metadata and signing keys when no symmetric signing key is configured. |
+| `Jwt:Audience` | Expected access-token audience. |
+| `Jwt:Issuer` | Expected issuer on the symmetric-key validation path. With OIDC authority validation, the issuer is validated using the authority's metadata. |
+| `Jwt:RequireHttpsMetadata` | Controls HTTPS metadata requirements; keep enabled for deployed OIDC environments. |
+| `Jwt:SigningKey` | If non-empty, selects symmetric-key validation instead of OIDC authority discovery. Keep local development signing keys in user-secrets. |
+| `Jwt:ExternalIdentity:SubjectClaim` | Claim to use as external subject; defaults to `sub`. Configure `oid` for Entra if that is the stable identifier issued in the API access token. |
+| `Jwt:ExternalIdentity:TenantIdClaim` | Optional tenant metadata claim; defaults to `tid`. |
+| `Jwt:ExternalIdentity:Provider` | Descriptive provider metadata stored on new identity links; defaults to `oidc`. |
 
-| Path | When active | Used for |
-|---|---|---|
-| **Symmetric key** | `Jwt:SigningKey` is set | Local development with `dotnet user-jwts` |
-| **OIDC authority** | `Jwt:SigningKey` is absent and `Jwt:Authority` is set | Staging and production |
+Environment-variable equivalents use double underscores, for example
+`Jwt__Authority`, `Jwt__Audience`,
+`Jwt__ExternalIdentity__SubjectClaim`,
+`Jwt__ExternalIdentity__TenantIdClaim`, and
+`Jwt__ExternalIdentity__Provider`.
 
-For staging and production, set `Jwt:Authority` (and leave `Jwt:SigningKey`
-absent) so the application validates tokens against the published OIDC metadata.
+The default authentication scheme is `ExternalIdentity`. JWT signature,
+issuer, audience, and lifetime validation use the configured validation
+settings. A validated token resolves to a `PlayerIdentity` by the exact token
+issuer and configured subject claim, then to the internal TeamBuilder
+`Player.Id`. The subject is opaque and need not be a GUID; do not make it equal
+to `Player.Id` or normalize either identity-key value.
 
----
+## Microsoft Entra ID
 
-## Configuration Keys
-
-All keys live under the `Jwt` section of `appsettings.{Environment}.json` or
-as environment variables / deployment variables.
-
-| Key | Required for OIDC | Description | Example value |
-|---|---|---|---|
-| `Jwt:Authority` | Yes | Base URL of the OIDC issuer. Appends `/.well-known/openid-configuration` for key discovery. | `https://login.microsoftonline.com/{tenant-id}/v2.0` |
-| `Jwt:Audience` | Yes | The audience (`aud`) claim the token must contain. Must match the IdP app registration. | `api://teambuilder-api` |
-| `Jwt:Issuer` | Optional | Explicit issuer override. Leave empty to use OIDC discovery. | _(empty)_ |
-| `Jwt:PlayerIdClaim` | Optional | JWT claim name carrying the TeamBuilder player GUID. Default: `sub`. | `sub` or `oid` |
-| `Jwt:RequireHttpsMetadata` | Optional | Whether HTTPS is required for OIDC metadata. Must be `true` in deployed environments. | `true` |
-| `Jwt:SigningKey` | Must be absent | Symmetric key for local dev only. If present it overrides OIDC. Must be absent in all deployed environments. | _(absent)_ |
-
----
-
-## Supported Identity Providers
-
-### Option A — Microsoft Entra ID (formerly Azure AD)
-
-1. Open Azure Portal — Entra ID — App registrations and create a new registration.
-   - Name: `TeamBuilder API`
-   - Supported account types: single-tenant or multitenant as required.
-   - Redirect URI: leave blank (API only, no login UI).
-2. Note the **Application (client) ID** and **Directory (tenant) ID**.
-3. Under **Expose an API**, set the Application ID URI (e.g. `api://teambuilder-api`)
-   and add a scope (e.g. `api://teambuilder-api/access_as_player`).
-4. Under **Token configuration**, add the `oid` claim (stable GUID, survives password resets).
-5. Create a separate client app registration for each frontend / SPA client.
+For an Entra integration, choose the appropriate tenant model and configure
+the authority and expected audience for the API registration. When the access
+token contains the Entra object ID claim and that is the selected stable
+external identifier, set:
 
 ```text
-Jwt:Authority     = https://login.microsoftonline.com/{tenant-id}/v2.0
-Jwt:Audience      = api://teambuilder-api
-Jwt:PlayerIdClaim = oid
+Jwt__ExternalIdentity__SubjectClaim = oid
+Jwt__ExternalIdentity__TenantIdClaim = tid
+Jwt__ExternalIdentity__Provider = entra
 ```
 
-> Entra ID `oid` is a stable GUID and maps directly to `Player.Id`.
-> The `sub` claim in v2 tokens is a pairwise pseudonymous value and is not a GUID.
+Use tenant-appropriate `Jwt__Authority` and validate the actual token issuer
+and audience from the selected registration. These are configuration
+placeholders, not deployed values. Entra's `oid` remains the subject component
+of an external identity key; TeamBuilder creates and stores a separate
+internal `Player.Id`.
 
----
+## Other OIDC providers
 
-### Option B — Auth0
+Use the claim configured by the provider as a stable issuer-scoped subject.
+The default is `sub`. Provider-specific subject formats are opaque: values
+such as `auth0|...` are valid strings and are not parsed as GUIDs. Configure
+the provider label for metadata only; it does not change identity matching.
 
-1. Open Auth0 Dashboard — Applications — APIs and create a new API.
-   - Name: `TeamBuilder API`
-   - Identifier (audience): `https://api.teambuilder.example.com`
-   - Signing algorithm: `RS256`
-2. Note the **Domain** (e.g. `your-tenant.us.auth0.com`).
-3. Create a client Application and grant it the API scope.
-4. Add an Auth0 Action to emit a GUID-compatible player ID claim.
+## Deployment checklist
 
-```text
-Jwt:Authority     = https://your-tenant.us.auth0.com/
-Jwt:Audience      = https://api.teambuilder.example.com
-Jwt:PlayerIdClaim = sub
-```
+For each target environment:
 
-> Auth0 `sub` format is `auth0|<id>` which is **not** a GUID.
-> Use a custom action to emit a GUID-valued claim and update `Jwt:PlayerIdClaim`.
+1. Confirm the selected provider, authority, audience, and issuer using the
+   provider's actual access-token contract.
+2. Configure `Jwt:Authority`, `Jwt:Audience`, and
+   `Jwt:RequireHttpsMetadata=true` for OIDC validation, and ensure
+   `Jwt:SigningKey` is absent so authority validation is selected.
+3. Configure `Jwt:ExternalIdentity:SubjectClaim` to the intended stable claim.
+   For Entra this may be `oid` when issued in the API token; configure `tid`
+   and the `entra` provider label only as metadata requirements dictate.
+4. Check that a valid token has the expected exact `iss` and subject claim,
+   and that issuer/subject values match the persisted `PlayerIdentity` values.
+5. Onboard a test caller through `POST /api/v1/players/me`, then verify
+   `GET /api/v1/players/me` returns the linked profile.
+6. Verify a valid but unlinked identity receives `404` from
+   `GET /api/v1/players/me` and `403` from player-backed resource routes.
+7. Verify missing/invalid credentials receive `401` on protected endpoints.
 
----
+Do not infer successful QA or Production setup from this repository's
+configuration placeholders. Confirm the actual environment settings with its
+operators before rollout.
 
-## Environment-Specific Configuration Guidance
+## Related documentation
 
-### Local development
-
-Local development uses `dotnet user-jwts`. No OIDC provider required.
-`Jwt:SigningKey` is stored in `dotnet user-secrets` only — never committed.
-
-### Staging (QA)
-
-`appsettings.QA.json` uses Octopus `#{...}` token placeholders substituted at
-deploy time. The following Octopus variables must be defined for QA:
-
-```text
-Jwt__Authority            = #{Jwt.Authority}
-Jwt__Audience             = #{Jwt.Audience}
-Jwt__Issuer               = #{Jwt.Issuer}
-Jwt__PlayerIdClaim        = #{Jwt.PlayerIdClaim}
-Jwt__RequireHttpsMetadata = true
-```
-
-`Jwt__SigningKey` must be absent from all QA configuration.
-
-### Production
-
-Same variable set as QA using a separate Octopus environment and a separate
-IdP app registration.
-
----
-
-## Player ID Claim Mapping
-
-`Jwt:PlayerIdClaim` must name a claim whose value is parseable as a `Guid`.
-
-| IdP | Recommended claim | Notes |
-|---|---|---|
-| Entra ID | `oid` | Stable GUID; survives password resets and email changes. |
-| Auth0 | custom | `sub` is `auth0\|<id>` — not a GUID. Emit a custom GUID claim via Auth0 Actions. |
-| Local dev | `sub` | `dotnet user-jwts` emits a GUID-compatible `sub` by default. |
-
-If the claim is missing or not a GUID, `ICurrentUserContext.UserId` returns
-`Guid.Empty` and write requests receive `401 Unauthorized`.
-
----
-
-## QA Execution Checklist
-
-Complete all steps for QA before repeating for Production.
-
-### 1. Choose provider
-
-- [ ] Confirm provider: Microsoft Entra ID, Auth0, or other OIDC-compliant IdP.
-- [ ] Confirm the tenant or organization exists.
-
-### 2. Create the QA app registration
-
-- [ ] Register the API application in the IdP for QA.
-- [ ] Set the audience identifier (Application ID URI or API identifier).
-- [ ] Record Authority URL, Client ID, and Audience in a team vault — do not
-      commit to source control.
-
-### 3. Configure audience and issuer
-
-- [ ] Confirm `<authority>/.well-known/openid-configuration` is reachable from
-      the QA App Service (no outbound firewall blocking OIDC metadata).
-- [ ] Verify `Jwt__Audience` matches the `aud` claim the IdP will issue.
-- [ ] Set `Jwt__Issuer` only if the issuer differs from the authority URL.
-
-### 4. Configure the player ID claim
-
-- [ ] Decide which claim carries the player GUID (`sub`, `oid`, or custom).
-- [ ] Configure the IdP to emit the claim if needed.
-- [ ] Verify the claim value is a valid GUID using [jwt.io](https://jwt.io).
-- [ ] Note the claim name for `Jwt__PlayerIdClaim`.
-
-### 5. Set Octopus variables for QA
-
-- [ ] Define in the Octopus QA environment:
-  - `Jwt.Authority` — OIDC authority URL
-  - `Jwt.Audience` — expected audience
-  - `Jwt.Issuer` — issuer (or leave empty for discovery)
-  - `Jwt.PlayerIdClaim` — claim name
-- [ ] Confirm `Jwt.SigningKey` is **absent** from QA Octopus variables.
-- [ ] Confirm `Jwt__SigningKey` is absent from QA Azure App Service settings.
-
-### 6. Deploy QA
-
-- [ ] Trigger a QA deployment via Octopus Deploy.
-- [ ] Confirm App Service application settings show the substituted values
-      (verify in Azure Portal — do not log or expose values).
-
-### 7. Acquire a real JWT
-
-- [ ] Obtain a bearer token from the QA IdP.
-- [ ] Inspect at [jwt.io](https://jwt.io) and confirm:
-  - `iss` matches the expected issuer.
-  - `aud` contains the configured audience.
-  - The player ID claim is present and is a valid GUID.
-
-### 8. Run the Postman smoke test
-
-- [ ] Set the `token` variable in the Postman QA environment.
-- [ ] Run the smoke-test collection against the QA base URL.
-      See [docs/postman-smoke-test.md](postman-smoke-test.md).
-- [ ] Confirm write requests succeed with the token.
-- [ ] Confirm read and health endpoints succeed without a token.
-
-### 9. Validate 401 / 403 / 409 behavior
-
-- [ ] **401** — `POST /api/v1/teams` with no token returns `401`.
-- [ ] **401** — Write endpoint with expired or tampered token returns `401`.
-- [ ] **403** — Player B mutating Player A's resource returns `403`.
-- [ ] **409** — Mutation against a null-owner resource returns `409`.
-- [ ] **200/204** — Owner performing a valid write returns success.
-- [ ] **Health** — `GET /health` and `GET /health/ready` return `200` without
-      a token.
-
----
-
-## General Rollout Summary
-
-For Production, repeat steps 2-9 using a separate app registration and the
-Production Octopus environment.
-
-| Step | Description |
-|---|---|
-| 1 | Choose provider |
-| 2 | Create app registration for the environment |
-| 3 | Configure audience and issuer |
-| 4 | Configure player ID claim |
-| 5 | Set Octopus / App Settings variables — no secrets in source control |
-| 6 | Deploy |
-| 7 | Acquire real JWT and inspect at jwt.io |
-| 8 | Run Postman smoke test |
-| 9 | Validate 401, 403, and 409 behavior |
-
----
-
-## What Not to Commit
-
-| What | Where it should live instead |
-|---|---|
-| `Jwt:Authority` (staging/production values) | Octopus variable or Azure App Settings |
-| `Jwt:Audience` (staging/production values) | Octopus variable or Azure App Settings |
-| `Jwt:Issuer` (staging/production values) | Octopus variable or Azure App Settings |
-| IdP client secrets / credentials | Octopus sensitive variable or Azure Key Vault |
-| `Jwt:SigningKey` | `dotnet user-secrets` (local only) |
-| Application Insights connection string | Octopus variable (already uses `#{...}` tokens) |
-
----
-
-## Related Documentation
-
-| Document | Relevance |
-|---|---|
-| [docs/auth-plan.md](auth-plan.md) | Authentication implementation history and JWT key reference. |
-| [docs/deployment-next-steps.md](deployment-next-steps.md) | Azure App Service, Octopus Deploy, and Key Vault hosting plan. |
-| [docs/postman-smoke-test.md](postman-smoke-test.md) | Smoke-test guide including Bearer token usage. |
-| [docs/api.md](api.md) | API reference — Authentication section. |
+- [Identity and authorization model](auth-plan.md)
+- [API reference](api.md)
+- [Deployment guide](deployment.md)
+- [Postman smoke-test guide](postman-smoke-test.md)

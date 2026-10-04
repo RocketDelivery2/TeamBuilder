@@ -89,11 +89,12 @@ is running in the Development environment.
 
    ```powershell
    cd src/TeamBuilder.Api
-   dotnet user-jwts create --audience teambuilder-api --claim sub=<your-player-guid>
+   dotnet user-jwts create --audience teambuilder-api --claim sub=local-user-123
    ```
 
    Copy the printed token into the `token` variable in the **TeamBuilder Local**
-   environment. Protected write requests will send it automatically as
+   environment. Protected requests inherit it as a bearer token; public
+   discovery requests send no token.
    `Authorization: Bearer {{token}}`.
 
 ---
@@ -107,18 +108,24 @@ Run requests in this order. Each step captures an ID needed by the next.
 | 1 | `GET /health` | Health | Expect `200 Healthy`. This is the liveness check; the process is running. |
 | 2 | `GET /health/ready` | Health | Expect `200 Healthy`. If `503`, the database is not reachable — re-run the migration from Step 2. |
 | 3 | `POST /api/v1/players/me` | Players | With a valid JWT in `{{token}}`, onboards the caller. Copy `id` from the response into the `playerId` environment variable. |
-| 4 | `GET /api/v1/players` | Players | Verify the player appears in the paginated list. |
-| 5 | `GET /api/v1/players/{{playerId}}` | Players | Verify the player can be fetched by ID. |
-| 6 | `POST /api/v1/teams` | Teams | Sends `Authorization: Bearer {{token}}`. Copy `id` from the response into `teamId`. |
+| 4 | `GET /api/v1/players` | Players | Public discovery; verify the player appears without exposing Email. |
+| 5 | `GET /api/v1/players/{{playerId}}` | Players | Public lookup by ID; the response omits Email. |
+| 6 | `POST /api/v1/teams` | Teams | Uses the caller's bearer token. Copy `id` from the response into `teamId`. |
 | 7 | `GET /api/v1/teams` | Teams | Verify the team appears in the list. |
 | 8 | `GET /api/v1/teams/{{teamId}}` | Teams | Verify `ownerUsername` is populated. |
-| 9 | `POST /api/v1/joinrequests` | Join Requests | Sends `Authorization: Bearer {{token}}`. Copy `id` into `joinRequestId`. |
+| 9 | `POST /api/v1/joinrequests` | Join Requests | Uses the applicant's bearer token. Copy `id` into `joinRequestId`. |
 | 10 | `POST /api/v1/joinrequests` (duplicate) | Join Requests | Repeat request 9 with the same `token` and `teamId`. Expect `409 Conflict` with `application/problem+json`. Verify `status: 409` and a `detail` message in the response body. |
-| 11 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Sends `Authorization: Bearer {{token}}`. Use body `{"status":"Approved"}`. Expect `200`. |
-| 12 | `POST /api/v1/events` | Events | Sends `Authorization: Bearer {{token}}`. Set `teamId` in the body to `{{teamId}}`. Copy `id` into `eventId`. |
+| 11 | `PUT /api/v1/joinrequests/{{joinRequestId}}/process` | Join Requests | Caller must own the team. Use body `{"status":"Approved"}`. Expect `200`. |
+| 12 | `POST /api/v1/events` | Events | Caller must own the associated `teamId`. Set it to `{{teamId}}` and copy `id` into `eventId`. |
 | 13 | `GET /api/v1/events` | Events | Verify the event appears in the list. |
-| 14 | `POST /api/v1/rosterimports` | Roster Imports | Sends `Authorization: Bearer {{token}}`. Copy `id` into `rosterImportId`. |
-| 15 | `GET /api/v1/rosterimports` | Roster Imports | Verify the import record appears. |
+| 14 | `POST /api/v1/rosterimports` | Roster Imports | Uses the importer's bearer token. Copy `id` into `rosterImportId`. |
+| 15 | `GET /api/v1/rosterimports` | Roster Imports | Requires the importer's token; verify the caller's import appears. |
+
+Join-request reads require authentication: the applicant can read their own
+requests, while the relevant team owner can read requests for that team.
+Roster-import reads require the original importer's identity because details
+include uploaded data. Player and team/event discovery reads remain public;
+public player responses omit Email.
 
 ### Copying IDs into Postman environment variables
 

@@ -347,8 +347,9 @@ TeamBuilder uses **Entity Framework Core Code First** approach:
 - **Recorded production origin**: `https://teambuilder.info` (deployment not verified)
 - **Recorded support email**: `support@teambuilder.info` (not verified)
 - **Sensitive Data**: Unexpected 500 responses return a generic detail; the original exception is logged internally. Handled 400 and 409 responses retain their useful exception detail.
-- **Authentication**: JWT bearer validation is implemented. `[Authorize]` is applied to selected write routes; player create/update/delete routes are not currently protected.
-- **Authorization**: Team update/delete are owner-only, join-request processing is team-owner-only, and voluntary team leave is self-only. Event and roster-import changes are restricted to their host/importer.
+- **Authentication**: The default `ExternalIdentity` JWT scheme validates external tokens and maps the exact issuer plus configured opaque subject through `PlayerIdentity` to the internal `Player.Id`. Subjects need not be GUIDs and are not normalized. See [identity and authorization docs](docs/auth-plan.md).
+- **Authorization**: Player update/delete are self-only; team update/delete are owner-only; join-request reads are applicant/team-owner restricted and processing is team-owner-only; event changes are host-restricted and team-associated event creation requires team ownership; roster-import reads and changes are importer-only. Voluntary team leave is self-only, not an owner removal route.
+- **Public player privacy**: Anonymous player discovery uses `PublicPlayerDto` and omits Email. The authenticated `/api/v1/players/me` endpoint returns the caller's full profile.
 - **Secrets Management**: Do not commit secrets; use user-secrets for local development and verified environment-specific secret configuration for deployments.
 - **Input Validation**: DTOs validate incoming requests; ModelState checked in controllers
 
