@@ -283,11 +283,6 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
                 team.CurrentMemberCount = remainingActiveCount;
                 // Always issue the RowVersion-guarded UPDATE, even when the value is unchanged.
                 _context.Entry(team).Property(t => t.CurrentMemberCount).IsModified = true;
-
-                if (team.Status == TeamStatus.Full && remainingActiveCount < team.MaxMembers)
-                {
-                    team.Status = TeamStatus.Recruiting;
-                }
             }
         }
 

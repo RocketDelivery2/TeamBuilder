@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
+using TeamBuilder.Application.Validation;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
@@ -32,6 +33,8 @@ public class TeamService : ITeamService
         string? category = null, 
         string? region = null, 
         TeamStatus? status = null, 
+        TeamLifecycleStatus? lifecycleStatus = null,
+        bool? hasVacancies = null,
         CancellationToken cancellationToken = default)
     {
         var query = _context.Teams.Include(t => t.Owner).AsQueryable();
@@ -42,8 +45,25 @@ public class TeamService : ITeamService
         if (!string.IsNullOrWhiteSpace(region))
             query = query.Where(t => t.Region == region);
 
+        // All filters combine with AND semantics, and are applied before the count so the
+        // total reflects them. The legacy status is translated to the stored facts it is
+        // derived from (see TeamState.ToLegacyStatus).
         if (status.HasValue)
-            query = query.Where(t => t.Status == status.Value);
+            query = ApplyLegacyStatusFilter(query, status.Value);
+
+        if (lifecycleStatus.HasValue)
+            query = query.Where(t => t.LifecycleStatus == lifecycleStatus.Value);
+
+        if (hasVacancies == true)
+            query = query.Where(t =>
+                t.LifecycleStatus == TeamLifecycleStatus.Active
+                && t.IsAcceptingMembers
+                && t.CurrentMemberCount < t.MaxMembers);
+        else if (hasVacancies == false)
+            query = query.Where(t =>
+                !(t.LifecycleStatus == TeamLifecycleStatus.Active
+                  && t.IsAcceptingMembers
+                  && t.CurrentMemberCount < t.MaxMembers));
 
         var totalCount = await query.CountAsync(cancellationToken);
 
@@ -74,7 +94,8 @@ public class TeamService : ITeamService
             Region = createTeamDto.Region,
             Category = createTeamDto.Category,
             Tags = createTeamDto.Tags,
-            Status = TeamStatus.Recruiting,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             OwnerId = ownerId
         };
 
@@ -91,6 +112,12 @@ public class TeamService : ITeamService
         var team = await _context.Teams.FindAsync([id], cancellationToken);
         if (team == null) return null;
 
+        // Validate the lifecycle/recruitment change before touching anything (400 on invalid).
+        var (lifecycleStatus, isAcceptingMembers) = TeamStateUpdateResolver.Resolve(
+            team.LifecycleStatus,
+            team.IsAcceptingMembers,
+            updateTeamDto);
+
         // Active TeamMember rows are the roster occupancy authority; the stored count is
         // reconciled from them rather than trusted.
         var activeMemberCount = await CountActiveMembersAsync(id, cancellationToken);
@@ -105,18 +132,13 @@ public class TeamService : ITeamService
         if (updateTeamDto.Description != null)
             team.Description = updateTeamDto.Description;
 
-        if (updateTeamDto.Status.HasValue)
-            team.Status = updateTeamDto.Status.Value;
+        team.LifecycleStatus = lifecycleStatus;
+        team.IsAcceptingMembers = isAcceptingMembers;
 
-        if (updateTeamDto.MaxMembers is { } maxMembers && maxMembers != team.MaxMembers)
-        {
+        // Capacity is derived (IsFull/OpenSlots) from MaxMembers and the member count; no
+        // status is changed here.
+        if (updateTeamDto.MaxMembers is { } maxMembers)
             team.MaxMembers = maxMembers;
-
-            if (team.Status == TeamStatus.Full && activeMemberCount < maxMembers)
-                team.Status = TeamStatus.Recruiting;
-            else if (team.Status == TeamStatus.Recruiting && activeMemberCount >= maxMembers)
-                team.Status = TeamStatus.Full;
-        }
 
         if (updateTeamDto.Region != null)
             team.Region = updateTeamDto.Region;
@@ -174,12 +196,8 @@ public class TeamService : ITeamService
             tm => tm.TeamId == teamId && tm.IsActive && tm.PlayerId != playerId,
             cancellationToken);
 
+        // The freed slot shows up in the derived OpenSlots/IsFull; no status is changed.
         ReconcileMemberCount(team, remainingActiveCount);
-
-        if (team.Status == TeamStatus.Full && remainingActiveCount < team.MaxMembers)
-        {
-            team.Status = TeamStatus.Recruiting;
-        }
 
         try
         {
@@ -194,6 +212,25 @@ public class TeamService : ITeamService
 
         return true;
     }
+
+    private static IQueryable<Team> ApplyLegacyStatusFilter(IQueryable<Team> query, TeamStatus status) =>
+        status switch
+        {
+            TeamStatus.Recruiting => query.Where(t =>
+                t.LifecycleStatus == TeamLifecycleStatus.Active
+                && t.IsAcceptingMembers
+                && t.CurrentMemberCount < t.MaxMembers),
+            TeamStatus.Full => query.Where(t =>
+                t.LifecycleStatus == TeamLifecycleStatus.Active
+                && t.CurrentMemberCount >= t.MaxMembers),
+            TeamStatus.Active => query.Where(t =>
+                t.LifecycleStatus == TeamLifecycleStatus.Active
+                && !t.IsAcceptingMembers
+                && t.CurrentMemberCount < t.MaxMembers),
+            TeamStatus.Inactive => query.Where(t => t.LifecycleStatus == TeamLifecycleStatus.Inactive),
+            TeamStatus.Disbanded => query.Where(t => t.LifecycleStatus == TeamLifecycleStatus.Disbanded),
+            _ => query.Where(_ => false)
+        };
 
     private Task<int> CountActiveMembersAsync(Guid teamId, CancellationToken cancellationToken) =>
         _context.TeamMembers.CountAsync(tm => tm.TeamId == teamId && tm.IsActive, cancellationToken);
@@ -216,7 +253,8 @@ public class TeamService : ITeamService
             Id = team.Id,
             Name = team.Name,
             Description = team.Description,
-            Status = team.Status,
+            LifecycleStatus = team.LifecycleStatus,
+            IsAcceptingMembers = team.IsAcceptingMembers,
             MaxMembers = team.MaxMembers,
             CurrentMemberCount = team.CurrentMemberCount,
             Region = team.Region,

@@ -13,6 +13,8 @@ using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
 
+using TeamBuilder.Tests.Application;
+
 namespace TeamBuilder.Tests.Integration;
 
 public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
@@ -31,7 +33,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     private async Task<(Team team, Player player)> SeedTeamAndPlayerAsync(
         int maxMembers = 10,
         int currentMemberCount = 0,
-        TeamStatus status = TeamStatus.Active,
+        TeamStatus status = TeamStatus.Recruiting,
         Guid? ownerId = null)
     {
         using var scope = _factory.Services.CreateScope();
@@ -41,7 +43,8 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         {
             Id = Guid.NewGuid(),
             Name = $"Team-{Guid.NewGuid():N}",
-            Status = status,
+            LifecycleStatus = TeamSeeding.Lifecycle(status),
+            IsAcceptingMembers = TeamSeeding.Accepting(status),
             MaxMembers = maxMembers,
             CurrentMemberCount = currentMemberCount,
             OwnerId = ownerId ?? Guid.NewGuid(),
@@ -811,7 +814,8 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         joinRequest.ProcessedAtUtc.Should().BeNull();
         joinRequest.ProcessedByUserId.Should().BeNull();
         updatedTeam.CurrentMemberCount.Should().Be(0);
-        updatedTeam.Status.Should().Be(TeamStatus.Active);
+        updatedTeam.LifecycleStatus.Should().Be(TeamLifecycleStatus.Active);
+        updatedTeam.IsAcceptingMembers.Should().BeTrue();
         teamMemberCount.Should().Be(0);
     }
 

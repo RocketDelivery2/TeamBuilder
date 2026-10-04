@@ -537,7 +537,8 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
                 Id = teamId,
                 Name = $"owned-{Guid.NewGuid():N}",
                 MaxMembers = 5,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 OwnerId = player.Id,
                 RowVersion = []
             });

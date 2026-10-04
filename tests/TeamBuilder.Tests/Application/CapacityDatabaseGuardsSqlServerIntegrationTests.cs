@@ -129,16 +129,17 @@ public class CapacityDatabaseGuardsSqlServerIntegrationTests : IAsyncLifetime
         (await CountActiveAsync(teamA)).Should().Be(2);
         var b = await GetTeamAsync(teamB);
         b.CurrentMemberCount.Should().Be(3);
-        b.Status.Should().Be(TeamStatus.Active);
+        b.LegacyStatus.Should().Be(TeamStatus.Active);
         (await CountActiveAsync(teamB)).Should().Be(3);
 
         var history = await GetTeamAsync(historyTeam);
         history.CurrentMemberCount.Should().Be(4);
-        history.Status.Should().Be(TeamStatus.Full);
+        history.LifecycleStatus.Should().Be(TeamLifecycleStatus.Active);
+        history.IsAcceptingMembers.Should().BeTrue();
     }
 
     [Fact]
-    public async Task DeletePlayer_WhoFilledATeam_TransitionsFullTeamToRecruiting()
+    public async Task DeletePlayer_WhoFilledATeam_DerivedLegacyStatusBecomesRecruiting()
     {
         var playerId = await SeedPlayerAsync();
         var teamId = await SeedTeamAsync(maxMembers: 2, storedCount: 2, status: TeamStatus.Full);
@@ -149,7 +150,7 @@ public class CapacityDatabaseGuardsSqlServerIntegrationTests : IAsyncLifetime
 
         var team = await GetTeamAsync(teamId);
         team.CurrentMemberCount.Should().Be(1);
-        team.Status.Should().Be(TeamStatus.Recruiting);
+        team.LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     [Fact]
@@ -201,7 +202,7 @@ public class CapacityDatabaseGuardsSqlServerIntegrationTests : IAsyncLifetime
         (await IsActiveMemberAsync(memberTeam, playerId)).Should().BeTrue();
         var team = await GetTeamAsync(memberTeam);
         team.CurrentMemberCount.Should().Be(2);
-        team.Status.Should().Be(TeamStatus.Full);
+        team.LegacyStatus.Should().Be(TeamStatus.Full);
     }
 
     [Fact]
@@ -247,7 +248,7 @@ public class CapacityDatabaseGuardsSqlServerIntegrationTests : IAsyncLifetime
         (await CountMembershipRowsAsync(playerId)).Should().Be(3);
         var member = await GetTeamAsync(memberTeam);
         member.CurrentMemberCount.Should().Be(3);
-        member.Status.Should().Be(TeamStatus.Full);
+        member.LegacyStatus.Should().Be(TeamStatus.Full);
     }
 
     [Fact]
@@ -428,7 +429,8 @@ public class CapacityDatabaseGuardsSqlServerIntegrationTests : IAsyncLifetime
             Name = $"team_{Guid.NewGuid():N}",
             MaxMembers = maxMembers,
             CurrentMemberCount = storedCount,
-            Status = status,
+            LifecycleStatus = TeamSeeding.Lifecycle(status),
+            IsAcceptingMembers = TeamSeeding.Accepting(status),
             OwnerId = ownerId
         };
         context.Teams.Add(team);

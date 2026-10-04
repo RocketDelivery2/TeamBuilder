@@ -95,9 +95,11 @@ public class EventsController : ControllerBase
                 return Forbid();
             }
 
-            if (team.Status is TeamStatus.Inactive or TeamStatus.Disbanded)
+            // Only the administrative lifecycle matters; recruitment policy and physical
+            // capacity never affect event scheduling.
+            if (team.LifecycleStatus != TeamLifecycleStatus.Active)
             {
-                _logger.LogInformation("Team {TeamId} has status {TeamStatus}; cannot create event", teamId, team.Status);
+                _logger.LogInformation("Team {TeamId} has lifecycle status {LifecycleStatus}; cannot create event", teamId, team.LifecycleStatus);
                 return Conflict(new { message = "Events cannot be created for an inactive or disbanded team." });
             }
         }

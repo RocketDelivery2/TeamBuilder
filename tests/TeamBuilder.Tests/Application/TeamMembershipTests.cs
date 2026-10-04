@@ -32,7 +32,8 @@ public class TeamMembershipTests : IDisposable
             Name = "Test Team",
             MaxMembers = 5,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Active,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = false,
             RowVersion = []
         };
 
@@ -74,7 +75,7 @@ public class TeamMembershipTests : IDisposable
     }
 
     [Fact]
-    public async Task RemoveMemberAsync_ShouldChangeStatusToRecruiting_WhenTeamWasFull()
+    public async Task RemoveMemberAsync_DerivedStatusBecomesRecruiting_WhenTeamWasFull()
     {
         // Arrange
         var team = new Team
@@ -83,7 +84,8 @@ public class TeamMembershipTests : IDisposable
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Full,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             RowVersion = []
         };
 
@@ -119,7 +121,7 @@ public class TeamMembershipTests : IDisposable
 
         var updatedTeam = await _context.Teams.FindAsync(team.Id);
         updatedTeam!.CurrentMemberCount.Should().Be(2);
-        updatedTeam.Status.Should().Be(TeamStatus.Recruiting);
+        updatedTeam.LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     [Fact]
@@ -200,7 +202,8 @@ public class TeamMembershipTests : IDisposable
             Name = "Active Team",
             MaxMembers = 5,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Active,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = false,
             RowVersion = []
         };
 
@@ -235,7 +238,7 @@ public class TeamMembershipTests : IDisposable
 
         var updatedTeam = await _context.Teams.FindAsync(team.Id);
         updatedTeam!.CurrentMemberCount.Should().Be(2);
-        updatedTeam.Status.Should().Be(TeamStatus.Active);
+        updatedTeam.LegacyStatus.Should().Be(TeamStatus.Active);
     }
 
     [Fact]
@@ -249,7 +252,8 @@ public class TeamMembershipTests : IDisposable
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Full,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             RowVersion = []
         };
 
@@ -291,7 +295,7 @@ public class TeamMembershipTests : IDisposable
         leaveResult.Should().BeTrue();
 
         var teamAfterLeave = await _context.Teams.FindAsync(team.Id);
-        teamAfterLeave!.Status.Should().Be(TeamStatus.Recruiting);
+        teamAfterLeave!.LegacyStatus.Should().Be(TeamStatus.Recruiting);
         teamAfterLeave.CurrentMemberCount.Should().Be(2);
 
         var joinRequest = new JoinRequest
@@ -316,7 +320,7 @@ public class TeamMembershipTests : IDisposable
 
         var teamAfterRefill = await _context.Teams.FindAsync(team.Id);
         teamAfterRefill!.CurrentMemberCount.Should().Be(3);
-        teamAfterRefill.Status.Should().Be(TeamStatus.Full);
+        teamAfterRefill.LegacyStatus.Should().Be(TeamStatus.Full);
 
         var newMember = await _context.TeamMembers.FirstOrDefaultAsync(tm =>
             tm.PlayerId == newPlayer.Id &&

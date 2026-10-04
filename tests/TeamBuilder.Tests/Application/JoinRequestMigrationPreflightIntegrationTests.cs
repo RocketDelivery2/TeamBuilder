@@ -92,13 +92,13 @@ public class JoinRequestMigrationPreflightIntegrationTests : IAsyncLifetime
         await using var context = _db.CreateContext();
 
         var player = new Player { Id = Guid.NewGuid(), Username = $"player_{Guid.NewGuid():N}" };
-        var team = new Team { Id = Guid.NewGuid(), Name = $"team_{Guid.NewGuid():N}", MaxMembers = 100 };
-
         context.Players.Add(player);
-        context.Teams.Add(team);
         await context.SaveChangesAsync();
 
-        return (team.Id, player.Id);
+        // Teams is seeded with raw SQL: the current EF model no longer matches its historical shape.
+        var teamId = await LegacyTeamsTable.InsertAsync(_db.ConnectionString, maxMembers: 100);
+
+        return (teamId, player.Id);
     }
 
     /// <summary>

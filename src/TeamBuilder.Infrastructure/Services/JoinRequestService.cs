@@ -12,6 +12,9 @@ namespace TeamBuilder.Infrastructure.Services;
 
 public class JoinRequestService : IJoinRequestService
 {
+    public const string TeamNotActiveMessage = "Team is not active.";
+    public const string TeamNotAcceptingMessage = "Team is not currently accepting new members.";
+
     private readonly TeamBuilderDbContext _context;
 
     public JoinRequestService(TeamBuilderDbContext context)
@@ -101,6 +104,24 @@ public class JoinRequestService : IJoinRequestService
         if (createJoinRequestDto.TeamId is not { } teamId || teamId == Guid.Empty)
             throw new ArgumentException("TeamId is required and must not be an empty GUID.", nameof(createJoinRequestDto));
 
+        // Recruitment policy: only an Active team that is accepting members takes new requests.
+        // Physical capacity is deliberately not checked here (a full team may still collect
+        // pending requests, e.g. for a future waitlist); approval enforces capacity.
+        var team = await _context.Teams
+            .AsNoTracking()
+            .Where(t => t.Id == teamId)
+            .Select(t => new { t.LifecycleStatus, t.IsAcceptingMembers })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (team is null)
+            throw new TeamNotFoundException(teamId);
+
+        if (team.LifecycleStatus != TeamLifecycleStatus.Active)
+            throw new InvalidOperationException(TeamNotActiveMessage);
+
+        if (!team.IsAcceptingMembers)
+            throw new InvalidOperationException(TeamNotAcceptingMessage);
+
         var existingRequest = await _context.JoinRequests
             .FirstOrDefaultAsync(jr => jr.TeamId == teamId &&
                                       jr.PlayerId == playerId &&
@@ -165,6 +186,11 @@ public class JoinRequestService : IJoinRequestService
         var activeMemberCount = 0;
         if (processJoinRequestDto.Status == RequestStatus.Approved)
         {
+            // Approval needs an Active team but not open recruitment: closing recruitment must
+            // not stop the owner from processing requests that already exist.
+            if (joinRequest.Team.LifecycleStatus != TeamLifecycleStatus.Active)
+                throw new InvalidOperationException(TeamNotActiveMessage);
+
             activeMemberCount = await _context.TeamMembers.CountAsync(
                 tm => tm.TeamId == joinRequest.TeamId && tm.IsActive,
                 cancellationToken);
@@ -204,11 +230,8 @@ public class JoinRequestService : IJoinRequestService
             joinRequest.Team.CurrentMemberCount = activeMemberCount + 1;
             // Always issue the RowVersion-guarded team UPDATE, even if a stale stored count
             // happened to equal the new value, so concurrent approvals cannot both succeed.
+            // Reaching MaxMembers shows up in the derived IsFull; no status is changed.
             _context.Entry(joinRequest.Team).Property(t => t.CurrentMemberCount).IsModified = true;
-            if (joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
-            {
-                joinRequest.Team.Status = TeamStatus.Full;
-            }
         }
 
         try
