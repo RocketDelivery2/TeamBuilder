@@ -159,7 +159,13 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
     public async Task GetMe_LinkedIdentity_ReturnsLinkedPlayer()
     {
         var subject = NewSubject();
-        var player = new Player { Id = Guid.NewGuid(), Username = $"linked-{Guid.NewGuid():N}", DisplayName = "Linked" };
+        var player = new Player
+        {
+            Id = Guid.NewGuid(),
+            Username = $"linked-{Guid.NewGuid():N}",
+            DisplayName = "Linked",
+            Email = "linked@example.com"
+        };
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
@@ -182,6 +188,7 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
         dto!.Id.Should().Be(player.Id);
         dto.Username.Should().Be(player.Username);
         dto.DisplayName.Should().Be("Linked");
+        dto.Email.Should().Be("linked@example.com");
     }
 
     // ── POST ─────────────────────────────────────────────────────────────────
@@ -192,6 +199,7 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
         // A GUID-shaped subject makes "Player.Id was not derived from Subject" observable.
         var subject = Guid.NewGuid().ToString();
         var dto = NewPlayerDto();
+        dto.Email = "onboarded@example.com";
 
         using var response = await _client.SendAsync(Post(SubjectToken(subject), dto));
 
@@ -201,6 +209,7 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
         created!.Username.Should().Be(dto.Username);
         created.DisplayName.Should().Be(dto.DisplayName);
         created.Region.Should().Be(dto.Region);
+        created.Email.Should().Be(dto.Email);
         created.Id.Should().NotBe(Guid.Empty);
         created.Id.Should().NotBe(Guid.Parse(subject));
 
@@ -211,7 +220,9 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
 
         using var me = await _client.SendAsync(Get(SubjectToken(subject)));
         me.StatusCode.Should().Be(HttpStatusCode.OK);
-        (await me.Content.ReadFromJsonAsync<PlayerDto>())!.Id.Should().Be(created.Id);
+        var profile = await me.Content.ReadFromJsonAsync<PlayerDto>();
+        profile!.Id.Should().Be(created.Id);
+        profile.Email.Should().Be(dto.Email);
     }
 
     [Fact]
@@ -252,8 +263,12 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
     public async Task PostMe_UsernameTaken_Returns409_WithExistingUsernameMessage_AndCreatesNoIdentity()
     {
         var username = $"taken-{Guid.NewGuid():N}";
-        using (var create = await _client.PostAsJsonAsync("/api/v1/players", new CreatePlayerDto { Username = username }))
-            create.StatusCode.Should().Be(HttpStatusCode.Created);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            db.Players.Add(new Player { Id = Guid.NewGuid(), Username = username });
+            await db.SaveChangesAsync();
+        }
         var subject = NewSubject();
 
         using var response = await _client.SendAsync(Post(SubjectToken(subject), NewPlayerDto(username)));

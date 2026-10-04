@@ -5,6 +5,9 @@ namespace TeamBuilder.Application.Interfaces;
 
 public interface IPlayerService
 {
+    Task<PublicPlayerDto?> GetPublicByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<PublicPlayerDto?> GetPublicByUsernameAsync(string username, CancellationToken cancellationToken = default);
+    Task<PaginatedResult<PublicPlayerDto>> GetPublicPlayersAsync(int page, int pageSize, string? region = null, CancellationToken cancellationToken = default);
     Task<PlayerDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<PlayerDto?> GetByUsernameAsync(string username, CancellationToken cancellationToken = default);
     Task<PaginatedResult<PlayerDto>> GetAllAsync(int page, int pageSize, string? region = null, CancellationToken cancellationToken = default);

@@ -8,7 +8,7 @@ middle layer between any client-side frontend and the backend data platform.
 
 - **Base path:** `api/v1`
 - **Format:** JSON (request and response)
-- **Authentication:** JWT bearer auth is required on protected routes; public reads remain available. Player create/update/delete routes currently have no `[Authorize]` requirement.
+- **Authentication:** JWT bearer auth is required on protected routes; public reads remain available. Player onboarding and profile writes require authentication.
   See [Authentication](#authentication) for details and local dev token setup.
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
 - **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
@@ -144,22 +144,25 @@ without a token receive `401 Unauthorized`.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/v1/teams` | Sets `OwnerId` from the JWT `sub` claim. |
+| `POST` | `/api/v1/teams` | Sets `OwnerId` from the authenticated player's identity. |
 | `PUT` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
 | `DELETE` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
 | `POST` | `/api/v1/teams/{teamId}/members/{playerId}/leave` | Only the authenticated player matching `{playerId}` may leave; owners cannot remove another player through this route. |
-| `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from the JWT `sub` claim. |
+| `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from the authenticated player's identity. |
 | `PUT` | `/api/v1/joinrequests/{id}/process` | Only the team owner may process the request. |
-| `POST` | `/api/v1/events` | Sets `HostId` from the JWT `sub` claim. |
+| `POST` | `/api/v1/events` | Sets `HostId` from the authenticated player's identity. |
 | `PUT` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
 | `DELETE` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
-| `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from the JWT `sub` claim. |
+| `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from the authenticated player's identity. |
 | `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication; importer only (see below). |
 | `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication; importer only (see below). |
+| `POST` | `/api/v1/players/me` | Authenticated player onboarding. |
+| `PUT` | `/api/v1/players/{id}` | Authenticated caller may update their own profile only. |
+| `DELETE` | `/api/v1/players/{id}` | Authenticated caller may delete their own profile only. |
 
-`POST`, `PUT`, and `DELETE /api/v1/players` currently do not require a JWT.
-`GET` and `POST /api/v1/players/me` require a JWT (see the Players section).
-Do not infer that all write routes are protected.
+`GET` and `POST /api/v1/players/me` and self-profile `PUT`/`DELETE`
+`/api/v1/players/{id}` require a JWT (see the Players section). Public player
+discovery does not require authentication.
 
 ### Anonymous endpoints (no token required)
 
@@ -172,6 +175,7 @@ Do not infer that all write routes are protected.
 | `GET` | `/api/v1/events`, `/api/v1/events/{id}` |
 | `GET` | `/api/v1/rosterimports`, `/api/v1/rosterimports/{id}` |
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
+| `GET` | `/api/v1/players/username/{username}` |
 | `GET` | `/swagger` (Development only) |
 
 ### Caller identity — JWT bearer
@@ -308,11 +312,11 @@ name:
 
 #### `GET api/v1/players/me`
 
-Returns the player linked to the caller's external identity. Requires a JWT.
+Returns the caller's full profile, including email, linked to their external identity. Requires a JWT.
 The identity key is the token's `iss` claim plus the claim named by
 `Jwt:ExternalIdentity:SubjectClaim` (default `sub`; use `oid` for Microsoft
 Entra). The subject does not need to be a GUID, and these endpoints do not
-require the legacy `Jwt:PlayerIdClaim` GUID.
+do not require the subject to be a GUID.
 
 - **Response `200`:** `PlayerDto` of the linked player.
 - **Response `401`:** No valid JWT, or the token has no usable issuer or subject.
@@ -324,8 +328,8 @@ require the legacy `Jwt:PlayerIdClaim` GUID.
 
 Onboards the caller: creates a new player with a server-generated `id` and
 links the caller's external identity (issuer + subject) to it in one
-transaction. Requires a JWT. The request body is the same as
-`POST api/v1/players`.
+transaction. This is the canonical player creation route and requires a JWT.
+The request body uses `CreatePlayerDto`.
 
 - **Response `201`:** Created `PlayerDto` with `Location: /api/v1/players/me`.
 - **Response `400`:** Validation failure.
@@ -338,7 +342,8 @@ transaction. Requires a JWT. The request body is the same as
 
 #### `GET api/v1/players/{id}`
 
-Returns a single player by ID.
+Returns a public player profile by ID. This discovery endpoint is anonymous
+and does not return email.
 
 **Response `200`:**
 
@@ -346,7 +351,6 @@ Returns a single player by ID.
 {
   "id": "00000000-0000-0000-0000-000000000001",
   "username": "striker99",
-  "email": "striker99@example.com",
   "displayName": "Striker",
   "bio": "Competitive FPS player",
   "region": "NA",
@@ -364,14 +368,15 @@ Returns a single player by ID.
 
 Returns a single player by username.
 
-**Response `200`:** Same shape as `GET /players/{id}`.  
+**Response `200`:** Same public profile shape as `GET /players/{id}`; email is omitted.
 **Response `404`:** Player not found.
 
 ---
 
 #### `GET api/v1/players`
 
-Returns a paginated list of players.
+Returns a paginated list of public player profiles. Email is omitted from each
+item. Region filtering and pagination are supported.
 
 **Query parameters:**
 
@@ -381,35 +386,24 @@ Returns a paginated list of players.
 | `pageSize`| int    | Page size (default: 20)  |
 | `region`  | string | Filter by region         |
 
-**Response `200`:** `PaginatedResult<PlayerDto>`
+**Response `200`:** `PaginatedResult<PublicPlayerDto>`
 
 ---
 
-#### `POST api/v1/players`
+#### `POST api/v1/players` (removed)
 
-Creates a new player. Username must be unique.
-
-**Request body:**
-
-```json
-{
-  "username": "striker99",
-  "email": "striker99@example.com",
-  "displayName": "Striker",
-  "bio": "Competitive FPS player",
-  "region": "NA",
-  "avatarUrl": "https://example.com/avatar.png"
-}
-```
-
-**Response `201`:** Created `PlayerDto` with `Location` header.  
-**Response `400`:** Validation failure or duplicate username.
+The former anonymous player-creation route has been removed. A `POST` to the
+collection path is rejected with `405 Method Not Allowed` because the path
+continues to serve `GET` discovery. Use authenticated
+`POST /api/v1/players/me` for onboarding.
 
 ---
 
 #### `PUT api/v1/players/{id}`
 
-Updates an existing player. Only non-null fields are applied.
+Updates the caller's own existing player profile. Requires a JWT; only
+non-null fields are applied. Email may be updated through this endpoint but
+remains excluded from public player discovery responses.
 
 **Request body:**
 

@@ -106,7 +106,7 @@ Run requests in this order. Each step captures an ID needed by the next.
 |---|---------|--------|-------|
 | 1 | `GET /health` | Health | Expect `200 Healthy`. This is the liveness check; the process is running. |
 | 2 | `GET /health/ready` | Health | Expect `200 Healthy`. If `503`, the database is not reachable — re-run the migration from Step 2. |
-| 3 | `POST /api/v1/players` | Players | Creates a player. Copy `id` from the response into the `playerId` environment variable. |
+| 3 | `POST /api/v1/players/me` | Players | With a valid JWT in `{{token}}`, onboards the caller. Copy `id` from the response into the `playerId` environment variable. |
 | 4 | `GET /api/v1/players` | Players | Verify the player appears in the paginated list. |
 | 5 | `GET /api/v1/players/{{playerId}}` | Players | Verify the player can be fetched by ID. |
 | 6 | `POST /api/v1/teams` | Teams | Sends `Authorization: Bearer {{token}}`. Copy `id` from the response into `teamId`. |

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -27,7 +28,12 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<Player> SeedPlayerAsync(string username = "testplayer")
+    private async Task<Player> SeedPlayerAsync(
+        string username = "testplayer",
+        string? displayName = null,
+        string? bio = null,
+        string? region = null,
+        string? avatarUrl = null)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
@@ -37,6 +43,10 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
             Id = Guid.NewGuid(),
             Username = username,
             Email = $"{username}@example.com",
+            DisplayName = displayName,
+            Bio = bio,
+            Region = region,
+            AvatarUrl = avatarUrl,
             CreatedAtUtc = DateTime.UtcNow,
             RowVersion = []
         };
@@ -44,6 +54,24 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
         db.Players.Add(player);
         await db.SaveChangesAsync();
         return player;
+    }
+
+    private static async Task AssertEmailIsNotExposedAsync(HttpResponseMessage response, string email)
+    {
+        var payload = await response.Content.ReadAsStringAsync();
+        payload.Should().NotContain(email);
+
+        using var document = JsonDocument.Parse(payload);
+        var root = document.RootElement;
+        if (root.TryGetProperty("items", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+                item.TryGetProperty("email", out _).Should().BeFalse();
+        }
+        else
+        {
+            root.TryGetProperty("email", out _).Should().BeFalse();
+        }
     }
 
     private static HttpRequestMessage UpdateRequest(Guid id, UpdatePlayerDto dto, string? token)
@@ -98,20 +126,32 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
     // ── GET /api/v1/players/{id} ─────────────────────────────────────────────
 
     [Fact]
-    public async Task GetById_WhenPlayerExists_Returns200WithPlayerDto()
+    public async Task GetById_WhenPlayerExists_ReturnsPublicProfileWithoutEmail()
     {
         // Arrange
-        var player = await SeedPlayerAsync($"getbyid-{Guid.NewGuid():N}");
+        var player = await SeedPlayerAsync(
+            $"getbyid-{Guid.NewGuid():N}",
+            "Player Display",
+            "Public bio",
+            "NA",
+            "https://example.com/avatar.png");
 
         // Act
         var response = await _client.GetAsync($"/api/v1/players/{player.Id}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var dto = await response.Content.ReadFromJsonAsync<PlayerDto>();
+        var dto = await response.Content.ReadFromJsonAsync<PublicPlayerDto>();
         dto.Should().NotBeNull();
         dto!.Id.Should().Be(player.Id);
         dto.Username.Should().Be(player.Username);
+        dto.DisplayName.Should().Be(player.DisplayName);
+        dto.Bio.Should().Be(player.Bio);
+        dto.Region.Should().Be(player.Region);
+        dto.AvatarUrl.Should().Be(player.AvatarUrl);
+        dto.CreatedAtUtc.Should().Be(player.CreatedAtUtc);
+        dto.UpdatedAtUtc.Should().Be(player.UpdatedAtUtc);
+        await AssertEmailIsNotExposedAsync(response, player.Email!);
     }
 
     [Fact]
@@ -130,7 +170,7 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
     // ── GET /api/v1/players/username/{username} ──────────────────────────────
 
     [Fact]
-    public async Task GetByUsername_WhenPlayerExists_Returns200WithPlayerDto()
+    public async Task GetByUsername_WhenPlayerExists_ReturnsPublicProfileWithoutEmail()
     {
         // Arrange
         var username = $"user-{Guid.NewGuid():N}";
@@ -141,8 +181,9 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var dto = await response.Content.ReadFromJsonAsync<PlayerDto>();
+        var dto = await response.Content.ReadFromJsonAsync<PublicPlayerDto>();
         dto!.Username.Should().Be(username);
+        await AssertEmailIsNotExposedAsync(response, player.Email!);
     }
 
     [Fact]
@@ -161,59 +202,60 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
     public async Task GetAll_Returns200WithPaginatedEnvelope()
     {
         // Arrange — seed one known player so the list is non-empty
-        await SeedPlayerAsync($"list-{Guid.NewGuid():N}");
+        var player = await SeedPlayerAsync($"list-{Guid.NewGuid():N}");
 
         // Act
         var response = await _client.GetAsync("/api/v1/players?page=1&pageSize=5");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<PaginatedResult<PlayerDto>>();
+        var result = await response.Content.ReadFromJsonAsync<PaginatedResult<PublicPlayerDto>>();
         result.Should().NotBeNull();
         result!.Items.Should().NotBeNull();
         result.Page.Should().Be(1);
         result.PageSize.Should().Be(5);
+        await AssertEmailIsNotExposedAsync(response, player.Email!);
     }
 
-    // ── POST /api/v1/players ─────────────────────────────────────────────────
-
     [Fact]
-    public async Task Create_WithValidPayload_Returns201WithCreatedPlayer()
+    public async Task GetAll_PreservesPaginationAndRegionFiltering_WithoutEmailForAnyPlayer()
     {
-        // Arrange
-        var dto = new CreatePlayerDto
+        var region = $"region-{Guid.NewGuid():N}";
+        var players = new[]
         {
-            Username = $"new-{Guid.NewGuid():N}",
-            Email = "new@example.com"
+            await SeedPlayerAsync($"filter-a-{Guid.NewGuid():N}", region: region),
+            await SeedPlayerAsync($"filter-b-{Guid.NewGuid():N}", region: region),
+            await SeedPlayerAsync($"filter-c-{Guid.NewGuid():N}", region: region)
         };
 
-        // Act
-        var response = await _client.PostAsJsonAsync("/api/v1/players", dto);
+        using var response = await _client.GetAsync($"/api/v1/players?page=1&pageSize=5&region={region}");
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var created = await response.Content.ReadFromJsonAsync<PlayerDto>();
-        created!.Username.Should().Be(dto.Username);
-        response.Headers.Location.Should().NotBeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<PaginatedResult<PublicPlayerDto>>();
+        result!.TotalCount.Should().Be(3);
+        result.Page.Should().Be(1);
+        result.PageSize.Should().Be(5);
+        result.Items.Should().HaveCount(3);
+        result.Items.Should().OnlyContain(item => item.Region == region);
+        foreach (var player in players)
+            await AssertEmailIsNotExposedAsync(response, player.Email!);
     }
 
     [Fact]
-    public async Task Create_WithDuplicateUsername_Returns409Conflict()
+    public async Task PostLegacyCreate_IsNotAllowedAndDoesNotCreatePlayer()
     {
-        // Arrange — seed the player first so the username is taken
-        var username = $"dup-{Guid.NewGuid():N}";
-        await SeedPlayerAsync(username);
+        var dto = new CreatePlayerDto
+        {
+            Username = $"legacy-create-{Guid.NewGuid():N}",
+            Email = "squat@example.com"
+        };
 
-        var dto = new CreatePlayerDto { Username = username };
+        using var response = await _client.PostAsJsonAsync("/api/v1/players", dto);
 
-        // Act
-        var response = await _client.PostAsJsonAsync("/api/v1/players", dto);
-
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
-        problem.Should().NotBeNull();
-        problem!.Status.Should().Be(StatusCodes.Status409Conflict);
+        response.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        (await db.Players.AnyAsync(player => player.Username == dto.Username)).Should().BeFalse();
     }
 
     // ── PUT /api/v1/players/{id} ─────────────────────────────────────────────
@@ -226,6 +268,7 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
         var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, player.Id);
         var dto = new UpdatePlayerDto
         {
+            Email = "updated-profile@example.com",
             DisplayName = "Updated Name",
             Bio = "Updated bio",
             Region = "EU"
@@ -242,7 +285,12 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
         updated.DisplayName.Should().Be("Updated Name");
         updated.Bio.Should().Be("Updated bio");
         updated.Region.Should().Be("EU");
+        updated.Email.Should().Be(dto.Email);
         (await FindPlayerAsync(player.Id))!.DisplayName.Should().Be("Updated Name");
+
+        using var publicResponse = await _client.GetAsync($"/api/v1/players/{player.Id}");
+        publicResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        await AssertEmailIsNotExposedAsync(publicResponse, dto.Email);
     }
 
     [Fact]
