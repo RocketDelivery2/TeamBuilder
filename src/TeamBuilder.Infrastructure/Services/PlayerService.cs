@@ -3,6 +3,7 @@ using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
+using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
 
 namespace TeamBuilder.Infrastructure.Services;
@@ -232,11 +233,66 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
             return false;
         }
 
+        // Ownership is never transferred or dissolved implicitly: the owner must delete their
+        // teams first. (There is no ownership transfer endpoint yet.)
+        var ownsTeams = await _context.Teams.AnyAsync(t => t.OwnerId == id, cancellationToken);
+        if (ownsTeams)
+        {
+            throw new InvalidOperationException(OwnedTeamsDeletionConflictMessage);
+        }
+
+        // The FK cascade removes this player's memberships, so reconcile every affected team's
+        // stored count first. Teams (and their RowVersions) are loaded before the counts so a
+        // concurrent membership change fails the save instead of leaving a stale count.
+        var affectedTeams = await _context.Teams
+            .Where(t => t.Members.Any(tm => tm.PlayerId == id && tm.IsActive))
+            .ToListAsync(cancellationToken);
+
+        if (affectedTeams.Count > 0)
+        {
+            var affectedTeamIds = affectedTeams.Select(t => t.Id).ToList();
+
+            var remainingCounts = await _context.TeamMembers
+                .Where(tm => affectedTeamIds.Contains(tm.TeamId) && tm.IsActive && tm.PlayerId != id)
+                .GroupBy(tm => tm.TeamId)
+                .Select(g => new { TeamId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.TeamId, x => x.Count, cancellationToken);
+
+            foreach (var team in affectedTeams)
+            {
+                var remainingActiveCount = remainingCounts.GetValueOrDefault(team.Id);
+
+                team.CurrentMemberCount = remainingActiveCount;
+                // Always issue the RowVersion-guarded UPDATE, even when the value is unchanged.
+                _context.Entry(team).Property(t => t.CurrentMemberCount).IsModified = true;
+
+                if (team.Status == TeamStatus.Full && remainingActiveCount < team.MaxMembers)
+                {
+                    team.Status = TeamStatus.Recruiting;
+                }
+            }
+        }
+
         _context.Players.Remove(player);
-        await _context.SaveChangesAsync(cancellationToken);
+
+        // One SaveChanges: the team count corrections and the player delete commit or roll
+        // back together in EF Core's implicit transaction.
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new InvalidOperationException(
+                "A team this player belongs to changed while the player was being deleted. Please try again.",
+                ex);
+        }
 
         return true;
     }
+
+    private const string OwnedTeamsDeletionConflictMessage =
+        "Delete or transfer ownership of all owned teams before deleting this player.";
 
     private static PlayerDto MapToDto(Player player)
     {

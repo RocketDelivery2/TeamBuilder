@@ -59,6 +59,32 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
 
         db.Teams.Add(team);
         db.Players.Add(player);
+
+        // Active TeamMember rows are the roster occupancy authority, so back the seeded count
+        // with that many real active memberships.
+        for (var i = 0; i < currentMemberCount; i++)
+        {
+            var filler = new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = $"filler-{Guid.NewGuid():N}",
+                CreatedAtUtc = DateTime.UtcNow,
+                RowVersion = []
+            };
+            db.Players.Add(filler);
+            db.TeamMembers.Add(new TeamMember
+            {
+                Id = Guid.NewGuid(),
+                TeamId = team.Id,
+                PlayerId = filler.Id,
+                Role = TeamRole.Member,
+                IsActive = true,
+                JoinedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow,
+                RowVersion = []
+            });
+        }
+
         await db.SaveChangesAsync();
         return (team, player);
     }
@@ -847,7 +873,7 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
     public async Task Process_AsNonOwnerTeamMemberWithAnyRole_Returns403(TeamRole role)
     {
         // Arrange
-        var (team, player) = await SeedTeamAndPlayerAsync(currentMemberCount: 1);
+        var (team, player) = await SeedTeamAndPlayerAsync();
         var memberId = Guid.NewGuid();
         using (var scope = _factory.Services.CreateScope())
         {
@@ -870,6 +896,9 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
                 CreatedAtUtc = DateTime.UtcNow,
                 RowVersion = []
             });
+            // This member is the team's single active membership.
+            var seededTeam = await db.Teams.SingleAsync(t => t.Id == team.Id);
+            seededTeam.CurrentMemberCount = 1;
             await db.SaveChangesAsync();
         }
         var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);

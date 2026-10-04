@@ -159,9 +159,19 @@ public class JoinRequestService : IJoinRequestService
         if (joinRequest.Status != RequestStatus.Pending)
             throw new InvalidOperationException("Only pending requests can be processed.");
 
-        if (processJoinRequestDto.Status == RequestStatus.Approved &&
-            joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
-            throw new InvalidOperationException("The team is already full.");
+        // Active TeamMember rows are the capacity authority, not the stored count. The team (and
+        // its RowVersion) was loaded above, before this count, so any membership change committed
+        // in between makes the save below fail with a concurrency conflict.
+        var activeMemberCount = 0;
+        if (processJoinRequestDto.Status == RequestStatus.Approved)
+        {
+            activeMemberCount = await _context.TeamMembers.CountAsync(
+                tm => tm.TeamId == joinRequest.TeamId && tm.IsActive,
+                cancellationToken);
+
+            if (activeMemberCount >= joinRequest.Team.MaxMembers)
+                throw new InvalidOperationException("The team is already full.");
+        }
 
         joinRequest.Status = processJoinRequestDto.Status;
         joinRequest.ProcessedAtUtc = DateTime.UtcNow;
@@ -191,7 +201,10 @@ public class JoinRequestService : IJoinRequestService
 
             _context.TeamMembers.Add(teamMember);
 
-            joinRequest.Team.CurrentMemberCount++;
+            joinRequest.Team.CurrentMemberCount = activeMemberCount + 1;
+            // Always issue the RowVersion-guarded team UPDATE, even if a stale stored count
+            // happened to equal the new value, so concurrent approvals cannot both succeed.
+            _context.Entry(joinRequest.Team).Property(t => t.CurrentMemberCount).IsModified = true;
             if (joinRequest.Team.CurrentMemberCount >= joinRequest.Team.MaxMembers)
             {
                 joinRequest.Team.Status = TeamStatus.Full;

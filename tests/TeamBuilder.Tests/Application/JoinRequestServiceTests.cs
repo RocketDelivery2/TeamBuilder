@@ -215,6 +215,7 @@ public class JoinRequestServiceTests : IDisposable
         };
 
         _context.Teams.Add(team);
+        AddActiveFillerMembers(team.Id, 2);
         _context.Players.Add(player);
 
         var joinRequest = new JoinRequest
@@ -331,6 +332,7 @@ public class JoinRequestServiceTests : IDisposable
         };
 
         _context.Teams.Add(team);
+        AddActiveFillerMembers(team.Id, 2);
         _context.Players.Add(player);
 
         var joinRequest = new JoinRequest
@@ -383,6 +385,7 @@ public class JoinRequestServiceTests : IDisposable
         };
 
         _context.Teams.Add(team);
+        AddActiveFillerMembers(team.Id, 3);
         _context.Players.Add(player);
 
         var joinRequest = new JoinRequest
@@ -1400,6 +1403,29 @@ public class JoinRequestServiceTests : IDisposable
         // Assert
         await act.Should().ThrowAsync<ArgumentException>()
             .WithParameterName("createJoinRequestDto");
+    }
+
+
+    /// <summary>
+    /// Seeds <paramref name="count"/> filler players with active memberships on the team. Active
+    /// TeamMember rows (not Team.CurrentMemberCount) are the roster occupancy authority.
+    /// </summary>
+    private void AddActiveFillerMembers(Guid teamId, int count)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            var filler = new Player { Id = Guid.NewGuid(), Username = $"filler_{Guid.NewGuid():N}" };
+            _context.Players.Add(filler);
+            _context.TeamMembers.Add(new TeamMember
+            {
+                Id = Guid.NewGuid(),
+                TeamId = teamId,
+                PlayerId = filler.Id,
+                Role = TeamRole.Member,
+                JoinedAtUtc = DateTime.UtcNow,
+                IsActive = true
+            });
+        }
     }
 
     public void Dispose()

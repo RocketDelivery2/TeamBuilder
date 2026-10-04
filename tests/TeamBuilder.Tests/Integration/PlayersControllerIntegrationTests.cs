@@ -12,6 +12,7 @@ using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Infrastructure.Data;
 using TeamBuilder.Domain.Entities;
+using TeamBuilder.Domain.Enums;
 
 namespace TeamBuilder.Tests.Integration;
 
@@ -520,6 +521,44 @@ public sealed class PlayersControllerIntegrationTests : IClassFixture<TeamBuilde
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
         (await FindPlayerAsync(player.Id)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Delete_AsLinkedSelf_WhenPlayerOwnsATeam_Returns409AndLeavesPlayerAndTeam()
+    {
+        // Arrange
+        var player = await SeedPlayerAsync($"owner-del-{Guid.NewGuid():N}");
+        var teamId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            db.Teams.Add(new Team
+            {
+                Id = teamId,
+                Name = $"owned-{Guid.NewGuid():N}",
+                MaxMembers = 5,
+                Status = TeamStatus.Recruiting,
+                OwnerId = player.Id,
+                RowVersion = []
+            });
+            await db.SaveChangesAsync();
+        }
+        var token = await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, player.Id);
+
+        // Act
+        using var request = DeleteRequest(player.Id, token);
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        problem!.Detail.Should().Be("Delete or transfer ownership of all owned teams before deleting this player.");
+        (await FindPlayerAsync(player.Id)).Should().NotBeNull();
+
+        using var verifyScope = _factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        var team = await verifyDb.Teams.AsNoTracking().SingleAsync(t => t.Id == teamId);
+        team.OwnerId.Should().Be(player.Id);
     }
 
     [Fact]
