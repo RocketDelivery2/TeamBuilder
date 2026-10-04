@@ -1,5 +1,14 @@
 ﻿# TeamBuilder Architecture Validation Report
 
+> **Historical snapshot — 2026-04-30.** This report describes an earlier
+> repository state and is not a current security assessment or implementation
+> guide. Its authentication, authorization, migration, and route findings have
+> since changed. Current identity resolution uses the validated external
+> identity scheme and exact Issuer + configured Subject -> `PlayerIdentity` ->
+> internal `Player.Id`; current endpoint privacy and authorization behavior is
+> documented in [auth-plan.md](auth-plan.md) and [api.md](api.md). Historical
+> findings below are retained as a record of what was observed at that time.
+
 **Date:** 2026-04-30
 **Branch:** `copilot/validate-teambuilder-architecture`
 **Scope:** Validated against the intended enterprise API-first design.

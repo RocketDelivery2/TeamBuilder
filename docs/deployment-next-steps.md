@@ -5,6 +5,12 @@
 > by this repository. Do not use this as a current runbook. Check the current
 > source and [`deployment.md`](deployment.md) before acting. EF Core migrations
 > are already committed; do not recreate an `InitialCreate` migration.
+> Provider, tenant, audience, hosting, and URL values in the examples below
+> are historical records/placeholders, not verified deployed configuration.
+> The legacy `Jwt:PlayerIdClaim` examples in this preserved plan are obsolete.
+> Current identity uses the exact token issuer plus
+> `Jwt:ExternalIdentity:SubjectClaim` to resolve a `PlayerIdentity`, then the
+> internal `Player.Id`; see [`auth-plan.md`](auth-plan.md) for current behavior.
 
 This document preserves an earlier proposed hosting, database, and deployment
 strategy for TeamBuilder. Its recommendations and sequencing are historical.
@@ -71,7 +77,7 @@ AllowedOrigins                = https://teambuilder.info,https://teambuilder-api
 Jwt__Authority                = https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0
 Jwt__Audience                 = api://5457c4d7-0746-4337-ab67-c5c1061b2963
 Jwt__Issuer                   = https://login.microsoftonline.com/299120a7-9680-48a3-b1ad-150125d656ce/v2.0
-Jwt__PlayerIdClaim            = sub
+Jwt__ExternalIdentity__SubjectClaim = sub (or oid for Entra when issued)
 Jwt__RequireHttpsMetadata     = true
 Jwt__SigningKey               = not set
 ConnectionStrings__DefaultConnection = not set yet
@@ -268,7 +274,7 @@ Recommended telemetry:
 | **Dependabot** | Keep Dependabot and dependency submission enabled. Review and merge security PRs promptly. |
 | **Managed identity** | Use Azure AD managed identity for SQL access where possible to avoid storing SQL credentials. |
 | **CORS** | Set `AllowedOrigins` to specific frontend origins in QA and Production. Use `https://teambuilder.info` for Production and a QA placeholder or TBD until the QA host is provisioned. Avoid `*` in non-Development environments. |
-| **JWT / OIDC** | Use Entra/OIDC JWT validation with `Jwt__Authority`, `Jwt__Audience`, `Jwt__Issuer`, `Jwt__PlayerIdClaim`, and `Jwt__RequireHttpsMetadata`. Do not set `Jwt__SigningKey` for Entra/OIDC JWT validation. |
+| **JWT / OIDC** | Use OIDC validation with `Jwt__Authority`, `Jwt__Audience`, `Jwt__RequireHttpsMetadata`, and `Jwt__ExternalIdentity__SubjectClaim` (plus tenant/provider metadata settings as needed). The subject is opaque and is not `Player.Id`. Do not set `Jwt__SigningKey` for OIDC validation. |
 
 ---
 

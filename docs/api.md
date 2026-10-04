@@ -132,37 +132,31 @@ X-Request-Id: my-client-trace-001
 
 ## Authentication
 
-JWT bearer validation is implemented. `[Authorize]` is applied to the protected
-routes listed below; authorization is endpoint-specific rather than a global
-write-route policy. Player create/update/delete routes currently do not require
-a JWT. See [`docs/auth-plan.md`](auth-plan.md) for identity and rollout details.
+JWT bearer validation is implemented. `ExternalIdentity` is the default
+authentication and challenge scheme. A validated token's exact issuer plus the
+configured subject claim identifies a `PlayerIdentity`, which maps to the
+internal TeamBuilder `Player.Id`. Issuer and subject are opaque, exact keys:
+they are not trimmed, case-folded, URI-normalized, or otherwise rewritten.
+Subjects do not need to be GUIDs. Authentication is endpoint-specific; see
+[`docs/auth-plan.md`](auth-plan.md) for the current identity model and
+[`docs/oidc-rollout.md`](oidc-rollout.md) for provider configuration guidance.
 
-### Protected write endpoints
+### Protected endpoints
 
-Write endpoints require a valid `Authorization: Bearer <token>` header. Requests
-without a token receive `401 Unauthorized`.
+Protected endpoints require a valid bearer token. Requests without a valid
+token receive `401 Unauthorized`. A valid external identity without a linked
+TeamBuilder player receives `403 Forbidden` on player-backed resource routes.
+`GET /api/v1/players/me` instead returns `404` when the authenticated identity
+is not linked yet.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/v1/teams` | Sets `OwnerId` from the authenticated player's identity. |
-| `PUT` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
-| `DELETE` | `/api/v1/teams/{id}` | Requires authentication; owner only (see below). |
-| `POST` | `/api/v1/teams/{teamId}/members/{playerId}/leave` | Only the authenticated player matching `{playerId}` may leave; owners cannot remove another player through this route. |
-| `POST` | `/api/v1/joinrequests` | Sets `PlayerId` from the authenticated player's identity. |
-| `PUT` | `/api/v1/joinrequests/{id}/process` | Only the team owner may process the request. |
-| `POST` | `/api/v1/events` | Sets `HostId` from the authenticated player's identity. |
-| `PUT` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
-| `DELETE` | `/api/v1/events/{id}` | Requires authentication; host only (see below). |
-| `POST` | `/api/v1/rosterimports` | Sets `ImportedByUserId` from the authenticated player's identity. |
-| `PUT` | `/api/v1/rosterimports/{id}/process` | Requires authentication; importer only (see below). |
-| `DELETE` | `/api/v1/rosterimports/{id}` | Requires authentication; importer only (see below). |
-| `POST` | `/api/v1/players/me` | Authenticated player onboarding. |
-| `PUT` | `/api/v1/players/{id}` | Authenticated caller may update their own profile only. |
-| `DELETE` | `/api/v1/players/{id}` | Authenticated caller may delete their own profile only. |
-
-`GET` and `POST /api/v1/players/me` and self-profile `PUT`/`DELETE`
-`/api/v1/players/{id}` require a JWT (see the Players section). Public player
-discovery does not require authentication.
+| `GET`, `POST` | `/api/v1/players/me` | Authenticated full-profile lookup and canonical onboarding. |
+| `PUT`, `DELETE` | `/api/v1/players/{id}` | Self-only; caller must resolve to `{id}`. |
+| `POST`, `PUT`, `DELETE` | `/api/v1/teams...` | Owner identity comes from `PlayerIdentity`; update/delete are owner-only. Leave is self-only; owners cannot remove another member through this route. |
+| `GET`, `POST`, `PUT` | `/api/v1/joinrequests...` | Reads are limited to the applicant or relevant team owner; creation is by the linked applicant; processing is team-owner-only. |
+| `POST`, `PUT`, `DELETE` | `/api/v1/events...` | Host identity comes from `PlayerIdentity`; updates/deletes are host-only. When an event names a team, only that team's owner may create it. |
+| `GET`, `POST`, `PUT`, `DELETE` | `/api/v1/rosterimports...` | Reads and mutations are restricted to the linked original importer. |
 
 ### Anonymous endpoints (no token required)
 
@@ -171,37 +165,28 @@ discovery does not require authentication.
 | `GET` | `/health` |
 | `GET` | `/health/ready` |
 | `GET` | `/api/v1/teams`, `/api/v1/teams/{id}` |
-| `GET` | `/api/v1/joinrequests/{id}`, `/api/v1/joinrequests/teams/{teamId}`, `/api/v1/joinrequests/players/{playerId}` |
 | `GET` | `/api/v1/events`, `/api/v1/events/{id}` |
-| `GET` | `/api/v1/rosterimports`, `/api/v1/rosterimports/{id}` |
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
 | `GET` | `/api/v1/players/username/{username}` |
 | `GET` | `/swagger` (Development only) |
 
-### Caller identity — JWT bearer
-
-`Authorization: Bearer <token>` is the supported caller identity mechanism for
-all protected write endpoints. The configured `Jwt:PlayerIdClaim` (default
-`sub`) carries the caller's player ID as a `Guid` string.
-
-| Scenario | `UserId` value |
-|---|---|
-| Valid JWT with a `sub` GUID claim | GUID from the `sub` claim |
-| Invalid / expired JWT on a protected endpoint | `401 Unauthorized` |
-| No JWT on a protected endpoint | `401 Unauthorized` |
-| Missing or non-GUID configured player claim | `401 Unauthorized` during token validation |
-| Anonymous request to a public endpoint | `Guid.Empty` |
+Join-request reads are not anonymous: a single request is readable by its
+applicant or the relevant team owner; team request lists are owner-only, and
+player request lists are self-only. Roster-import lists and details are
+importer-only because they may expose uploaded data such as `RawData`.
 
 ### Local development — issuing tokens with `dotnet user-jwts`
 
 ```powershell
 cd src/TeamBuilder.Api
 
-# Issue a dev token (stores signing key in user-secrets automatically)
-dotnet user-jwts create --audience teambuilder-api --claim sub=<your-player-guid>
+# The external subject may be any stable non-empty string, e.g. local-user-123.
+dotnet user-jwts create --audience teambuilder-api --claim sub=local-user-123
 ```
 
-Copy the printed token into Postman as `Authorization: Bearer <token>`.
+Use the token to call `POST /api/v1/players/me` once to create and link a
+player. Subsequent player-backed requests resolve that same exact issuer and
+subject pair.
 
 To align with TeamBuilder's `Jwt:SigningKey` config path, copy the generated
 key into user-secrets:
@@ -312,11 +297,11 @@ name:
 
 #### `GET api/v1/players/me`
 
-Returns the caller's full profile, including email, linked to their external identity. Requires a JWT.
-The identity key is the token's `iss` claim plus the claim named by
-`Jwt:ExternalIdentity:SubjectClaim` (default `sub`; use `oid` for Microsoft
-Entra). The subject does not need to be a GUID, and these endpoints do not
-do not require the subject to be a GUID.
+Returns the caller's full profile, including email, linked to their external
+identity. Requires a valid JWT. The identity key is the token's exact `iss`
+claim plus the claim named by `Jwt:ExternalIdentity:SubjectClaim` (default
+`sub`; configure `oid` for Microsoft Entra where appropriate). Both values are
+opaque and compared exactly; the subject does not need to be a GUID.
 
 - **Response `200`:** `PlayerDto` of the linked player.
 - **Response `401`:** No valid JWT, or the token has no usable issuer or subject.
@@ -401,9 +386,10 @@ continues to serve `GET` discovery. Use authenticated
 
 #### `PUT api/v1/players/{id}`
 
-Updates the caller's own existing player profile. Requires a JWT; only
-non-null fields are applied. Email may be updated through this endpoint but
-remains excluded from public player discovery responses.
+Updates the caller's own existing player profile. Requires authentication and
+the resolved caller `Player.Id` must match `{id}`; only non-null fields are
+applied. Email may be updated through this endpoint but remains excluded from
+public player discovery responses.
 
 **Request body:**
 
@@ -420,18 +406,20 @@ remains excluded from public player discovery responses.
 **Response `200`:** Updated `PlayerDto`.  
 **Response `404`:** Player not found.  
 **Response `400`:** Validation failure.
+**Response `401`:** No valid JWT provided.
+**Response `403`:** Authenticated caller is not this player.
 
 ---
 
 #### `DELETE api/v1/players/{id}`
 
-Deletes a player.
+Deletes the caller's player profile. Requires authentication and succeeds only
+when the resolved caller `Player.Id` matches `{id}`.
 
 **Response `204`:** Deleted.  
 **Response `404`:** Player not found.
-
-Player create, update, and delete routes currently do not require a JWT; the
-caller is not checked against the player being modified.
+**Response `401`:** No valid JWT provided.
+**Response `403`:** Authenticated caller is not this player.
 
 ---
 
@@ -487,7 +475,8 @@ Returns a paginated list of teams.
 
 #### `POST api/v1/teams`
 
-Creates a new team. Requires `Authorization: Bearer <token>`. Sets `OwnerId` from the JWT `sub` claim.
+Creates a new team. Requires a linked caller identity; `OwnerId` is set to the
+resolved internal `Player.Id`, not copied from a token claim.
 
 **Headers:**
 
@@ -571,6 +560,8 @@ the status transitions to `Recruiting`.
 #### `GET api/v1/joinrequests/{id}`
 
 Returns a single join request by ID. Includes team and player usernames.
+Requires authentication; only the applicant or the relevant team owner may
+read it.
 
 **Response `200`:**
 
@@ -594,7 +585,8 @@ Returns a single join request by ID. Includes team and player usernames.
 
 #### `GET api/v1/joinrequests/teams/{teamId}`
 
-Returns paginated join requests for a team.
+Returns paginated join requests for a team. Requires authentication and is
+restricted to that team's owner.
 
 **Query parameters:**
 
@@ -612,7 +604,8 @@ Returns paginated join requests for a team.
 
 #### `GET api/v1/joinrequests/players/{playerId}`
 
-Returns paginated join requests for a player.
+Returns paginated join requests for a player. Requires authentication; callers
+may read only their own requests.
 
 **Query parameters:** Same as `GET /joinrequests/teams/{teamId}`.
 
@@ -623,7 +616,8 @@ Returns paginated join requests for a player.
 #### `POST api/v1/joinrequests`
 
 Submits a join request. Only one pending request per player per team is allowed.
-Requires `Authorization: Bearer <token>`. Sets `PlayerId` from the JWT `sub` claim.
+Requires a linked caller identity; `PlayerId` is set to the resolved internal
+`Player.Id`, not copied from a token claim.
 
 **Headers:**
 
@@ -736,7 +730,9 @@ Returns a paginated list of events, ordered by `EventDateUtc` ascending.
 
 #### `POST api/v1/events`
 
-Creates a new event. Requires `Authorization: Bearer <token>`. Sets `HostId` from the JWT `sub` claim.
+Creates a new event. Requires a linked caller identity; `HostId` is set to the
+resolved internal `Player.Id`. If `teamId` is supplied, the caller must own
+that team, and the team cannot be inactive or disbanded.
 
 **Headers:**
 
@@ -762,6 +758,10 @@ Creates a new event. Requires `Authorization: Bearer <token>`. Sets `HostId` fro
 
 **Response `201`:** Created `EventDto`.  
 **Response `400`:** Validation failure.
+**Response `401`:** No valid JWT provided.
+**Response `403`:** Caller has no linked player or does not own the supplied team.
+**Response `404`:** Supplied team not found.
+**Response `409`:** Supplied team is inactive or disbanded.
 
 ---
 
@@ -804,7 +804,9 @@ Deletes an event.
 
 #### `GET api/v1/rosterimports/{id}`
 
-Returns a single roster import record by ID.
+Returns a single roster import record by ID. Requires authentication and is
+visible only to its original importer; the response includes uploaded
+`RawData`.
 
 **Response `200`:**
 
@@ -828,7 +830,8 @@ Returns a single roster import record by ID.
 
 #### `GET api/v1/rosterimports`
 
-Returns a paginated list of roster imports.
+Returns a paginated list of the caller's own roster imports. Requires
+authentication and a linked player identity.
 
 **Query parameters:**
 
@@ -845,7 +848,8 @@ Returns a paginated list of roster imports.
 #### `POST api/v1/rosterimports`
 
 Creates a new roster import record. Does not process it immediately.
-Requires `Authorization: Bearer <token>`. Sets `ImportedByUserId` from the JWT `sub` claim.
+Requires a linked caller identity; `ImportedByUserId` is set to the resolved
+internal `Player.Id`, not copied from a token claim.
 
 **Headers:**
 
@@ -935,7 +939,7 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 4. Issue a local dev token and paste it into the `token` environment variable:
    ```powershell
    cd src/TeamBuilder.Api
-   dotnet user-jwts create --audience teambuilder-api --claim sub=<your-player-guid>
+   dotnet user-jwts create --audience teambuilder-api --claim sub=local-user-123
    ```
 5. Replace placeholder GUIDs (`playerId`, `teamId`, etc.) with real IDs from
    previous responses or your local database.
@@ -946,7 +950,7 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 
 | Limitation | Detail |
 |---|---|
-| **Authorization is endpoint-specific** | Ownership checks are implemented for team, event, roster-import, and join-request processing routes. Player create/update/delete routes are currently unauthenticated; do not infer that other resources are protected without checking their endpoint behavior. |
+| **Authorization is endpoint-specific** | Public discovery is limited to teams, events, and public player profiles. Join-request and roster-import reads are restricted; write and profile mutation authorization is resource-specific as described above. |
 | **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |

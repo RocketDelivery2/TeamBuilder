@@ -93,8 +93,10 @@ Development. HTTPS redirection is disabled in the `QA` environment.
 | `AllowedOrigins` | `https://teambuilder.info,https://teambuilder-api-qa.onrender.com` | Illustrative only; replace with confirmed origins. |
 | `Jwt__Authority` | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Set to the confirmed OIDC authority. |
 | `Jwt__Audience` | `<api-audience>` | Set to the audience expected by the API registration. |
-| `Jwt__Issuer` | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Set to the confirmed token issuer. |
-| `Jwt__PlayerIdClaim` | `sub` | Player identifier claim. |
+| `Jwt__Issuer` | *(optional)* | Expected issuer on the symmetric-key validation path; OIDC uses authority metadata. |
+| `Jwt__ExternalIdentity__SubjectClaim` | `sub` by default; `oid` for Entra when present in the API token | Configured opaque external subject claim; not an internal player ID. |
+| `Jwt__ExternalIdentity__TenantIdClaim` | `tid` | Optional tenant metadata claim. |
+| `Jwt__ExternalIdentity__Provider` | `oidc` by default | Descriptive provider metadata label. |
 | `Jwt__RequireHttpsMetadata` | `true` | Keep metadata retrieval secure. |
 | `Jwt__SigningKey` | *(do not set)* | Do not set for Entra/OIDC JWT validation. |
 | `ConnectionStrings__TeamBuilderSql` | *(set when SQL is provisioned)* | The API reads this exact connection-string key. |
@@ -145,15 +147,20 @@ Insights SDK. The placeholder alone does not enable telemetry.
 |----------|-------|-------------|---------|
 | `Jwt__Authority` | QA, Production | Entra/OIDC authority URL | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
 | `Jwt__Audience` | QA, Production | API audience | `api://teambuilder-api` |
-| `Jwt__Issuer` | QA, Production | Token issuer | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
-| `Jwt__PlayerIdClaim` | QA, Production | Claim mapped to Player ID | `oid` or `sub` |
+| `Jwt__Issuer` | QA, Production | Expected issuer for symmetric-key validation; OIDC uses authority metadata | *(provider-specific)* |
 | `Jwt__RequireHttpsMetadata` | QA, Production | Require HTTPS for metadata discovery | `true` |
-| `Jwt__SigningKey` | QA, Production | Do not set for Entra/OIDC JWT validation | *(not used)* |
+| `Jwt__SigningKey` | Local development / tests | If non-empty, selects symmetric-key validation instead of OIDC | Keep secrets outside source control |
+| `Jwt__ExternalIdentity__SubjectClaim` | Per provider | Configured opaque external subject claim | `sub` by default; `oid` for Entra when issued |
+| `Jwt__ExternalIdentity__TenantIdClaim` | Per provider | Optional tenant metadata claim | `tid` by default |
+| `Jwt__ExternalIdentity__Provider` | Per provider | Descriptive identity-provider metadata | `oidc` by default |
 
 The API supports symmetric-key and OIDC-authority JWT validation, selected by
-configuration. The repository does not establish which identity provider or
+configuration. The `ExternalIdentity` scheme is the default. A validated
+token's exact issuer and configured subject claim resolve through
+`PlayerIdentity` to the internal `Player.Id`; no JWT claim is parsed as a
+player ID. The repository does not establish which identity provider or
 credentials are currently deployed; validate the authority, issuer, audience,
-and player-ID claim with the provider actually in use.
+and subject claim with the provider actually in use.
 
 ---
 
@@ -342,8 +349,11 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
 
 - HTTPS redirection is configured except in the `QA` environment.
 - Configure CORS to allow only known frontend origins
-- JWT bearer validation and endpoint-specific authorization are implemented.
-  Player create/update/delete routes currently do not require authentication.
+- JWT bearer validation uses the default `ExternalIdentity` scheme and
+  endpoint-specific PlayerIdentity-based authorization. Player onboarding and
+  self-profile mutations require authentication; public player discovery
+  omits Email. Join-request reads are applicant/team-owner restricted, and
+  roster-import reads are importer-only.
 - Consider API rate limiting for production
 
 ---
