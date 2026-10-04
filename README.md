@@ -564,6 +564,9 @@ not verify their current ownership, availability, or operational status.
 
 | Resource | URL |
 |---|---|
+| Rapid-refill platform architecture | [docs/architecture/rapid-refill-platform.md](docs/architecture/rapid-refill-platform.md) |
+| TBRL v0.1 interchange draft | [docs/architecture/tbrl-v0.1.md](docs/architecture/tbrl-v0.1.md) |
+| TBRL v0.1 JSON Schema | [docs/schemas/tbrl-0.1.schema.json](docs/schemas/tbrl-0.1.schema.json) |
 | Estimated operating costs | [docs/estimated-costs.md](docs/estimated-costs.md) |
 | OIDC rollout plan | [docs/oidc-rollout.md](docs/oidc-rollout.md) |
 | Authentication plan | [docs/auth-plan.md](docs/auth-plan.md) |
