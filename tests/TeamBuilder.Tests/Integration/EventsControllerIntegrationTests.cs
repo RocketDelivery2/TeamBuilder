@@ -27,16 +27,16 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<TeamEvent> SeedEventAsync(string name = "Test Event", Guid? hostId = null)
+    private async Task<EventOccurrence> SeedEventAsync(string name = "Test Event", Guid? hostId = null)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
 
-        var ev = new TeamEvent
+        var ev = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = name,
-            EventDateUtc = DateTime.UtcNow.AddDays(7),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(7),
             Status = EventStatus.Planned,
             MaxParticipants = 32,
             HostId = hostId,
@@ -436,7 +436,7 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         await db.SaveChangesAsync();
     }
 
-    private async Task<TeamEvent?> FindEventAsync(Guid id)
+    private async Task<EventOccurrence?> FindEventAsync(Guid id)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();

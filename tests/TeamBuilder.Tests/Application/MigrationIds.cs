@@ -13,4 +13,5 @@ internal static class MigrationIds
     public const string AddPlayerIdentities = "20261003013542_AddPlayerIdentities";
     public const string EnforceCapacityDatabaseGuards = "20261004051605_EnforceCapacityDatabaseGuards";
     public const string SeparateTeamLifecycleFromRecruitment = "20261004061312_SeparateTeamLifecycleFromRecruitment";
+    public const string AddEventOccurrenceSchedulingFoundation = "20261004172211_AddEventOccurrenceSchedulingFoundation";
 }

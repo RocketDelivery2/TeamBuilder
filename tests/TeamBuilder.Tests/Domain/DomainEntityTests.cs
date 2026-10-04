@@ -10,7 +10,7 @@ public class TeamEventTests
     public void TeamEvent_ShouldInitialize_WithDefaultValues()
     {
         // Arrange & Act
-        var teamEvent = new TeamEvent();
+        var teamEvent = new EventOccurrence();
 
         // Assert
         teamEvent.Id.Should().Be(Guid.Empty);
@@ -29,16 +29,16 @@ public class TeamEventTests
         var eventDate = DateTime.UtcNow.AddDays(7);
 
         // Act
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = eventId,
             Name = "Championship Event",
             Description = "Annual championship",
-            EventDateUtc = eventDate,
+            ScheduledStartUtc = eventDate,
             Status = EventStatus.Open,
             Category = "Gaming",
             Tags = "fps,tournament",
-            Location = "Online",
+            LegacyLocation = "Online",
             Region = "NA",
             MaxParticipants = 64,
             CurrentParticipantCount = 12,
@@ -50,11 +50,11 @@ public class TeamEventTests
         teamEvent.Id.Should().Be(eventId);
         teamEvent.Name.Should().Be("Championship Event");
         teamEvent.Description.Should().Be("Annual championship");
-        teamEvent.EventDateUtc.Should().Be(eventDate);
+        teamEvent.ScheduledStartUtc.Should().Be(eventDate);
         teamEvent.Status.Should().Be(EventStatus.Open);
         teamEvent.Category.Should().Be("Gaming");
         teamEvent.Tags.Should().Be("fps,tournament");
-        teamEvent.Location.Should().Be("Online");
+        teamEvent.LegacyLocation.Should().Be("Online");
         teamEvent.Region.Should().Be("NA");
         teamEvent.MaxParticipants.Should().Be(64);
         teamEvent.CurrentParticipantCount.Should().Be(12);
@@ -66,11 +66,11 @@ public class TeamEventTests
     public void TeamEvent_ShouldSupportNullOptionalFields()
     {
         // Arrange & Act
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Minimal Event",
-            EventDateUtc = DateTime.UtcNow.AddDays(1),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(1),
             MaxParticipants = 10
         };
 
@@ -78,7 +78,7 @@ public class TeamEventTests
         teamEvent.Description.Should().BeNull();
         teamEvent.Category.Should().BeNull();
         teamEvent.Tags.Should().BeNull();
-        teamEvent.Location.Should().BeNull();
+        teamEvent.LegacyLocation.Should().BeNull();
         teamEvent.Region.Should().BeNull();
         teamEvent.TeamId.Should().BeNull();
         teamEvent.HostId.Should().BeNull();
@@ -92,7 +92,7 @@ public class TeamEventTests
         // Arrange & Act & Assert
         foreach (var status in Enum.GetValues<EventStatus>())
         {
-            var teamEvent = new TeamEvent { Status = status };
+            var teamEvent = new EventOccurrence { Status = status };
             teamEvent.Status.Should().Be(status);
         }
     }

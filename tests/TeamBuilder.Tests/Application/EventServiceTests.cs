@@ -89,11 +89,11 @@ public class EventServiceTests : IDisposable
     public async Task GetByIdAsync_ShouldReturnEvent_WhenExists()
     {
         // Arrange
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Existing Event",
-            EventDateUtc = DateTime.UtcNow.AddDays(5),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(5),
             Status = EventStatus.Open,
             MaxParticipants = 20,
             CurrentParticipantCount = 0
@@ -143,11 +143,11 @@ public class EventServiceTests : IDisposable
         _context.Teams.Add(team);
         _context.Players.Add(host);
 
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Full Event",
-            EventDateUtc = DateTime.UtcNow.AddDays(1),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(1),
             Status = EventStatus.Planned,
             MaxParticipants = 10,
             CurrentParticipantCount = 0,
@@ -177,11 +177,11 @@ public class EventServiceTests : IDisposable
 
         for (int i = 0; i < 15; i++)
         {
-            _context.Events.Add(new TeamEvent
+            _context.Events.Add(new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = $"Event {i}",
-                EventDateUtc = baseDate.AddDays(i),
+                ScheduledStartUtc = baseDate.AddDays(i),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 CurrentParticipantCount = 0
@@ -210,11 +210,11 @@ public class EventServiceTests : IDisposable
 
         for (int i = 0; i < 15; i++)
         {
-            _context.Events.Add(new TeamEvent
+            _context.Events.Add(new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = $"Event {i}",
-                EventDateUtc = baseDate.AddDays(i),
+                ScheduledStartUtc = baseDate.AddDays(i),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 CurrentParticipantCount = 0
@@ -238,29 +238,29 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Gaming Event",
-                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(1),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Category = "Gaming"
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Sports Event",
-                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(2),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Category = "Sports"
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Gaming Event 2",
-                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(3),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Category = "Gaming"
@@ -283,29 +283,29 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "NA Event",
-                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(1),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Region = "NA"
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "EU Event",
-                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(2),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Region = "EU"
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "NA Event 2",
-                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(3),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Region = "NA"
@@ -327,27 +327,27 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Open Event",
-                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(1),
                 Status = EventStatus.Open,
                 MaxParticipants = 10
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Planned Event",
-                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(2),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Cancelled Event",
-                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(3),
                 Status = EventStatus.Cancelled,
                 MaxParticipants = 10
             }
@@ -370,27 +370,27 @@ public class EventServiceTests : IDisposable
         var baseDate = DateTime.UtcNow;
 
         _context.Events.AddRange(
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Third",
-                EventDateUtc = baseDate.AddDays(3),
+                ScheduledStartUtc = baseDate.AddDays(3),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "First",
-                EventDateUtc = baseDate.AddDays(1),
+                ScheduledStartUtc = baseDate.AddDays(1),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Second",
-                EventDateUtc = baseDate.AddDays(2),
+                ScheduledStartUtc = baseDate.AddDays(2),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10
             }
@@ -412,31 +412,31 @@ public class EventServiceTests : IDisposable
     {
         // Arrange
         _context.Events.AddRange(
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Gaming NA",
-                EventDateUtc = DateTime.UtcNow.AddDays(1),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(1),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Category = "Gaming",
                 Region = "NA"
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Gaming EU",
-                EventDateUtc = DateTime.UtcNow.AddDays(2),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(2),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Category = "Gaming",
                 Region = "EU"
             },
-            new TeamEvent
+            new EventOccurrence
             {
                 Id = Guid.NewGuid(),
                 Name = "Sports NA",
-                EventDateUtc = DateTime.UtcNow.AddDays(3),
+                ScheduledStartUtc = DateTime.UtcNow.AddDays(3),
                 Status = EventStatus.Planned,
                 MaxParticipants = 10,
                 Category = "Sports",
@@ -462,11 +462,11 @@ public class EventServiceTests : IDisposable
     public async Task GetAllAsync_ShouldReturnEmpty_WhenNoEventsMatch()
     {
         // Arrange
-        _context.Events.Add(new TeamEvent
+        _context.Events.Add(new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Only Event",
-            EventDateUtc = DateTime.UtcNow.AddDays(1),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(1),
             Status = EventStatus.Planned,
             MaxParticipants = 10,
             Region = "NA"
@@ -486,11 +486,11 @@ public class EventServiceTests : IDisposable
     public async Task UpdateAsync_ShouldUpdateEvent_Successfully()
     {
         // Arrange
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Original Name",
-            EventDateUtc = DateTime.UtcNow.AddDays(5),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(5),
             Status = EventStatus.Planned,
             MaxParticipants = 10,
             CurrentParticipantCount = 0
@@ -541,11 +541,11 @@ public class EventServiceTests : IDisposable
     public async Task UpdateAsync_ShouldNotUpdateName_WhenWhitespaceProvided()
     {
         // Arrange
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Original Name",
-            EventDateUtc = DateTime.UtcNow.AddDays(5),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(5),
             Status = EventStatus.Planned,
             MaxParticipants = 10,
             CurrentParticipantCount = 0
@@ -567,12 +567,12 @@ public class EventServiceTests : IDisposable
     public async Task UpdateAsync_ShouldOnlyUpdateProvidedFields()
     {
         // Arrange
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Original Name",
             Description = "Original Description",
-            EventDateUtc = DateTime.UtcNow.AddDays(5),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(5),
             Status = EventStatus.Planned,
             Category = "Gaming",
             MaxParticipants = 10,
@@ -601,11 +601,11 @@ public class EventServiceTests : IDisposable
     public async Task UpdateAsync_ShouldCancelEvent_Successfully()
     {
         // Arrange
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Active Event",
-            EventDateUtc = DateTime.UtcNow.AddDays(5),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(5),
             Status = EventStatus.Open,
             MaxParticipants = 10,
             CurrentParticipantCount = 3
@@ -627,11 +627,11 @@ public class EventServiceTests : IDisposable
     public async Task DeleteAsync_ShouldDeleteEvent_Successfully()
     {
         // Arrange
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = "Event to Delete",
-            EventDateUtc = DateTime.UtcNow.AddDays(2),
+            ScheduledStartUtc = DateTime.UtcNow.AddDays(2),
             Status = EventStatus.Planned,
             MaxParticipants = 10,
             CurrentParticipantCount = 0

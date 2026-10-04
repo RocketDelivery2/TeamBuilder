@@ -21,7 +21,7 @@ public class Team : BaseEntity
     public Guid? OwnerId { get; set; }
     public Player? Owner { get; set; }
     public ICollection<TeamMember> Members { get; set; } = new List<TeamMember>();
-    public ICollection<TeamEvent> Events { get; set; } = new List<TeamEvent>();
+    public ICollection<EventOccurrence> Events { get; set; } = new List<EventOccurrence>();
     public ICollection<JoinRequest> JoinRequests { get; set; } = new List<JoinRequest>();
 
     // Derived, never persisted.

@@ -221,7 +221,7 @@ ORM, or a microservice boundary) would require touching business rules.
 
 #### Severity: Low (by design choice, but worth noting)
 
-Domain entities (`Team`, `Player`, `TeamEvent`, etc.) are plain data
+Domain entities (`Team`, `Player`, `EventOccurrence`, etc.) are plain data
 containers with no behavior methods. Business rules such as "a full team
 becomes Recruiting when a member leaves" are expressed as imperative logic
 in service methods rather than as entity methods.
