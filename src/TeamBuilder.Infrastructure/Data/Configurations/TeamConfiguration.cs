@@ -26,8 +26,17 @@ public class TeamConfiguration : IEntityTypeConfiguration<Team>
         builder.Property(t => t.Description)
             .HasMaxLength(2000);
 
-        builder.Property(t => t.Status)
+        builder.Property(t => t.LifecycleStatus)
             .IsRequired();
+
+        builder.Property(t => t.IsAcceptingMembers)
+            .IsRequired();
+
+        // Capacity and the legacy TeamStatus are derived, never stored.
+        builder.Ignore(t => t.IsFull);
+        builder.Ignore(t => t.OpenSlots);
+        builder.Ignore(t => t.HasVacancies);
+        builder.Ignore(t => t.LegacyStatus);
 
         builder.Property(t => t.Region)
             .HasMaxLength(100);
@@ -67,7 +76,10 @@ public class TeamConfiguration : IEntityTypeConfiguration<Team>
             .HasForeignKey(jr => jr.TeamId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasIndex(t => t.Status);
+        // Discovery: lifecycleStatus, hasVacancies and the legacy status filters all seek on
+        // LifecycleStatus (+ IsAcceptingMembers); the CurrentMemberCount < MaxMembers column
+        // comparison is a residual predicate. No standalone low-selectivity boolean index.
+        builder.HasIndex(t => new { t.LifecycleStatus, t.IsAcceptingMembers });
         builder.HasIndex(t => t.Category);
         builder.HasIndex(t => t.Region);
         builder.HasIndex(t => t.CreatedAtUtc);

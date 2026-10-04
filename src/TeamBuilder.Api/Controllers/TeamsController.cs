@@ -46,12 +46,14 @@ public class TeamsController : ControllerBase
         [FromQuery] string? category = null,
         [FromQuery] string? region = null,
         [FromQuery] TeamStatus? status = null,
+        [FromQuery] TeamLifecycleStatus? lifecycleStatus = null,
+        [FromQuery] bool? hasVacancies = null,
         CancellationToken cancellationToken = default)
     {
         if (page < 1) page = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 20;
 
-        var result = await _teamService.GetAllAsync(page, pageSize, category, region, status, cancellationToken);
+        var result = await _teamService.GetAllAsync(page, pageSize, category, region, status, lifecycleStatus, hasVacancies, cancellationToken);
         return Ok(result);
     }
 

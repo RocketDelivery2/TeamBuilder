@@ -142,6 +142,8 @@ public class JoinRequestsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<JoinRequestDto>> Create(
         [FromBody] CreateJoinRequestDto createJoinRequestDto,
         CancellationToken cancellationToken = default)
@@ -156,7 +158,17 @@ public class JoinRequestsController : ControllerBase
             return Forbid();
         }
 
-        var joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, currentPlayerId.Value, cancellationToken);
+        JoinRequestDto joinRequest;
+        try
+        {
+            joinRequest = await _joinRequestService.CreateAsync(createJoinRequestDto, currentPlayerId.Value, cancellationToken);
+        }
+        catch (TeamNotFoundException ex)
+        {
+            _logger.LogInformation("Team with ID {TeamId} not found for join request creation", ex.TeamId);
+            return NotFound();
+        }
+
         _logger.LogInformation("Created join request {JoinRequestId} for team {TeamId}", joinRequest.Id, joinRequest.TeamId);
         return CreatedAtAction(nameof(GetById), new { id = joinRequest.Id }, joinRequest);
     }

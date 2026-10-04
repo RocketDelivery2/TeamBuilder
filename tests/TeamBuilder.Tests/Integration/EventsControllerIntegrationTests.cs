@@ -10,6 +10,8 @@ using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
 
+using TeamBuilder.Tests.Application;
+
 namespace TeamBuilder.Tests.Integration;
 
 public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
@@ -375,8 +377,37 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         {
             Id = Guid.NewGuid(),
             Name = $"Team-{Guid.NewGuid():N}",
-            Status = status,
+            LifecycleStatus = TeamSeeding.Lifecycle(status),
+            IsAcceptingMembers = TeamSeeding.Accepting(status),
             MaxMembers = 10,
+            OwnerId = ownerId,
+            CreatedAtUtc = DateTime.UtcNow,
+            RowVersion = []
+        };
+
+        db.Teams.Add(team);
+        await db.SaveChangesAsync();
+        return team;
+    }
+
+    private async Task<Team> SeedTeamWithStateAsync(
+        Guid ownerId,
+        TeamLifecycleStatus lifecycleStatus,
+        bool isAcceptingMembers,
+        int currentMemberCount,
+        int maxMembers)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Team-{Guid.NewGuid():N}",
+            LifecycleStatus = lifecycleStatus,
+            IsAcceptingMembers = isAcceptingMembers,
+            MaxMembers = maxMembers,
+            CurrentMemberCount = currentMemberCount,
             OwnerId = ownerId,
             CreatedAtUtc = DateTime.UtcNow,
             RowVersion = []
@@ -497,6 +528,46 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         var persisted = await FindEventAsync(created.Id);
         persisted!.TeamId.Should().Be(team.Id);
         persisted.HostId.Should().Be(team.OwnerId);
+    }
+
+    // Only the lifecycle gates team-associated events: recruitment policy and physical capacity
+    // never affect scheduling.
+    [Theory]
+    [InlineData(true, 3, 10)]   // accepting, open slots
+    [InlineData(false, 3, 10)]  // recruitment closed, open slots
+    [InlineData(true, 5, 5)]    // accepting but physically full (legacy Full)
+    [InlineData(false, 5, 5)]   // closed and full (legacy Full)
+    public async Task Create_ByTeamOwner_ForActiveLifecycle_Returns201RegardlessOfRecruitmentOrCapacity(
+        bool isAcceptingMembers,
+        int currentMemberCount,
+        int maxMembers)
+    {
+        var owner = await CreateLinkedIdentityAsync();
+        var team = await SeedTeamWithStateAsync(
+            owner.PlayerId, TeamLifecycleStatus.Active, isAcceptingMembers, currentMemberCount, maxMembers);
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        (await GetTeamEventCountAsync(team.Id)).Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(TeamLifecycleStatus.Inactive, 0)]
+    [InlineData(TeamLifecycleStatus.Disbanded, 0)]
+    [InlineData(TeamLifecycleStatus.Inactive, 4)]
+    [InlineData(TeamLifecycleStatus.Disbanded, 4)]
+    public async Task Create_ByTeamOwner_ForInactiveOrDisbandedLifecycle_Returns409(
+        TeamLifecycleStatus lifecycleStatus,
+        int currentMemberCount)
+    {
+        var owner = await CreateLinkedIdentityAsync();
+        var team = await SeedTeamWithStateAsync(owner.PlayerId, lifecycleStatus, false, currentMemberCount, 4);
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await GetTeamEventCountAsync(team.Id)).Should().Be(0);
     }
 
     [Fact]

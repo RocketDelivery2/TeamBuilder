@@ -59,7 +59,7 @@ public class EnforceCapacityDatabaseGuardsMigrationIntegrationTests : IAsyncLife
         history.MaxMembers.Should().Be(1);
         var ok = await GetTeamAsync(consistent);
         ok.CurrentMemberCount.Should().Be(2);
-        ok.Status.Should().Be(TeamStatus.Full);
+        ok.Status.Should().Be((int)TeamStatus.Full);
 
         (await CheckConstraintExistsAsync()).Should().BeTrue();
     }
@@ -71,7 +71,8 @@ public class EnforceCapacityDatabaseGuardsMigrationIntegrationTests : IAsyncLife
 
         (await CheckConstraintExistsAsync()).Should().BeTrue();
         await using var context = _db.CreateContext();
-        (await context.Database.GetPendingMigrationsAsync()).Should().BeEmpty();
+        (await context.Database.GetAppliedMigrationsAsync())
+            .Should().Contain(MigrationIds.EnforceCapacityDatabaseGuards);
     }
 
     [Fact]
@@ -105,21 +106,9 @@ public class EnforceCapacityDatabaseGuardsMigrationIntegrationTests : IAsyncLife
             .Should().NotContain(MigrationIds.EnforceCapacityDatabaseGuards);
     }
 
-    private async Task<Guid> SeedTeamAsync(int maxMembers, int storedCount, TeamStatus status = TeamStatus.Recruiting)
-    {
-        await using var context = _db.CreateContext();
-        var team = new Team
-        {
-            Id = Guid.NewGuid(),
-            Name = $"team_{Guid.NewGuid():N}",
-            MaxMembers = maxMembers,
-            CurrentMemberCount = storedCount,
-            Status = status
-        };
-        context.Teams.Add(team);
-        await context.SaveChangesAsync();
-        return team.Id;
-    }
+    // Teams is seeded/read with raw SQL: the current EF model no longer matches its historical shape.
+    private Task<Guid> SeedTeamAsync(int maxMembers, int storedCount, TeamStatus status = TeamStatus.Recruiting) =>
+        LegacyTeamsTable.InsertAsync(_db.ConnectionString, maxMembers, storedCount, status);
 
     private async Task AddMembersAsync(Guid teamId, int active, int inactive)
     {
@@ -142,11 +131,8 @@ public class EnforceCapacityDatabaseGuardsMigrationIntegrationTests : IAsyncLife
         await context.SaveChangesAsync();
     }
 
-    private async Task<Team> GetTeamAsync(Guid teamId)
-    {
-        await using var context = _db.CreateContext();
-        return await context.Teams.AsNoTracking().SingleAsync(t => t.Id == teamId);
-    }
+    private Task<LegacyTeamsTable.LegacyTeamRow> GetTeamAsync(Guid teamId) =>
+        LegacyTeamsTable.GetAsync(_db.ConnectionString, teamId);
 
     private async Task<int> CountActiveAsync(Guid teamId)
     {

@@ -35,7 +35,8 @@ public class TeamTests
             Id = teamId,
             Name = teamName,
             Description = description,
-            Status = TeamStatus.Recruiting,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             MaxMembers = 10,
             CurrentMemberCount = 3,
             Region = "NA",
@@ -48,7 +49,7 @@ public class TeamTests
         team.Id.Should().Be(teamId);
         team.Name.Should().Be(teamName);
         team.Description.Should().Be(description);
-        team.Status.Should().Be(TeamStatus.Recruiting);
+        team.LegacyStatus.Should().Be(TeamStatus.Recruiting);
         team.MaxMembers.Should().Be(10);
         team.CurrentMemberCount.Should().Be(3);
         team.Region.Should().Be("NA");

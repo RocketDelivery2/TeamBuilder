@@ -312,7 +312,7 @@ public class JoinRequestServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessAsync_ShouldMarkTeamAsFull_WhenReachingMaxMembers()
+    public async Task ProcessAsync_TeamIsDerivedFull_WhenReachingMaxMembers()
     {
         // Arrange
         var team = new Team
@@ -322,7 +322,8 @@ public class JoinRequestServiceTests : IDisposable
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 2,
-            Status = TeamStatus.Recruiting
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true
         };
 
         var player = new Player
@@ -361,7 +362,7 @@ public class JoinRequestServiceTests : IDisposable
         // Assert
         var updatedTeam = await _context.Teams.FindAsync(team.Id);
         updatedTeam!.CurrentMemberCount.Should().Be(3);
-        updatedTeam.Status.Should().Be(TeamStatus.Full);
+        updatedTeam.LegacyStatus.Should().Be(TeamStatus.Full);
     }
 
     [Fact]
@@ -375,7 +376,8 @@ public class JoinRequestServiceTests : IDisposable
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Full
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true
         };
 
         var player = new Player
@@ -424,7 +426,8 @@ public class JoinRequestServiceTests : IDisposable
             Name = "Test Team",
             MaxMembers = 3,
             CurrentMemberCount = 3,
-            Status = TeamStatus.Full
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true
         };
 
         var player = new Player
@@ -490,7 +493,8 @@ public class JoinRequestServiceTests : IDisposable
                 Name = "Test Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 2,
-                Status = TeamStatus.Recruiting
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true
             };
 
             var player = new Player
@@ -607,7 +611,8 @@ public class JoinRequestServiceTests : IDisposable
                 Name = "Test Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 1,
-                Status = TeamStatus.Recruiting
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true
             };
 
             var player = new Player
@@ -664,7 +669,8 @@ public class JoinRequestServiceTests : IDisposable
                 Name = "Test Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 1,
-                Status = TeamStatus.Recruiting
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true
             };
 
             var player = new Player
@@ -835,7 +841,8 @@ public class JoinRequestServiceTests : IDisposable
             Name = "Owned Team",
             MaxMembers = 5,
             CurrentMemberCount = 2,
-            Status = TeamStatus.Recruiting
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true
         };
 
         var player = new Player
@@ -873,7 +880,7 @@ public class JoinRequestServiceTests : IDisposable
 
         var storedTeam = await _context.Teams.SingleAsync(t => t.Id == team.Id);
         storedTeam.CurrentMemberCount.Should().Be(team.CurrentMemberCount);
-        storedTeam.Status.Should().Be(team.Status);
+        storedTeam.LegacyStatus.Should().Be(team.LegacyStatus);
 
         (await _context.TeamMembers.AnyAsync(tm => tm.TeamId == team.Id)).Should().BeFalse();
     }

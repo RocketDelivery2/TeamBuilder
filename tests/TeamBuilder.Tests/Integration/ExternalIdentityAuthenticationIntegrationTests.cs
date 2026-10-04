@@ -53,7 +53,8 @@ public sealed class ExternalIdentityAuthenticationIntegrationTests : IClassFixtu
         {
             Id = Guid.NewGuid(),
             Name = $"Team-{Guid.NewGuid():N}",
-            Status = TeamStatus.Active,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             MaxMembers = 10,
             CreatedAtUtc = DateTime.UtcNow,
             RowVersion = []

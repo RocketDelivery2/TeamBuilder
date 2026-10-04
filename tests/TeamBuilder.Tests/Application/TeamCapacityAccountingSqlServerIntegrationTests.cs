@@ -104,11 +104,15 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
 
         result!.MaxMembers.Should().Be(4);
         result.CurrentMemberCount.Should().Be(4);
-        result.Status.Should().Be(TeamStatus.Active, "only Full/Recruiting transition on capacity changes");
+        result.IsFull.Should().BeTrue("capacity is derived from the count and MaxMembers");
+        result.OpenSlots.Should().Be(0);
+        result.Status.Should().Be(TeamStatus.Full);
+        result.LifecycleStatus.Should().Be(TeamLifecycleStatus.Active, "capacity changes never touch the lifecycle");
+        result.IsAcceptingMembers.Should().BeFalse("capacity changes never touch the recruitment policy");
     }
 
     [Fact]
-    public async Task UpdateTeam_IncreasingFullTeamCapacity_TransitionsToRecruiting()
+    public async Task UpdateTeam_IncreasingFullTeamCapacity_DerivedStatusBecomesRecruiting()
     {
         var teamId = await SeedTeamAsync(maxMembers: 3, storedCount: 3, status: TeamStatus.Full);
         await AddActiveMembersAsync(teamId, 3);
@@ -116,11 +120,11 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
         var result = await UpdateTeamAsync(teamId, new UpdateTeamDto { MaxMembers = 5 });
 
         result!.Status.Should().Be(TeamStatus.Recruiting);
-        (await GetTeamAsync(teamId)).Status.Should().Be(TeamStatus.Recruiting);
+        (await GetTeamAsync(teamId)).LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     [Fact]
-    public async Task UpdateTeam_DecreasingRecruitingTeamCapacityToActiveCount_TransitionsToFull()
+    public async Task UpdateTeam_DecreasingRecruitingTeamCapacityToActiveCount_DerivedStatusBecomesFull()
     {
         // Stale-high stored count (6) must not matter: the 3 active memberships decide.
         var teamId = await SeedTeamAsync(maxMembers: 8, storedCount: 6, status: TeamStatus.Recruiting);
@@ -164,7 +168,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
         (await IsActiveMemberAsync(teamId, applicantId)).Should().BeTrue();
         var team = await GetTeamAsync(teamId);
         team.CurrentMemberCount.Should().Be(2);
-        team.Status.Should().Be(TeamStatus.Recruiting);
+        team.LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     [Fact]
@@ -183,7 +187,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Approve_FinalSlot_SetsTeamFull()
+    public async Task Approve_FinalSlot_MakesTeamDerivedFull()
     {
         var (teamId, ownerId) = await SeedOwnedTeamAsync(maxMembers: 3, storedCount: 0, status: TeamStatus.Recruiting);
         await AddActiveMembersAsync(teamId, 2);
@@ -193,7 +197,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
 
         var team = await GetTeamAsync(teamId);
         team.CurrentMemberCount.Should().Be(3);
-        team.Status.Should().Be(TeamStatus.Full);
+        team.LegacyStatus.Should().Be(TeamStatus.Full);
     }
 
     [Fact]
@@ -240,7 +244,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
         (await GetRequestStatusAsync(firstRequestId)).Should().Be(RequestStatus.Pending);
         var team = await GetTeamAsync(teamId);
         team.CurrentMemberCount.Should().Be(2);
-        team.Status.Should().Be(TeamStatus.Full);
+        team.LegacyStatus.Should().Be(TeamStatus.Full);
     }
 
     [Fact]
@@ -298,7 +302,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Leave_FromFullTeam_TransitionsToRecruiting()
+    public async Task Leave_FromFullTeam_DerivedStatusBecomesRecruiting()
     {
         var teamId = await SeedTeamAsync(maxMembers: 3, storedCount: 3, status: TeamStatus.Full);
         var leaverId = await SeedPlayerAsync();
@@ -309,7 +313,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
 
         var team = await GetTeamAsync(teamId);
         team.CurrentMemberCount.Should().Be(2);
-        team.Status.Should().Be(TeamStatus.Recruiting);
+        team.LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     [Fact]
@@ -352,7 +356,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
         (await IsActiveMemberAsync(teamId, secondLeaverId)).Should().BeFalse();
         var team = await GetTeamAsync(teamId);
         team.CurrentMemberCount.Should().Be(2);
-        team.Status.Should().Be(TeamStatus.Recruiting);
+        team.LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     // ── Player deletion ──────────────────────────────────────────────────────
@@ -377,7 +381,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
         (await GetTeamAsync(teamA)).CurrentMemberCount.Should().Be(2);
         var b = await GetTeamAsync(teamB);
         b.CurrentMemberCount.Should().Be(3);
-        b.Status.Should().Be(TeamStatus.Active);
+        b.LegacyStatus.Should().Be(TeamStatus.Active);
         (await PlayerExistsAsync(playerId)).Should().BeFalse();
     }
 
@@ -395,10 +399,10 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
 
         var a = await GetTeamAsync(teamA);
         a.CurrentMemberCount.Should().Be(1);
-        a.Status.Should().Be(TeamStatus.Recruiting);
+        a.LegacyStatus.Should().Be(TeamStatus.Recruiting);
         var b = await GetTeamAsync(teamB);
         b.CurrentMemberCount.Should().Be(0);
-        b.Status.Should().Be(TeamStatus.Recruiting);
+        b.LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     [Fact]
@@ -425,11 +429,13 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
 
         var history = await GetTeamAsync(historyTeam);
         history.CurrentMemberCount.Should().Be(4);
-        history.Status.Should().Be(TeamStatus.Full);
+        history.LifecycleStatus.Should().Be(TeamLifecycleStatus.Active);
+        history.IsAcceptingMembers.Should().BeTrue();
 
         var unrelated = await GetTeamAsync(unrelatedTeam);
         unrelated.CurrentMemberCount.Should().Be(4);
-        unrelated.Status.Should().Be(TeamStatus.Full);
+        unrelated.LifecycleStatus.Should().Be(TeamLifecycleStatus.Active);
+        unrelated.IsAcceptingMembers.Should().BeTrue();
     }
 
     [Fact]
@@ -452,7 +458,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
         owned.OwnerId.Should().Be(ownerId);
         var other = await GetTeamAsync(otherTeam);
         other.CurrentMemberCount.Should().Be(2);
-        other.Status.Should().Be(TeamStatus.Full);
+        other.LegacyStatus.Should().Be(TeamStatus.Full);
         (await IsActiveMemberAsync(otherTeam, ownerId)).Should().BeTrue();
     }
 
@@ -489,7 +495,7 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
 
         var a = await GetTeamAsync(teamA);
         a.CurrentMemberCount.Should().Be(3, "team A's correction must roll back with the failed delete");
-        a.Status.Should().Be(TeamStatus.Full);
+        a.LegacyStatus.Should().Be(TeamStatus.Full);
 
         // Only the concurrent leave's own reconciliation is visible on team B.
         (await GetTeamAsync(teamB)).CurrentMemberCount.Should().Be(1);
@@ -528,7 +534,8 @@ public class TeamCapacityAccountingSqlServerIntegrationTests : IAsyncLifetime
             Name = $"team_{Guid.NewGuid():N}",
             MaxMembers = maxMembers,
             CurrentMemberCount = storedCount,
-            Status = status,
+            LifecycleStatus = TeamSeeding.Lifecycle(status),
+            IsAcceptingMembers = TeamSeeding.Accepting(status),
             OwnerId = ownerId
         };
         context.Teams.Add(team);

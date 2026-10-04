@@ -418,8 +418,8 @@ when the resolved caller `Player.Id` matches `{id}`.
 
 On success the player's team memberships (active and inactive) are deleted in
 the same transaction, and every team where the player was an active member has
-`currentMemberCount` reconciled (a `Full` team that gains a vacancy becomes
-`Recruiting`).
+`currentMemberCount` reconciled. The freed slot shows up in the team's derived
+`openSlots`/`isFull`; no team status or recruitment setting is changed.
 
 **Response `204`:** Deleted.  
 **Response `404`:** Player not found.
@@ -444,9 +444,14 @@ Returns a single team by ID. Includes the owner's username.
   "id": "00000000-0000-0000-0000-000000000002",
   "name": "Alpha Squad",
   "description": "Competitive FPS team",
-  "status": "Recruiting",
-  "maxMembers": 10,
+  "lifecycleStatus": "Active",
+  "isAcceptingMembers": true,
   "currentMemberCount": 3,
+  "maxMembers": 10,
+  "openSlots": 7,
+  "isFull": false,
+  "hasVacancies": true,
+  "status": "Recruiting",
   "region": "NA",
   "category": "FPS",
   "tags": "fps,competitive",
@@ -458,6 +463,37 @@ Returns a single team by ID. Includes the owner's username.
 ```
 
 **Response `404`:** Team not found.
+
+**Team state fields.** A team's administrative lifecycle, its recruitment
+policy and its physical capacity are separate facts:
+
+| Field | Stored? | Meaning |
+|---|---|---|
+| `lifecycleStatus` | yes | `TeamLifecycleStatus`: `Active`, `Inactive`, `Disbanded`. |
+| `isAcceptingMembers` | yes | Whether the owner accepts new join requests. Always `false` unless `lifecycleStatus` is `Active`. |
+| `currentMemberCount` / `maxMembers` | yes | Active roster size and capacity. |
+| `openSlots` | derived | `max(0, maxMembers - currentMemberCount)`. |
+| `isFull` | derived | `currentMemberCount >= maxMembers`. |
+| `hasVacancies` | derived | `lifecycleStatus == Active && isAcceptingMembers && openSlots > 0`. |
+| `status` | derived | **Deprecated** legacy `TeamStatus`, kept for compatibility (see below). |
+
+Joins, leaves, player deletion and `maxMembers` changes only change the member
+count / capacity, and therefore the derived fields; they never change
+`lifecycleStatus` or `isAcceptingMembers`. Reaching capacity does not close
+recruitment, and gaining a vacancy does not reopen it.
+
+**Legacy `status` (deprecated).** `status` is never stored. It is computed as:
+
+| Condition | `status` |
+|---|---|
+| `lifecycleStatus == Inactive` | `Inactive` |
+| `lifecycleStatus == Disbanded` | `Disbanded` |
+| `Active` and `isFull` | `Full` |
+| `Active`, not full, `isAcceptingMembers` | `Recruiting` |
+| `Active`, not full, not accepting | `Active` |
+
+New clients should read `lifecycleStatus`, `isAcceptingMembers`, `isFull` and
+`hasVacancies` instead.
 
 ---
 
@@ -473,9 +509,23 @@ Returns a paginated list of teams.
 | `pageSize` | int        | Page size (default: 20)  |
 | `category` | string     | Filter by category       |
 | `region`   | string     | Filter by region         |
-| `status`   | TeamStatus | Filter by status         |
+| `lifecycleStatus` | TeamLifecycleStatus | Filter by lifecycle (`Active`, `Inactive`, `Disbanded`) |
+| `hasVacancies` | bool | `true`: `Active` and accepting and `currentMemberCount < maxMembers`. `false`: every other team (the exact inverse). |
+| `status`   | TeamStatus | **Deprecated** legacy filter, translated as below |
 
-`TeamStatus` values: `Recruiting`, `Active`, `Full`, `Inactive`, `Disbanded`
+Legacy `status` filter translation (matches the computed `status` field):
+
+| `status` | Matches |
+|---|---|
+| `Recruiting` | `Active` and accepting and `currentMemberCount < maxMembers` |
+| `Full` | `Active` and `currentMemberCount >= maxMembers` |
+| `Active` | `Active` and not accepting and `currentMemberCount < maxMembers` |
+| `Inactive` | `lifecycleStatus == Inactive` |
+| `Disbanded` | `lifecycleStatus == Disbanded` |
+
+All supplied filters (including legacy `status` together with `lifecycleStatus`
+/ `hasVacancies`) combine with AND semantics. `totalCount` reflects the filters
+before paging.
 
 **Response `200`:** `PaginatedResult<TeamDto>`
 
@@ -484,7 +534,9 @@ Returns a paginated list of teams.
 #### `POST api/v1/teams`
 
 Creates a new team. Requires a linked caller identity; `OwnerId` is set to the
-resolved internal `Player.Id`, not copied from a token claim.
+resolved internal `Player.Id`, not copied from a token claim. A new team is
+`lifecycleStatus: Active`, `isAcceptingMembers: true` with `currentMemberCount: 0`
+(legacy `status`: `Recruiting`). The owner is not added as a `TeamMember`.
 
 **Headers:**
 
@@ -521,7 +573,8 @@ An explicit empty string for `description` clears the value.
 {
   "name": "Alpha Squad Revised",
   "description": "Updated description",
-  "status": "Active",
+  "lifecycleStatus": "Active",
+  "isAcceptingMembers": false,
   "maxMembers": 12,
   "region": "EU",
   "category": "FPS",
@@ -529,9 +582,26 @@ An explicit empty string for `description` clears the value.
 }
 ```
 
+Lifecycle and recruitment rules:
+
+- `lifecycleStatus` / `isAcceptingMembers` set the stored state; omitted values
+  are kept.
+- Moving to `Inactive` or `Disbanded` closes recruitment automatically.
+  Requesting `isAcceptingMembers: true` while the resulting lifecycle is
+  `Inactive`/`Disbanded` is a `400`.
+- Reactivating an `Inactive`/`Disbanded` team does not reopen recruitment: unless
+  `isAcceptingMembers: true` is sent in the same request, it stays `false`.
+- **Deprecated** legacy `status` input is still accepted on its own:
+  `Recruiting` → `Active` + accepting; `Active` → `Active` + not accepting;
+  `Inactive` / `Disbanded` → that lifecycle + not accepting. `Full` is rejected
+  with `400` ("Full is derived from roster capacity and cannot be set directly.").
+  Sending `status` together with `lifecycleStatus` or `isAcceptingMembers` is a
+  `400`.
+
 **Response `200`:** Updated `TeamDto`.  
 **Response `404`:** Team not found.  
-**Response `400`:** Validation failure.
+**Response `400`:** Validation failure, or an invalid lifecycle/recruitment combination (see above).
+**Response `409`:** `maxMembers` below the active member count, or a concurrent change.
 **Response `401`:** No valid JWT provided.
 **Response `403`:** Authenticated caller is not the team owner.
 
@@ -553,8 +623,9 @@ Deletes a team.
 Allows a player to leave their own team membership only: the authenticated
 player ID must match `{playerId}`. A team owner cannot remove another player
 through this voluntary-leave route. Marks the `TeamMember` record as inactive.
-Decrements `CurrentMemberCount`. If the team was `Full` and now has capacity,
-the status transitions to `Recruiting`.
+Reconciles `CurrentMemberCount`; the freed slot shows up in the derived
+`openSlots`/`isFull`. Leaving never changes `lifecycleStatus` or
+`isAcceptingMembers`.
 
 **Response `204`:** Member removed.  
 **Response `401`:** No valid JWT provided.
@@ -642,9 +713,17 @@ Requires a linked caller identity; `PlayerId` is set to the resolved internal
 }
 ```
 
+The team must be `lifecycleStatus: Active` with `isAcceptingMembers: true`.
+Physical capacity is deliberately not checked: a full team that is still
+accepting members may collect pending requests (approval still enforces
+capacity).
+
 **Response `201`:** Created `JoinRequestDto`.  
 **Response `400`:** Validation failure.
-**Response `409`:** A pending request already exists for this player and team.
+**Response `404`:** Team not found.
+**Response `409`:** The team is inactive/disbanded ("Team is not active."), the team
+is not accepting members ("Team is not currently accepting new members."), or a
+pending request already exists for this player and team.
 
 ---
 
@@ -654,9 +733,11 @@ Processes (approves, rejects, or cancels) a pending join request. Only the
 team owner may process the request, and only `Pending` requests can be
 processed. Approving a request:
 
-- Creates a new `TeamMember` record.
-- Increments `Team.CurrentMemberCount`.
-- Sets team status to `Full` if at capacity.
+- Requires the team to be `lifecycleStatus: Active` (it does **not** require
+  `isAcceptingMembers`, so closing recruitment never blocks existing requests).
+- Requires a free slot (active members < `maxMembers`).
+- Creates a new `TeamMember` record and reconciles `Team.CurrentMemberCount`;
+  reaching capacity shows up only in the derived `isFull`.
 
 Requires `Authorization: Bearer <token>` for the processing user.
 
@@ -678,7 +759,7 @@ Requires `Authorization: Bearer <token>` for the processing user.
 **Response `401`:** No valid JWT provided.
 **Response `403`:** Authenticated caller is not the team owner.
 **Response `404`:** Join request not found.  
-**Response `409`:** Request is not pending, or the team is already full.
+**Response `409`:** Request is not pending, the team is not active (approval only), or the team is already full.
 
 ---
 
@@ -740,7 +821,8 @@ Returns a paginated list of events, ordered by `EventDateUtc` ascending.
 
 Creates a new event. Requires a linked caller identity; `HostId` is set to the
 resolved internal `Player.Id`. If `teamId` is supplied, the caller must own
-that team, and the team cannot be inactive or disbanded.
+that team, and the team's `lifecycleStatus` must be `Active`. Recruitment
+(`isAcceptingMembers`) and capacity (`isFull`) never affect event creation.
 
 **Headers:**
 

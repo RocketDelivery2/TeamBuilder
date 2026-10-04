@@ -32,11 +32,18 @@ public class AddPlayerIdentitiesMigrationIntegrationTests : IAsyncLifetime
     public async Task ApplyingMigration_PreservesExistingPlayersTeamsAndMemberships()
     {
         var player = new Player { Id = Guid.NewGuid(), Username = $"player_{Guid.NewGuid():N}", Email = "p@example.com" };
-        var team = new Team { Id = Guid.NewGuid(), Name = $"team_{Guid.NewGuid():N}", MaxMembers = 10, CurrentMemberCount = 1, OwnerId = player.Id };
+        await using (var seedPlayer = _db.CreateContext())
+        {
+            seedPlayer.Players.Add(player);
+            await seedPlayer.SaveChangesAsync();
+        }
+
+        // Teams is seeded/read with raw SQL: the current EF model no longer matches its historical shape.
+        var teamId = await LegacyTeamsTable.InsertAsync(_db.ConnectionString, maxMembers: 10, storedCount: 1, ownerId: player.Id);
         var membership = new TeamMember
         {
             Id = Guid.NewGuid(),
-            TeamId = team.Id,
+            TeamId = teamId,
             PlayerId = player.Id,
             Role = TeamRole.Member,
             JoinedAtUtc = DateTime.UtcNow,
@@ -45,8 +52,6 @@ public class AddPlayerIdentitiesMigrationIntegrationTests : IAsyncLifetime
 
         await using (var seed = _db.CreateContext())
         {
-            seed.Players.Add(player);
-            seed.Teams.Add(team);
             seed.TeamMembers.Add(membership);
             await seed.SaveChangesAsync();
         }
@@ -60,7 +65,7 @@ public class AddPlayerIdentitiesMigrationIntegrationTests : IAsyncLifetime
         storedPlayer.Username.Should().Be(player.Username);
         storedPlayer.Email.Should().Be("p@example.com");
 
-        var storedTeam = await verify.Teams.SingleAsync(t => t.Id == team.Id);
+        var storedTeam = await LegacyTeamsTable.GetAsync(_db.ConnectionString, teamId);
         storedTeam.OwnerId.Should().Be(player.Id);
         storedTeam.CurrentMemberCount.Should().Be(1);
 

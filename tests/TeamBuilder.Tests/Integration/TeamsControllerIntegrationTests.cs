@@ -10,6 +10,8 @@ using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
 
+using TeamBuilder.Tests.Application;
+
 namespace TeamBuilder.Tests.Integration;
 
 public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderWebApplicationFactory>
@@ -38,7 +40,8 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         {
             Id = Guid.NewGuid(),
             Name = name,
-            Status = status,
+            LifecycleStatus = TeamSeeding.Lifecycle(status),
+            IsAcceptingMembers = TeamSeeding.Accepting(status),
             MaxMembers = maxMembers,
             CurrentMemberCount = 0,
             OwnerId = ownerId,
@@ -385,7 +388,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var updatedTeam = await db.Teams.FindAsync(team.Id);
         membership.IsActive.Should().BeFalse();
         updatedTeam!.CurrentMemberCount.Should().Be(0);
-        updatedTeam.Status.Should().Be(TeamStatus.Recruiting);
+        updatedTeam.LegacyStatus.Should().Be(TeamStatus.Recruiting);
     }
 
     [Fact]
@@ -416,7 +419,7 @@ public sealed class TeamsControllerIntegrationTests : IClassFixture<TeamBuilderW
         var unchangedTeam = await db.Teams.FindAsync(team.Id);
         membership.IsActive.Should().BeTrue();
         unchangedTeam!.CurrentMemberCount.Should().Be(1);
-        unchangedTeam.Status.Should().Be(TeamStatus.Full);
+        unchangedTeam.LegacyStatus.Should().Be(TeamStatus.Full);
     }
 
     [Fact]

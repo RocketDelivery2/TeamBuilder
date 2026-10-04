@@ -85,7 +85,8 @@ public class TeamServiceTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Existing Team",
             MaxMembers = 10,
-            Status = TeamStatus.Active,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = false,
             CurrentMemberCount = 0
         };
 
@@ -119,7 +120,8 @@ public class TeamServiceTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Owned Team",
             MaxMembers = 5,
-            Status = TeamStatus.Recruiting,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             CurrentMemberCount = 0,
             OwnerId = owner.Id,
             Owner = owner
@@ -158,7 +160,8 @@ public class TeamServiceTests : IDisposable
                 Id = Guid.NewGuid(),
                 Name = $"Team {i:D2}",
                 MaxMembers = 10,
-                Status = TeamStatus.Active,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = false,
                 CurrentMemberCount = 0
             });
         }
@@ -188,7 +191,8 @@ public class TeamServiceTests : IDisposable
                 Id = Guid.NewGuid(),
                 Name = $"Team {i:D2}",
                 MaxMembers = 10,
-                Status = TeamStatus.Active,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = false,
                 CurrentMemberCount = 0
             });
         }
@@ -216,7 +220,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Gaming Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Category = "Gaming"
             },
             new Team
@@ -225,7 +230,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Sports Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Category = "Sports"
             },
             new Team
@@ -234,7 +240,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Gaming Team 2",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Category = "Gaming"
             }
         );
@@ -261,7 +268,8 @@ public class TeamServiceTests : IDisposable
                 Name = "NA Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Region = "NA"
             },
             new Team
@@ -270,7 +278,8 @@ public class TeamServiceTests : IDisposable
                 Name = "EU Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Region = "EU"
             }
         );
@@ -297,7 +306,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Recruiting Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true
             },
             new Team
             {
@@ -305,7 +315,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Full Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 5,
-                Status = TeamStatus.Full
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true
             },
             new Team
             {
@@ -313,7 +324,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Active Team",
                 MaxMembers = 5,
                 CurrentMemberCount = 2,
-                Status = TeamStatus.Active
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = false
             }
         );
 
@@ -338,7 +350,8 @@ public class TeamServiceTests : IDisposable
             Name = "NA Team",
             MaxMembers = 5,
             CurrentMemberCount = 0,
-            Status = TeamStatus.Active,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = false,
             Region = "NA"
         });
 
@@ -363,7 +376,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Gaming NA",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Category = "Gaming",
                 Region = "NA"
             },
@@ -373,7 +387,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Gaming EU",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Category = "Gaming",
                 Region = "EU"
             },
@@ -383,7 +398,8 @@ public class TeamServiceTests : IDisposable
                 Name = "Sports NA",
                 MaxMembers = 5,
                 CurrentMemberCount = 0,
-                Status = TeamStatus.Recruiting,
+                LifecycleStatus = TeamLifecycleStatus.Active,
+                IsAcceptingMembers = true,
                 Category = "Sports",
                 Region = "NA"
             }
@@ -413,7 +429,8 @@ public class TeamServiceTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Original Name",
             MaxMembers = 10,
-            Status = TeamStatus.Recruiting,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             CurrentMemberCount = 0
         };
 
@@ -423,7 +440,8 @@ public class TeamServiceTests : IDisposable
         var updateDto = new UpdateTeamDto
         {
             Name = "Updated Name",
-            Status = TeamStatus.Active
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = false
         };
 
         // Act
@@ -436,7 +454,7 @@ public class TeamServiceTests : IDisposable
 
         var updatedTeam = await _context.Teams.FindAsync(team.Id);
         updatedTeam!.Name.Should().Be("Updated Name");
-        updatedTeam.Status.Should().Be(TeamStatus.Active);
+        updatedTeam.LegacyStatus.Should().Be(TeamStatus.Active);
     }
 
     [Fact]
@@ -449,7 +467,8 @@ public class TeamServiceTests : IDisposable
             Name = "Original Name",
             Description = "Original Description",
             MaxMembers = 10,
-            Status = TeamStatus.Recruiting,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             CurrentMemberCount = 0,
             Region = "NA",
             Category = "Gaming"
@@ -484,7 +503,8 @@ public class TeamServiceTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Original Name",
             MaxMembers = 5,
-            Status = TeamStatus.Recruiting,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             CurrentMemberCount = 0
         };
 
@@ -530,7 +550,8 @@ public class TeamServiceTests : IDisposable
             Name = "Team With Description",
             Description = "Original description",
             MaxMembers = 5,
-            Status = TeamStatus.Recruiting,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = true,
             CurrentMemberCount = 0
         };
 
@@ -560,7 +581,8 @@ public class TeamServiceTests : IDisposable
             Id = Guid.NewGuid(),
             Name = "Team to Delete",
             MaxMembers = 10,
-            Status = TeamStatus.Active,
+            LifecycleStatus = TeamLifecycleStatus.Active,
+            IsAcceptingMembers = false,
             CurrentMemberCount = 0
         };
 
