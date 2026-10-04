@@ -363,4 +363,310 @@ public sealed class EventsControllerIntegrationTests : IClassFixture<TeamBuilder
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
+
+    // ── POST /api/v1/events with TeamId (TB-AUTH-014) ─────────────────────────
+
+    private async Task<Team> SeedTeamAsync(Guid ownerId, TeamStatus status = TeamStatus.Active)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Team-{Guid.NewGuid():N}",
+            Status = status,
+            MaxMembers = 10,
+            OwnerId = ownerId,
+            CreatedAtUtc = DateTime.UtcNow,
+            RowVersion = []
+        };
+
+        db.Teams.Add(team);
+        await db.SaveChangesAsync();
+        return team;
+    }
+
+    private async Task AddMemberAsync(Guid teamId, Guid playerId, TeamRole role)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        db.TeamMembers.Add(new TeamMember
+        {
+            Id = Guid.NewGuid(),
+            TeamId = teamId,
+            PlayerId = playerId,
+            Role = role,
+            IsActive = true,
+            JoinedAtUtc = DateTime.UtcNow,
+            CreatedAtUtc = DateTime.UtcNow,
+            RowVersion = []
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<TeamEvent?> FindEventAsync(Guid id)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        return await db.Events.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id);
+    }
+
+    private async Task<int> GetTeamEventCountAsync(Guid teamId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        return await db.Events.CountAsync(e => e.TeamId == teamId);
+    }
+
+    private static CreateEventDto NewCreateDto(Guid? teamId) => new()
+    {
+        Name = $"TeamEvent-{Guid.NewGuid():N}",
+        EventDateUtc = DateTime.UtcNow.AddDays(14),
+        MaxParticipants = 16,
+        TeamId = teamId
+    };
+
+    private Task<HttpResponseMessage> PostEventAsync(object body, string token)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/events")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return _client.SendAsync(request);
+    }
+
+    [Fact]
+    public async Task Create_StandaloneWithNullTeamId_Returns201WithResolvedHostAndNoTeam()
+    {
+        var caller = await CreateLinkedIdentityAsync();
+
+        var response = await PostEventAsync(NewCreateDto(teamId: null), caller.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<EventDto>();
+        created!.TeamId.Should().BeNull();
+        created.HostId.Should().Be(caller.PlayerId);
+        var persisted = await FindEventAsync(created.Id);
+        persisted!.HostId.Should().Be(caller.PlayerId);
+        persisted.TeamId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Create_WithEmptyTeamId_Returns400AndDoesNotPersistEvent()
+    {
+        var caller = await CreateLinkedIdentityAsync();
+        var before = await GetEventCountAsync();
+
+        var response = await PostEventAsync(NewCreateDto(Guid.Empty), caller.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("TeamId");
+        (await GetEventCountAsync()).Should().Be(before);
+    }
+
+    [Fact]
+    public async Task Create_WithNonexistentTeamId_Returns404AndDoesNotPersistEvent()
+    {
+        var caller = await CreateLinkedIdentityAsync();
+        var missingTeamId = Guid.NewGuid();
+
+        var response = await PostEventAsync(NewCreateDto(missingTeamId), caller.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await GetTeamEventCountAsync(missingTeamId)).Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(TeamStatus.Active)]
+    [InlineData(TeamStatus.Recruiting)]
+    [InlineData(TeamStatus.Full)]
+    public async Task Create_ByTeamOwner_ForAllowedTeamStatus_Returns201WithTeamAndOwnerAsHost(TeamStatus status)
+    {
+        var owner = await CreateLinkedIdentityAsync();
+        var team = await SeedTeamAsync(owner.PlayerId, status);
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<EventDto>();
+        created!.TeamId.Should().Be(team.Id);
+        created.HostId.Should().Be(owner.PlayerId);
+        created.HostId.Should().Be(team.OwnerId);
+        var persisted = await FindEventAsync(created.Id);
+        persisted!.TeamId.Should().Be(team.Id);
+        persisted.HostId.Should().Be(team.OwnerId);
+    }
+
+    [Fact]
+    public async Task Create_ByUnrelatedLinkedPlayer_ForTeam_Returns403AndDoesNotPersistEvent()
+    {
+        var ownerId = Guid.NewGuid();
+        await CreateLinkedIdentityAsync(ownerId);
+        var team = await SeedTeamAsync(ownerId);
+        var stranger = await CreateLinkedIdentityAsync();
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), stranger.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetTeamEventCountAsync(team.Id)).Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(TeamRole.Member)]
+    [InlineData(TeamRole.Leader)]
+    [InlineData(TeamRole.CoLeader)]
+    [InlineData(TeamRole.Officer)]
+    [InlineData(TeamRole.Recruit)]
+    public async Task Create_ByActiveNonOwnerMember_ForTeam_Returns403RegardlessOfRole(TeamRole role)
+    {
+        var ownerId = Guid.NewGuid();
+        await CreateLinkedIdentityAsync(ownerId);
+        var team = await SeedTeamAsync(ownerId);
+        var member = await CreateLinkedIdentityAsync();
+        await AddMemberAsync(team.Id, member.PlayerId, role);
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), member.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetTeamEventCountAsync(team.Id)).Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(TeamStatus.Inactive)]
+    [InlineData(TeamStatus.Disbanded)]
+    public async Task Create_ByTeamOwner_ForInactiveOrDisbandedTeam_Returns409AndDoesNotPersistEvent(TeamStatus status)
+    {
+        var owner = await CreateLinkedIdentityAsync();
+        var team = await SeedTeamAsync(owner.PlayerId, status);
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await response.Content.ReadAsStringAsync())
+            .Should().Contain("Events cannot be created for an inactive or disbanded team.");
+        (await GetTeamEventCountAsync(team.Id)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Create_ForTeam_WithUnlinkedIdentity_Returns403()
+    {
+        var ownerId = Guid.NewGuid();
+        await CreateLinkedIdentityAsync(ownerId);
+        var team = await SeedTeamAsync(ownerId);
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), CreateUnlinkedIdentityToken());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetTeamEventCountAsync(team.Id)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Create_ForTeam_WithoutJwt_Returns401()
+    {
+        var team = await SeedTeamAsync(Guid.NewGuid());
+
+        var response = await _client.PostAsJsonAsync("/api/v1/events", NewCreateDto(team.Id));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await GetTeamEventCountAsync(team.Id)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Create_ByTeamOwner_WithNonGuidExternalSubject_ResolvesThroughPlayerIdentity()
+    {
+        var subject = $"auth0|owner-{Guid.NewGuid():N}";
+        var owner = await CreateLinkedIdentityAsync(subject: subject);
+        var team = await SeedTeamAsync(owner.PlayerId);
+
+        var response = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<EventDto>();
+        created!.HostId.Should().Be(owner.PlayerId);
+        created.TeamId.Should().Be(team.Id);
+    }
+
+    // ── TeamId immutability through PUT ───────────────────────────────────────
+
+    [Fact]
+    public void UpdateEventDto_HasNoTeamIdProperty()
+    {
+        typeof(UpdateEventDto).GetProperty(nameof(CreateEventDto.TeamId)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Update_ByHost_WithTeamIdInBody_DoesNotChangeTeamAssociation()
+    {
+        var owner = await CreateLinkedIdentityAsync();
+        var team = await SeedTeamAsync(owner.PlayerId);
+        var otherTeam = await SeedTeamAsync(owner.PlayerId);
+        var createResponse = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadFromJsonAsync<EventDto>();
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{created!.Id}");
+        request.Content = JsonContent.Create(new { name = "Renamed team event", teamId = otherTeam.Id });
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = await response.Content.ReadFromJsonAsync<EventDto>();
+        updated!.Name.Should().Be("Renamed team event");
+        updated.TeamId.Should().Be(team.Id);
+        (await FindEventAsync(created.Id))!.TeamId.Should().Be(team.Id);
+    }
+
+    [Fact]
+    public async Task Update_ByHost_StandaloneEvent_WithTeamIdInBody_StaysStandalone()
+    {
+        var host = await CreateLinkedIdentityAsync();
+        var ev = await SeedEventAsync($"Standalone-{Guid.NewGuid():N}", host.PlayerId);
+        var team = await SeedTeamAsync(host.PlayerId);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/events/{ev.Id}");
+        request.Content = JsonContent.Create(new { name = "Still standalone", teamId = team.Id });
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await FindEventAsync(ev.Id))!.TeamId.Should().BeNull();
+    }
+
+    // ── DELETE semantics for team events stay host-only ───────────────────────
+
+    [Fact]
+    public async Task Delete_TeamEvent_ByNonHostTeamMember_Returns403()
+    {
+        var owner = await CreateLinkedIdentityAsync();
+        var team = await SeedTeamAsync(owner.PlayerId);
+        var createResponse = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+        var created = await createResponse.Content.ReadFromJsonAsync<EventDto>();
+        var member = await CreateLinkedIdentityAsync();
+        await AddMemberAsync(team.Id, member.PlayerId, TeamRole.Leader);
+
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{created!.Id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", member.Token);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await FindEventAsync(created.Id)).Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Delete_TeamEvent_ByHostOwner_Returns204()
+    {
+        var owner = await CreateLinkedIdentityAsync();
+        var team = await SeedTeamAsync(owner.PlayerId);
+        var createResponse = await PostEventAsync(NewCreateDto(team.Id), owner.Token);
+        var created = await createResponse.Content.ReadFromJsonAsync<EventDto>();
+
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/events/{created!.Id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", owner.Token);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        (await FindEventAsync(created.Id)).Should().BeNull();
+    }
 }

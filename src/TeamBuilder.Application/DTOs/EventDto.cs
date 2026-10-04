@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using TeamBuilder.Application.Validation;
 using TeamBuilder.Domain.Enums;
 
 namespace TeamBuilder.Application.DTOs;
@@ -51,6 +52,11 @@ public class CreateEventDto
     [Range(1, 100000)]
     public int MaxParticipants { get; set; } = 50;
 
+    /// <summary>
+    /// Optional team association. When null the event is standalone; when set, only the
+    /// team's owner may create it. Immutable after creation (UpdateEventDto has no TeamId).
+    /// </summary>
+    [NonEmptyGuid]
     public Guid? TeamId { get; set; }
 }
 

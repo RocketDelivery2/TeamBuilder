@@ -13,15 +13,18 @@ namespace TeamBuilder.Api.Controllers;
 public class EventsController : ControllerBase
 {
     private readonly IEventService _eventService;
+    private readonly ITeamService _teamService;
     private readonly ICurrentPlayerResolver _currentPlayerResolver;
     private readonly ILogger<EventsController> _logger;
 
     public EventsController(
         IEventService eventService,
+        ITeamService teamService,
         ICurrentPlayerResolver currentPlayerResolver,
         ILogger<EventsController> logger)
     {
         _eventService = eventService;
+        _teamService = teamService;
         _currentPlayerResolver = currentPlayerResolver;
         _logger = logger;
     }
@@ -64,6 +67,8 @@ public class EventsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<EventDto>> Create(
         [FromBody] CreateEventDto createEventDto,
         CancellationToken cancellationToken = default)
@@ -74,6 +79,28 @@ public class EventsController : ControllerBase
         var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
         if (playerId == null)
             return Forbid();
+
+        if (createEventDto.TeamId is { } teamId)
+        {
+            var team = await _teamService.GetByIdAsync(teamId, cancellationToken);
+            if (team == null)
+            {
+                _logger.LogInformation("Team with ID {TeamId} not found for event creation", teamId);
+                return NotFound();
+            }
+
+            if (team.OwnerId != playerId.Value)
+            {
+                _logger.LogInformation("Player {PlayerId} is not the owner of team {TeamId}", playerId.Value, teamId);
+                return Forbid();
+            }
+
+            if (team.Status is TeamStatus.Inactive or TeamStatus.Disbanded)
+            {
+                _logger.LogInformation("Team {TeamId} has status {TeamStatus}; cannot create event", teamId, team.Status);
+                return Conflict(new { message = "Events cannot be created for an inactive or disbanded team." });
+            }
+        }
 
         var teamEvent = await _eventService.CreateAsync(createEventDto, playerId.Value, cancellationToken);
         var safeEventName = SanitizeForLog(teamEvent.Name);
