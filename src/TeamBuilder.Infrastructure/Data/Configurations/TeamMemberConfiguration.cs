@@ -31,6 +31,16 @@ public class TeamMemberConfiguration : IEntityTypeConfiguration<TeamMember>
             .HasFilter("[IsActive] = 1")
             .HasDatabaseName("UX_TeamMembers_TeamId_PlayerId");
 
-        builder.HasIndex(tm => tm.IsActive);
+        // Capacity hot paths. Both are unfiltered so they also serve the FK checks and the
+        // Team cascade (which must see inactive rows too); they replace the FK-convention
+        // PlayerId index and the low-selectivity standalone IsActive index.
+        // TeamId + IsActive: active/total roster counts and Team delete cascade.
+        builder.HasIndex(tm => new { tm.TeamId, tm.IsActive })
+            .HasDatabaseName("IX_TeamMembers_TeamId_IsActive");
+
+        // PlayerId + IsActive: player deletion (affected teams, explicit membership delete,
+        // and the NO ACTION FK check on the Player delete itself).
+        builder.HasIndex(tm => new { tm.PlayerId, tm.IsActive })
+            .HasDatabaseName("IX_TeamMembers_PlayerId_IsActive");
     }
 }

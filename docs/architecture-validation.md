@@ -345,6 +345,12 @@ race.
 **Recommendation:** Either use a `COUNT` subquery when querying team
 members or implement a distributed locking mechanism for membership changes.
 
+**Status:** Active `TeamMember` rows are the occupancy authority; capacity
+writes reconcile `CurrentMemberCount` under the `Team.RowVersion` guard, and
+the `CK_Teams_CurrentMemberCount_Bounds` check keeps the stored count within
+`0..MaxMembers` at the database. Player deletion can no longer cascade
+memberships or null a team owner (both foreign keys are `NO ACTION`).
+
 ### SC2 — Tags stored as a delimited string
 
 `Team.Tags` and similar fields are stored as comma-separated strings

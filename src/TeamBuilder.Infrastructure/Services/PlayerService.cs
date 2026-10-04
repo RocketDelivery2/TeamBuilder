@@ -5,6 +5,7 @@ using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
+using TeamBuilder.Infrastructure.Persistence;
 
 namespace TeamBuilder.Infrastructure.Services;
 
@@ -241,16 +242,33 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
             throw new InvalidOperationException(OwnedTeamsDeletionConflictMessage);
         }
 
-        // The FK cascade removes this player's memberships, so reconcile every affected team's
-        // stored count first. Teams (and their RowVersions) are loaded before the counts so a
-        // concurrent membership change fails the save instead of leaving a stale count.
-        var affectedTeams = await _context.Teams
-            .Where(t => t.Members.Any(tm => tm.PlayerId == id && tm.IsActive))
+        // Every membership row (active and inactive history) is deleted explicitly: the
+        // TeamMember -> Player FK no longer cascades, so a membership inserted after this query
+        // makes the player delete fail instead of being silently removed uncounted.
+        var memberships = await _context.TeamMembers
+            .Where(tm => tm.PlayerId == id)
             .ToListAsync(cancellationToken);
 
-        if (affectedTeams.Count > 0)
+        // Reconcile every team where this player holds an active membership. Teams (and their
+        // RowVersions) are loaded before the counts so a concurrent membership change fails
+        // the save instead of leaving a stale count.
+        var affectedTeamIds = memberships
+            .Where(tm => tm.IsActive)
+            .Select(tm => tm.TeamId)
+            .Distinct()
+            .ToList();
+
+        if (affectedTeamIds.Count > 0)
         {
-            var affectedTeamIds = affectedTeams.Select(t => t.Id).ToList();
+            var affectedTeams = await _context.Teams
+                .Where(t => affectedTeamIds.Contains(t.Id))
+                .ToListAsync(cancellationToken);
+
+            // The player became an owner after the guard above; never let the delete proceed.
+            if (affectedTeams.Any(t => t.OwnerId == id))
+            {
+                throw new InvalidOperationException(OwnedTeamsDeletionConflictMessage);
+            }
 
             var remainingCounts = await _context.TeamMembers
                 .Where(tm => affectedTeamIds.Contains(tm.TeamId) && tm.IsActive && tm.PlayerId != id)
@@ -273,10 +291,13 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
             }
         }
 
+        _context.TeamMembers.RemoveRange(memberships);
         _context.Players.Remove(player);
 
-        // One SaveChanges: the team count corrections and the player delete commit or roll
-        // back together in EF Core's implicit transaction.
+        // One SaveChanges: the team count corrections, the membership deletes and the player
+        // delete commit or roll back together in EF Core's implicit transaction. The NO ACTION
+        // foreign keys reject the player delete if an ownership or membership appeared after
+        // the queries above; only those two expected races become a 409.
         try
         {
             await _context.SaveChangesAsync(cancellationToken);
@@ -285,6 +306,16 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
         {
             throw new InvalidOperationException(
                 "A team this player belongs to changed while the player was being deleted. Please try again.",
+                ex);
+        }
+        catch (DbUpdateException ex) when (PlayerDeletionConflictClassifier.IsOwnedTeamReference(ex))
+        {
+            throw new InvalidOperationException(OwnedTeamsDeletionConflictMessage, ex);
+        }
+        catch (DbUpdateException ex) when (PlayerDeletionConflictClassifier.IsTeamMembershipReference(ex))
+        {
+            throw new InvalidOperationException(
+                "This player joined a team while being deleted. Please try again.",
                 ex);
         }
 

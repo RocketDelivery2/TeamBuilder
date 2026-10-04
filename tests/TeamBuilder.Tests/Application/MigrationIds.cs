@@ -11,4 +11,5 @@ internal static class MigrationIds
     public const string EnforceUniqueTeamMembership = "20260803064415_EnforceUniqueTeamMembership";
     public const string EnforceUniquePendingJoinRequest = "20260803100000_EnforceUniquePendingJoinRequest";
     public const string AddPlayerIdentities = "20261003013542_AddPlayerIdentities";
+    public const string EnforceCapacityDatabaseGuards = "20261004051605_EnforceCapacityDatabaseGuards";
 }
