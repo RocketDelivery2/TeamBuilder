@@ -22,6 +22,7 @@ public class JoinRequestService : IJoinRequestService
     public async Task<JoinRequestDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var joinRequest = await _context.JoinRequests
+            .AsNoTracking()
             .Include(jr => jr.Team)
             .Include(jr => jr.Player)
             .FirstOrDefaultAsync(jr => jr.Id == id, cancellationToken);
@@ -37,6 +38,7 @@ public class JoinRequestService : IJoinRequestService
         CancellationToken cancellationToken = default)
     {
         var query = _context.JoinRequests
+            .AsNoTracking()
             .Include(jr => jr.Team)
             .Include(jr => jr.Player)
             .Where(jr => jr.TeamId == teamId);
@@ -69,6 +71,7 @@ public class JoinRequestService : IJoinRequestService
         CancellationToken cancellationToken = default)
     {
         var query = _context.JoinRequests
+            .AsNoTracking()
             .Include(jr => jr.Team)
             .Include(jr => jr.Player)
             .Where(jr => jr.PlayerId == playerId);
@@ -222,6 +225,7 @@ public class JoinRequestService : IJoinRequestService
             Id = joinRequest.Id,
             TeamId = joinRequest.TeamId,
             TeamName = joinRequest.Team?.Name,
+            TeamOwnerId = joinRequest.Team?.OwnerId,
             PlayerId = joinRequest.PlayerId,
             PlayerUsername = joinRequest.Player?.Username,
             Status = joinRequest.Status,
