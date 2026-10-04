@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
@@ -108,33 +109,463 @@ public sealed class JoinRequestsControllerIntegrationTests : IClassFixture<TeamB
         return await _client.SendAsync(request);
     }
 
+    private async Task<JoinRequest> SeedJoinRequestAsync(
+        Guid teamId,
+        Guid playerId,
+        RequestStatus status = RequestStatus.Pending,
+        string? message = null,
+        DateTime? requestedAtUtc = null,
+        Guid? processedByUserId = null)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+
+        if (!await db.Players.AnyAsync(p => p.Id == playerId))
+        {
+            db.Players.Add(new Player
+            {
+                Id = playerId,
+                Username = $"player-{Guid.NewGuid():N}",
+                CreatedAtUtc = DateTime.UtcNow,
+                RowVersion = []
+            });
+        }
+
+        var jr = new JoinRequest
+        {
+            Id = Guid.NewGuid(),
+            TeamId = teamId,
+            PlayerId = playerId,
+            Status = status,
+            Message = message,
+            RequestedAtUtc = requestedAtUtc ?? DateTime.UtcNow,
+            ProcessedAtUtc = status == RequestStatus.Pending ? null : DateTime.UtcNow,
+            ProcessedByUserId = processedByUserId,
+            CreatedAtUtc = DateTime.UtcNow,
+            RowVersion = []
+        };
+
+        db.JoinRequests.Add(jr);
+        await db.SaveChangesAsync();
+        return jr;
+    }
+
+    private async Task AddTeamMemberAsync(Guid teamId, Guid playerId, TeamRole role = TeamRole.Member)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        if (!await db.Players.AnyAsync(p => p.Id == playerId))
+        {
+            db.Players.Add(new Player
+            {
+                Id = playerId,
+                Username = $"member-{Guid.NewGuid():N}",
+                CreatedAtUtc = DateTime.UtcNow,
+                RowVersion = []
+            });
+        }
+
+        db.TeamMembers.Add(new TeamMember
+        {
+            Id = Guid.NewGuid(),
+            TeamId = teamId,
+            PlayerId = playerId,
+            Role = role,
+            JoinedAtUtc = DateTime.UtcNow,
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            RowVersion = []
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private Task<HttpResponseMessage> GetAsync(string url, string? token, HttpClient? client = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        if (token is not null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return (client ?? _client).SendAsync(request);
+    }
+
+    private async Task<HttpResponseMessage> GetAsPlayerAsync(string url, Guid callerId)
+        => await GetAsync(url, await LinkedPlayerTokens.ForPlayerAsync(_factory.Services, callerId));
+
+    private static string ById(Guid id) => $"/api/v1/joinrequests/{id}";
+    private static string ByTeam(Guid teamId, string query = "") => $"/api/v1/joinrequests/teams/{teamId}{query}";
+    private static string ByPlayer(Guid playerId, string query = "") => $"/api/v1/joinrequests/players/{playerId}{query}";
+
+    // ── GET reads: authentication ────────────────────────────────────────────
+
+    public enum ReadEndpoint { ById, ByTeam, ByPlayer }
+
+    private async Task<string> SeedUrlForAsync(ReadEndpoint endpoint)
+    {
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        return endpoint switch
+        {
+            ReadEndpoint.ById => ById(jr.Id),
+            ReadEndpoint.ByTeam => ByTeam(team.Id),
+            _ => ByPlayer(player.Id)
+        };
+    }
+
+    [Theory]
+    [InlineData(ReadEndpoint.ById)]
+    [InlineData(ReadEndpoint.ByTeam)]
+    [InlineData(ReadEndpoint.ByPlayer)]
+    public async Task Read_WithoutJwt_Returns401(ReadEndpoint endpoint)
+    {
+        var url = await SeedUrlForAsync(endpoint);
+
+        var response = await GetAsync(url, token: null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Theory]
+    [InlineData(ReadEndpoint.ById)]
+    [InlineData(ReadEndpoint.ByTeam)]
+    [InlineData(ReadEndpoint.ByPlayer)]
+    public async Task Read_AsUnlinkedIdentity_Returns403(ReadEndpoint endpoint)
+    {
+        var url = await SeedUrlForAsync(endpoint);
+
+        var response = await GetAsync(url, LinkedPlayerTokens.ForSubject(LinkedPlayerTokens.NewSubject()));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Read_WithGuidSubjectEqualToUnlinkedPlayerId_Returns403OnAllEndpoints()
+    {
+        // Arrange: neither the applicant's nor the owner's Player.Id as a raw GUID subject is a link.
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        var applicantToken = TeamBuilderWebApplicationFactory.CreateTestJwt(player.Id.ToString());
+        var ownerToken = TeamBuilderWebApplicationFactory.CreateTestJwt(team.OwnerId!.Value.ToString());
+
+        // Act + Assert
+        (await GetAsync(ById(jr.Id), applicantToken)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetAsync(ById(jr.Id), ownerToken)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetAsync(ByTeam(team.Id), ownerToken)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetAsync(ByPlayer(player.Id), applicantToken)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Read_AsLinkedPlayerWithNonGuidSubject_Returns200OnAllEndpoints()
+    {
+        // Arrange
+        var ownerId = Guid.NewGuid();
+        var (team, player) = await SeedTeamAndPlayerAsync(ownerId: ownerId);
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        var applicantSubject = $"auth0|{Guid.NewGuid():N}";
+        var ownerSubject = $"google-oauth2|{Guid.NewGuid():N}";
+        await LinkedPlayerTokens.LinkAsync(_factory.Services, player.Id, applicantSubject, TeamBuilderWebApplicationFactory.TestIssuer);
+        await LinkedPlayerTokens.LinkAsync(_factory.Services, ownerId, ownerSubject, TeamBuilderWebApplicationFactory.TestIssuer);
+        var applicantToken = LinkedPlayerTokens.ForSubject(applicantSubject);
+        var ownerToken = LinkedPlayerTokens.ForSubject(ownerSubject);
+
+        // Act + Assert
+        (await GetAsync(ById(jr.Id), applicantToken)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetAsync(ById(jr.Id), ownerToken)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetAsync(ByTeam(team.Id), ownerToken)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetAsync(ByPlayer(player.Id), applicantToken)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Read_SameSubjectUnderAnotherIssuer_DoesNotCrossAuthorize()
+    {
+        // Arrange: clearing Jwt:Issuer disables issuer validation so one host accepts both issuers.
+        var factory = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?> { ["Jwt:Issuer"] = "" })));
+        var client = factory.CreateClient();
+        const string ownerIssuer = "https://login.example.com/tenant-a/v2.0";
+        const string otherIssuer = "https://login.example.com/tenant-b/v2.0";
+        var subject = $"shared|{Guid.NewGuid():N}";
+        var ownerId = Guid.NewGuid();
+        var otherPlayerId = Guid.NewGuid();
+        var (team, player) = await SeedTeamAndPlayerAsync(ownerId: ownerId);
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        await LinkedPlayerTokens.LinkAsync(factory.Services, ownerId, subject, ownerIssuer);
+        await LinkedPlayerTokens.LinkAsync(factory.Services, otherPlayerId, subject, otherIssuer);
+        var ownerToken = LinkedPlayerTokens.ForSubject(subject, ownerIssuer);
+        var otherToken = LinkedPlayerTokens.ForSubject(subject, otherIssuer);
+        var unlinkedToken = LinkedPlayerTokens.ForSubject(subject, "https://login.example.com/tenant-c/v2.0");
+
+        // Act + Assert: the owner's subject under another issuer is a different (or no) player.
+        (await GetAsync(ById(jr.Id), ownerToken, client)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetAsync(ByTeam(team.Id), ownerToken, client)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetAsync(ById(jr.Id), otherToken, client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetAsync(ByTeam(team.Id), otherToken, client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetAsync(ByPlayer(ownerId), otherToken, client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetAsync(ById(jr.Id), unlinkedToken, client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await GetAsync(ByTeam(team.Id), unlinkedToken, client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     // ── GET /api/v1/joinrequests/{id} ────────────────────────────────────────
 
     [Fact]
-    public async Task GetById_WhenJoinRequestExists_Returns200()
+    public async Task GetById_AsApplicant_Returns200WithMessage()
     {
         // Arrange
         var (team, player) = await SeedTeamAndPlayerAsync();
-        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+        var jr = await SeedJoinRequestAsync(team.Id, player.Id, message: "Applicant note");
 
         // Act
-        var response = await _client.GetAsync($"/api/v1/joinrequests/{jr.Id}");
+        var response = await GetAsPlayerAsync(ById(jr.Id), player.Id);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var dto = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
         dto!.Id.Should().Be(jr.Id);
         dto.Status.Should().Be(RequestStatus.Pending);
+        dto.Message.Should().Be("Applicant note");
+        dto.TeamOwnerId.Should().Be(team.OwnerId);
+    }
+
+    [Fact]
+    public async Task GetById_AsTeamOwner_Returns200WithMessage()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedJoinRequestAsync(team.Id, player.Id, message: "Owner sees this");
+
+        // Act
+        var response = await GetAsPlayerAsync(ById(jr.Id), team.OwnerId!.Value);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dto = await response.Content.ReadFromJsonAsync<JoinRequestDto>();
+        dto!.Id.Should().Be(jr.Id);
+        dto.PlayerId.Should().Be(player.Id);
+        dto.Message.Should().Be("Owner sees this");
+    }
+
+    [Fact]
+    public async Task GetById_AsUnrelatedLinkedPlayer_Returns403()
+    {
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+
+        var response = await GetAsPlayerAsync(ById(jr.Id), Guid.NewGuid());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Theory]
+    [InlineData(TeamRole.Leader)]
+    [InlineData(TeamRole.Member)]
+    public async Task GetById_AsNonOwnerTeamMember_Returns403(TeamRole role)
+    {
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var memberId = Guid.NewGuid();
+        await AddTeamMemberAsync(team.Id, memberId, role);
+        var jr = await SeedPendingJoinRequestAsync(team.Id, player.Id);
+
+        var response = await GetAsPlayerAsync(ById(jr.Id), memberId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task GetById_WhenJoinRequestDoesNotExist_Returns404()
     {
+        var response = await GetAsPlayerAsync(ById(Guid.NewGuid()), Guid.NewGuid());
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetById_ProcessedRequest_DoesNotExposeProcessedByUserId()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedJoinRequestAsync(team.Id, player.Id, RequestStatus.Rejected, processedByUserId: team.OwnerId);
+
         // Act
-        var response = await _client.GetAsync($"/api/v1/joinrequests/{Guid.NewGuid()}");
+        var response = await GetAsPlayerAsync(ById(jr.Id), player.Id);
 
         // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContainEquivalentOf("processedBy");
+        typeof(JoinRequestDto).GetProperty(nameof(JoinRequest.ProcessedByUserId)).Should().BeNull();
+    }
+
+    // ── GET /api/v1/joinrequests/teams/{teamId} ──────────────────────────────
+
+    [Fact]
+    public async Task GetByTeam_AsTeamOwner_Returns200WithTeamRequests()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedJoinRequestAsync(team.Id, player.Id, message: "hello owner");
+        var (otherTeam, otherPlayer) = await SeedTeamAndPlayerAsync(ownerId: team.OwnerId);
+        await SeedPendingJoinRequestAsync(otherTeam.Id, otherPlayer.Id);
+
+        // Act
+        var response = await GetAsPlayerAsync(ByTeam(team.Id), team.OwnerId!.Value);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var page = await response.Content.ReadFromJsonAsync<PaginatedResult<JoinRequestDto>>();
+        page!.TotalCount.Should().Be(1);
+        page.Items.Should().ContainSingle().Which.Should().Match<JoinRequestDto>(d =>
+            d.Id == jr.Id && d.TeamId == team.Id && d.Message == "hello owner");
+    }
+
+    [Fact]
+    public async Task GetByTeam_AsUnrelatedLinkedPlayer_Returns403()
+    {
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        await SeedPendingJoinRequestAsync(team.Id, player.Id);
+
+        var response = await GetAsPlayerAsync(ByTeam(team.Id), Guid.NewGuid());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetByTeam_AsApplicant_Returns403()
+    {
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        await SeedPendingJoinRequestAsync(team.Id, player.Id);
+
+        var response = await GetAsPlayerAsync(ByTeam(team.Id), player.Id);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Theory]
+    [InlineData(TeamRole.Leader)]
+    [InlineData(TeamRole.CoLeader)]
+    [InlineData(TeamRole.Member)]
+    public async Task GetByTeam_AsNonOwnerTeamMember_Returns403(TeamRole role)
+    {
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var memberId = Guid.NewGuid();
+        await AddTeamMemberAsync(team.Id, memberId, role);
+        await SeedPendingJoinRequestAsync(team.Id, player.Id);
+
+        var response = await GetAsPlayerAsync(ByTeam(team.Id), memberId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetByTeam_WhenTeamDoesNotExist_Returns404()
+    {
+        var response = await GetAsPlayerAsync(ByTeam(Guid.NewGuid()), Guid.NewGuid());
+
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetByTeam_AsTeamOwner_PaginatesAndFiltersByStatus()
+    {
+        // Arrange: 3 pending + 2 rejected, newest first.
+        var (team, _) = await SeedTeamAndPlayerAsync();
+        var baseTime = DateTime.UtcNow.AddHours(-1);
+        var pending = new List<JoinRequest>();
+        for (var i = 0; i < 3; i++)
+            pending.Add(await SeedJoinRequestAsync(team.Id, Guid.NewGuid(), requestedAtUtc: baseTime.AddMinutes(i)));
+        for (var i = 0; i < 2; i++)
+            await SeedJoinRequestAsync(team.Id, Guid.NewGuid(), RequestStatus.Rejected, requestedAtUtc: baseTime.AddMinutes(10 + i));
+
+        // Act
+        var ownerId = team.OwnerId!.Value;
+        var all = await (await GetAsPlayerAsync(ByTeam(team.Id, "?page=1&pageSize=2"), ownerId)).Content.ReadFromJsonAsync<PaginatedResult<JoinRequestDto>>();
+        var pendingPage2 = await (await GetAsPlayerAsync(ByTeam(team.Id, "?page=2&pageSize=2&status=Pending"), ownerId)).Content.ReadFromJsonAsync<PaginatedResult<JoinRequestDto>>();
+        var rejected = await (await GetAsPlayerAsync(ByTeam(team.Id, $"?status={(int)RequestStatus.Rejected}"), ownerId)).Content.ReadFromJsonAsync<PaginatedResult<JoinRequestDto>>();
+
+        // Assert
+        all!.TotalCount.Should().Be(5);
+        all.Page.Should().Be(1);
+        all.PageSize.Should().Be(2);
+        all.Items.Should().HaveCount(2).And.OnlyContain(d => d.Status == RequestStatus.Rejected);
+
+        pendingPage2!.TotalCount.Should().Be(3);
+        pendingPage2.Items.Should().ContainSingle().Which.Id.Should().Be(pending[0].Id);
+
+        rejected!.TotalCount.Should().Be(2);
+        rejected.Items.Should().HaveCount(2).And.OnlyContain(d => d.Status == RequestStatus.Rejected);
+    }
+
+    // ── GET /api/v1/joinrequests/players/{playerId} ──────────────────────────
+
+    [Fact]
+    public async Task GetByPlayer_OwnHistory_Returns200WithOnlyOwnRequests()
+    {
+        // Arrange
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        var jr = await SeedJoinRequestAsync(team.Id, player.Id, message: "mine");
+        var (_, otherPlayer) = await SeedTeamAndPlayerAsync();
+        await SeedPendingJoinRequestAsync(team.Id, otherPlayer.Id);
+
+        // Act
+        var response = await GetAsPlayerAsync(ByPlayer(player.Id), player.Id);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var page = await response.Content.ReadFromJsonAsync<PaginatedResult<JoinRequestDto>>();
+        page!.TotalCount.Should().Be(1);
+        page.Items.Should().ContainSingle().Which.Should().Match<JoinRequestDto>(d =>
+            d.Id == jr.Id && d.PlayerId == player.Id && d.Message == "mine");
+    }
+
+    [Fact]
+    public async Task GetByPlayer_AnotherPlayersHistory_Returns403()
+    {
+        var (team, player) = await SeedTeamAndPlayerAsync();
+        await SeedPendingJoinRequestAsync(team.Id, player.Id);
+
+        var asStranger = await GetAsPlayerAsync(ByPlayer(player.Id), Guid.NewGuid());
+        var asTeamOwner = await GetAsPlayerAsync(ByPlayer(player.Id), team.OwnerId!.Value);
+
+        asStranger.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        asTeamOwner.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetByPlayer_NonexistentOtherPlayer_Returns403NotEmptyPage()
+    {
+        var response = await GetAsPlayerAsync(ByPlayer(Guid.NewGuid()), Guid.NewGuid());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetByPlayer_OwnHistory_PaginatesAndFiltersByStatus()
+    {
+        // Arrange: 2 approved + 3 pending across distinct teams, newest first.
+        var (_, player) = await SeedTeamAndPlayerAsync();
+        var baseTime = DateTime.UtcNow.AddHours(-1);
+        var approved = new List<JoinRequest>();
+        for (var i = 0; i < 2; i++)
+        {
+            var (team, _) = await SeedTeamAndPlayerAsync();
+            approved.Add(await SeedJoinRequestAsync(team.Id, player.Id, RequestStatus.Approved, requestedAtUtc: baseTime.AddMinutes(i)));
+        }
+        for (var i = 0; i < 3; i++)
+        {
+            var (team, _) = await SeedTeamAndPlayerAsync();
+            await SeedJoinRequestAsync(team.Id, player.Id, requestedAtUtc: baseTime.AddMinutes(10 + i));
+        }
+
+        // Act
+        var all = await (await GetAsPlayerAsync(ByPlayer(player.Id, "?page=3&pageSize=2"), player.Id)).Content.ReadFromJsonAsync<PaginatedResult<JoinRequestDto>>();
+        var approvedOnly = await (await GetAsPlayerAsync(ByPlayer(player.Id, "?status=Approved&pageSize=1"), player.Id)).Content.ReadFromJsonAsync<PaginatedResult<JoinRequestDto>>();
+
+        // Assert
+        all!.TotalCount.Should().Be(5);
+        all.Page.Should().Be(3);
+        all.Items.Should().ContainSingle().Which.Id.Should().Be(approved[0].Id);
+
+        approvedOnly!.TotalCount.Should().Be(2);
+        approvedOnly.PageSize.Should().Be(1);
+        approvedOnly.Items.Should().ContainSingle().Which.Id.Should().Be(approved[1].Id);
     }
 
     // ── POST /api/v1/joinrequests ────────────────────────────────────────────

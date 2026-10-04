@@ -9,6 +9,7 @@ public class JoinRequestDto
     public Guid Id { get; set; }
     public Guid TeamId { get; set; }
     public string? TeamName { get; set; }
+    public Guid? TeamOwnerId { get; set; }
     public Guid PlayerId { get; set; }
     public string? PlayerUsername { get; set; }
     public RequestStatus Status { get; set; }
