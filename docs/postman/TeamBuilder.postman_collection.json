@@ -10,6 +10,17 @@
       "name": "Players",
       "item": [
         {
+          "name": "Get My Player Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/players/me",
+            "description": "Returns the authenticated caller's full profile, including email."
+          }
+        },
+        {
           "name": "Get Player by ID",
           "request": {
             "method": "GET",
@@ -38,17 +49,19 @@
           }
         },
         {
-          "name": "Create Player",
+          "name": "Onboard Current Player",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
-            "url": "{{baseUrl}}/api/v1/players",
+            "url": "{{baseUrl}}/api/v1/players/me",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"striker99\",\n  \"email\": \"striker99@example.com\",\n  \"displayName\": \"Striker\",\n  \"bio\": \"Competitive FPS player\",\n  \"region\": \"NA\",\n  \"avatarUrl\": \"https://example.com/avatar.png\"\n}"
-            }
+            },
+            "description": "Authenticated canonical player onboarding route. The removed anonymous POST /api/v1/players route is not supported."
           }
         },
         {

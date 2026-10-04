@@ -24,11 +24,11 @@ public class PlayersController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    [ProducesResponseType(typeof(PlayerDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PublicPlayerDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<PlayerDto>> GetById(Guid id, CancellationToken cancellationToken)
+    public async Task<ActionResult<PublicPlayerDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
-        var player = await _playerService.GetByIdAsync(id, cancellationToken);
+        var player = await _playerService.GetPublicByIdAsync(id, cancellationToken);
         if (player == null)
         {
             _logger.LogInformation("Player with ID {PlayerId} not found", id);
@@ -92,11 +92,11 @@ public class PlayersController : ControllerBase
     }
 
     [HttpGet("username/{username}")]
-    [ProducesResponseType(typeof(PlayerDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PublicPlayerDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<PlayerDto>> GetByUsername(string username, CancellationToken cancellationToken)
+    public async Task<ActionResult<PublicPlayerDto>> GetByUsername(string username, CancellationToken cancellationToken)
     {
-        var player = await _playerService.GetByUsernameAsync(username, cancellationToken);
+        var player = await _playerService.GetPublicByUsernameAsync(username, cancellationToken);
         if (player == null)
         {
             _logger.LogInformation("Player with username {Username} not found", SanitizeForLog(username));
@@ -118,7 +118,7 @@ public class PlayersController : ControllerBase
     }
 
     [HttpGet]
-    [ProducesResponseType(typeof(PaginatedResult<PlayerDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PaginatedResult<PublicPlayerDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -128,23 +128,8 @@ public class PlayersController : ControllerBase
         if (page < 1) page = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 20;
 
-        var result = await _playerService.GetAllAsync(page, pageSize, region, cancellationToken);
+        var result = await _playerService.GetPublicPlayersAsync(page, pageSize, region, cancellationToken);
         return Ok(result);
-    }
-
-    [HttpPost]
-    [ProducesResponseType(typeof(PlayerDto), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<PlayerDto>> Create(
-        [FromBody] CreatePlayerDto createPlayerDto,
-        CancellationToken cancellationToken)
-    {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var player = await _playerService.CreateAsync(createPlayerDto, cancellationToken);
-        _logger.LogInformation("Created player {PlayerId} with username {Username}", player.Id, SanitizeForLog(player.Username));
-        return CreatedAtAction(nameof(GetById), new { id = player.Id }, player);
     }
 
     /// <summary>

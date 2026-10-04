@@ -164,9 +164,15 @@ TeamBuilder/
 - `GET /api/v1/players/{id}` - Get player by ID
 - `GET /api/v1/players/username/{username}` - Get player by username
 - `GET /api/v1/players?page=1&pageSize=20&region={region}` - List players
-- `POST /api/v1/players` - Create new player
-- `PUT /api/v1/players/{id}` - Update player
-- `DELETE /api/v1/players/{id}` - Delete player
+- `POST /api/v1/players/me` - Authenticated onboarding for the current player
+- `GET /api/v1/players/me` - Get the caller's full profile
+- `PUT /api/v1/players/{id}` - Update the caller's own profile
+- `DELETE /api/v1/players/{id}` - Delete the caller's own profile
+
+Public player discovery remains anonymous and returns public profile fields
+only; responses do not include email. `GET /api/v1/players/me` returns the
+caller's full profile, including email. The former anonymous
+`POST /api/v1/players` endpoint has been removed.
 
 ### Join Requests
 - `GET /api/v1/joinrequests/{id}` - Get join request by ID

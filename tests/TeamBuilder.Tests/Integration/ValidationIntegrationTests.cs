@@ -47,33 +47,33 @@ public sealed class ValidationIntegrationTests : IClassFixture<TeamBuilderWebApp
         return _client.SendAsync(request);
     }
 
-    // -- POST /api/v1/players -------------------------------------------------
+    // -- POST /api/v1/players/me ---------------------------------------------
 
     [Fact]
-    public async Task CreatePlayer_WithEmptyUsername_Returns400()
+    public async Task OnboardPlayer_WithEmptyUsername_Returns400()
     {
         var dto = new CreatePlayerDto { Username = "" };
-        var response = await _client.PostAsJsonAsync("/api/v1/players", dto);
+        var response = await PostWithJwtAsync("/api/v1/players/me", dto);
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
-    public async Task CreatePlayer_WithUsernameTooLong_Returns400()
+    public async Task OnboardPlayer_WithUsernameTooLong_Returns400()
     {
         var dto = new CreatePlayerDto { Username = new string('a', 101) };
-        var response = await _client.PostAsJsonAsync("/api/v1/players", dto);
+        var response = await PostWithJwtAsync("/api/v1/players/me", dto);
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
-    public async Task CreatePlayer_WithInvalidEmail_Returns400()
+    public async Task OnboardPlayer_WithInvalidEmail_Returns400()
     {
         var dto = new CreatePlayerDto
         {
             Username = $"val-{Guid.NewGuid():N}",
             Email = "not-an-email"
         };
-        var response = await _client.PostAsJsonAsync("/api/v1/players", dto);
+        var response = await PostWithJwtAsync("/api/v1/players/me", dto);
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 

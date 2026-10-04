@@ -11,6 +11,90 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
 {
     private readonly TeamBuilderDbContext _context = context;
 
+    public async Task<PublicPlayerDto?> GetPublicByIdAsync(
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Players
+            .Where(player => player.Id == id)
+            .Select(player => new PublicPlayerDto
+            {
+                Id = player.Id,
+                Username = player.Username,
+                DisplayName = player.DisplayName,
+                Bio = player.Bio,
+                Region = player.Region,
+                AvatarUrl = player.AvatarUrl,
+                CreatedAtUtc = player.CreatedAtUtc,
+                UpdatedAtUtc = player.UpdatedAtUtc
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<PublicPlayerDto?> GetPublicByUsernameAsync(
+        string username,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Players
+            .Where(player => player.Username == username)
+            .Select(player => new PublicPlayerDto
+            {
+                Id = player.Id,
+                Username = player.Username,
+                DisplayName = player.DisplayName,
+                Bio = player.Bio,
+                Region = player.Region,
+                AvatarUrl = player.AvatarUrl,
+                CreatedAtUtc = player.CreatedAtUtc,
+                UpdatedAtUtc = player.UpdatedAtUtc
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<PaginatedResult<PublicPlayerDto>> GetPublicPlayersAsync(
+        int page,
+        int pageSize,
+        string? region = null,
+        CancellationToken cancellationToken = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var query = _context.Players.AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(region))
+        {
+            query = query.Where(player => player.Region == region);
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var players = await query
+            .OrderByDescending(player => player.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(player => new PublicPlayerDto
+            {
+                Id = player.Id,
+                Username = player.Username,
+                DisplayName = player.DisplayName,
+                Bio = player.Bio,
+                Region = player.Region,
+                AvatarUrl = player.AvatarUrl,
+                CreatedAtUtc = player.CreatedAtUtc,
+                UpdatedAtUtc = player.UpdatedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return new PaginatedResult<PublicPlayerDto>
+        {
+            Items = players,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
     public async Task<PlayerDto?> GetByIdAsync(
         Guid id,
         CancellationToken cancellationToken = default)
