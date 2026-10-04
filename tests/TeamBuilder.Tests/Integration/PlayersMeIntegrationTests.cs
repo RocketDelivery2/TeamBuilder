@@ -191,6 +191,35 @@ public sealed class PlayersMeIntegrationTests : IClassFixture<TeamBuilderWebAppl
         dto.Email.Should().Be("linked@example.com");
     }
 
+    [Fact]
+    public async Task GetMe_OrdinalSubjectMismatch_Returns404()
+    {
+        var subject = NewSubject();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            var player = new Player
+            {
+                Id = Guid.NewGuid(),
+                Username = $"linked-{Guid.NewGuid():N}"
+            };
+            db.Players.Add(player);
+            db.PlayerIdentities.Add(new PlayerIdentity
+            {
+                Id = Guid.NewGuid(),
+                PlayerId = player.Id,
+                Issuer = TeamBuilderWebApplicationFactory.TestIssuer,
+                Subject = subject,
+                Provider = "oidc"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var response = await _client.SendAsync(Get(SubjectToken(subject + " ")));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
     // ── POST ─────────────────────────────────────────────────────────────────
 
     [Fact]
