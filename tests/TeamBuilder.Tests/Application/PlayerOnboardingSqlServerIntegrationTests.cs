@@ -90,17 +90,73 @@ public class PlayerOnboardingSqlServerIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetByExternalIdentity_MatchesIssuerAndSubjectExactly()
+    public async Task GetByExternalIdentity_ExactNonGuidIssuerAndSubject_ResolvesPlayerWithoutTrackingOrMutation()
     {
         var identity = new ExternalIdentity(OtherIssuer, "AbC123", "oidc", null);
+        PlayerDto created;
         await using (var context = _db.CreateContext())
-            await new PlayerOnboardingService(context).OnboardAsync(identity, NewDto());
+            created = await new PlayerOnboardingService(context).OnboardAsync(identity, NewDto());
+
+        await using var verify = _db.CreateContext();
+        var beforePlayerCount = await verify.Players.CountAsync();
+        var beforeIdentityCount = await verify.PlayerIdentities.CountAsync();
+        var service = new PlayerOnboardingService(verify);
+        var found = await service.GetByExternalIdentityAsync(identity);
+
+        found.Should().NotBeNull();
+        found!.Id.Should().Be(created.Id);
+        found.Username.Should().Be(created.Username);
+        verify.ChangeTracker.Entries().Should().BeEmpty("identity lookup must remain AsNoTracking");
+        verify.ChangeTracker.HasChanges().Should().BeFalse();
+        (await verify.Players.CountAsync()).Should().Be(beforePlayerCount);
+        (await verify.PlayerIdentities.CountAsync()).Should().Be(beforeIdentityCount);
+    }
+
+    [Theory]
+    [InlineData("https://accounts.Example.com", "AbC123")]
+    [InlineData("https://accounts.example.com", "abc123")]
+    [InlineData("https://accounts.example.com ", "AbC123")]
+    [InlineData("https://accounts.example.com", "AbC123 ")]
+    [InlineData("https://accounts.example.com/", "AbC123")]
+    [InlineData(" https://accounts.example.com", "AbC123")]
+    [InlineData("https://accounts.example.com", " AbC123")]
+    public async Task GetByExternalIdentity_OrdinalMismatch_DoesNotResolve(
+        string requestedIssuer,
+        string requestedSubject)
+    {
+        var storedIdentity = new ExternalIdentity(OtherIssuer, "AbC123", "oidc", null);
+        await using (var context = _db.CreateContext())
+            await new PlayerOnboardingService(context).OnboardAsync(storedIdentity, NewDto());
 
         await using var verify = _db.CreateContext();
         var service = new PlayerOnboardingService(verify);
-        (await service.GetByExternalIdentityAsync(identity)).Should().NotBeNull();
-        (await service.GetByExternalIdentityAsync(identity with { Subject = "abc123" })).Should().BeNull();
-        (await service.GetByExternalIdentityAsync(identity with { Issuer = EntraIssuer })).Should().BeNull();
+
+        (await service.GetByExternalIdentityAsync(
+            storedIdentity with { Issuer = requestedIssuer, Subject = requestedSubject })).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByExternalIdentity_SameSubjectUnderDifferentIssuers_ResolvesOnlyExactIssuerLink()
+    {
+        var subject = $"opaque-{Guid.NewGuid():N}";
+        var firstIdentity = new ExternalIdentity(OtherIssuer, subject, "oidc", null);
+        var secondIdentity = new ExternalIdentity(EntraIssuer, subject, "entra", TenantId);
+        PlayerDto first;
+        PlayerDto second;
+
+        await using (var context = _db.CreateContext())
+        {
+            var service = new PlayerOnboardingService(context);
+            first = await service.OnboardAsync(firstIdentity, NewDto());
+            second = await service.OnboardAsync(secondIdentity, NewDto());
+        }
+
+        await using var verify = _db.CreateContext();
+        var serviceForLookup = new PlayerOnboardingService(verify);
+        (await serviceForLookup.GetByExternalIdentityAsync(firstIdentity))!.Id.Should().Be(first.Id);
+        (await serviceForLookup.GetByExternalIdentityAsync(secondIdentity))!.Id.Should().Be(second.Id);
+        (await serviceForLookup.GetByExternalIdentityAsync(
+            firstIdentity with { Issuer = "https://unknown.example.com" })).Should().BeNull();
     }
 
     [Fact]

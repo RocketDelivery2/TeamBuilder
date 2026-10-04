@@ -20,13 +20,20 @@ public class PlayerOnboardingService(TeamBuilderDbContext context) : IPlayerOnbo
     {
         ArgumentNullException.ThrowIfNull(identity);
 
-        var player = await _context.PlayerIdentities
+        var candidate = await _context.PlayerIdentities
             .AsNoTracking()
             .Where(pi => pi.Issuer == identity.Issuer && pi.Subject == identity.Subject)
-            .Select(pi => pi.Player)
+            .Select(pi => new { pi.Issuer, pi.Subject, pi.Player })
             .FirstOrDefaultAsync(cancellationToken);
 
-        return player == null ? null : MapToDto(player);
+        if (candidate == null ||
+            !string.Equals(candidate.Issuer, identity.Issuer, StringComparison.Ordinal) ||
+            !string.Equals(candidate.Subject, identity.Subject, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return MapToDto(candidate.Player);
     }
 
     public async Task<PlayerDto> OnboardAsync(
