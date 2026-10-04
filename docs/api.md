@@ -416,10 +416,18 @@ public player discovery responses.
 Deletes the caller's player profile. Requires authentication and succeeds only
 when the resolved caller `Player.Id` matches `{id}`.
 
+On success the player's team memberships (active and inactive) are deleted in
+the same transaction, and every team where the player was an active member has
+`currentMemberCount` reconciled (a `Full` team that gains a vacancy becomes
+`Recruiting`).
+
 **Response `204`:** Deleted.  
 **Response `404`:** Player not found.
 **Response `401`:** No valid JWT provided.
 **Response `403`:** Authenticated caller is not this player.
+**Response `409`:** The player owns a team (delete or transfer it first), or a
+team ownership, membership or roster count changed concurrently; nothing was
+deleted, so retry.
 
 ---
 

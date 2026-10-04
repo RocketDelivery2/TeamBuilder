@@ -35,10 +35,13 @@ public class PlayerConfiguration : IEntityTypeConfiguration<Player>
         builder.Property(p => p.RowVersion)
             .IsRowVersion();
 
+        // No cascade: PlayerService.DeleteAsync reconciles affected team counts and deletes the
+        // player's TeamMember rows explicitly. A membership inserted after that query makes the
+        // player delete fail (NO ACTION) instead of being silently cascaded away uncounted.
         builder.HasMany(p => p.TeamMemberships)
             .WithOne(tm => tm.Player)
             .HasForeignKey(tm => tm.PlayerId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasMany(p => p.HostedEvents)
             .WithOne(e => e.Host)

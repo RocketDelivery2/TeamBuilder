@@ -41,7 +41,8 @@ public class SqlServerMigrationSchemaIntegrationTests : IAsyncLifetime
             MigrationIds.InitialCreate,
             MigrationIds.EnforceUniqueTeamMembership,
             MigrationIds.EnforceUniquePendingJoinRequest,
-            MigrationIds.AddPlayerIdentities
+            MigrationIds.AddPlayerIdentities,
+            MigrationIds.EnforceCapacityDatabaseGuards
         });
     }
 

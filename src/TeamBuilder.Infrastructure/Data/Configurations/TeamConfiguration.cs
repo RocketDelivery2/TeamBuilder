@@ -6,9 +6,18 @@ namespace TeamBuilder.Infrastructure.Data.Configurations;
 
 public class TeamConfiguration : IEntityTypeConfiguration<Team>
 {
+    public const string CurrentMemberCountBoundsCheckName = "CK_Teams_CurrentMemberCount_Bounds";
+
     public void Configure(EntityTypeBuilder<Team> builder)
     {
         builder.HasKey(t => t.Id);
+
+        // Physical capacity bounds only. Exact equality with the active TeamMember rows is
+        // the application's job (see the reconciliation in TeamService/JoinRequestService/
+        // PlayerService); this check just makes an out-of-range stored count impossible.
+        builder.ToTable(t => t.HasCheckConstraint(
+            CurrentMemberCountBoundsCheckName,
+            "[CurrentMemberCount] >= 0 AND [CurrentMemberCount] <= [MaxMembers]"));
 
         builder.Property(t => t.Name)
             .IsRequired()
@@ -35,10 +44,13 @@ public class TeamConfiguration : IEntityTypeConfiguration<Team>
         builder.Property(t => t.RowVersion)
             .IsRowVersion();
 
+        // The database refuses to delete a Player who still owns a Team (NO ACTION on SQL
+        // Server). PlayerService.DeleteAsync returns a friendly 409 first; this FK is the
+        // race-safe final guard so a Team can never be silently left ownerless.
         builder.HasOne(t => t.Owner)
             .WithMany(p => p.OwnedTeams)
             .HasForeignKey(t => t.OwnerId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasMany(t => t.Members)
             .WithOne(tm => tm.Team)
