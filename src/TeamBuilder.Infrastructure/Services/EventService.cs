@@ -22,6 +22,7 @@ public class EventService : IEventService
         var teamEvent = await _context.Events
             .Include(e => e.Team)
             .Include(e => e.Host)
+            .Include(e => e.Venue)
             .FirstOrDefaultAsync(e => e.Id == id, cancellationToken);
 
         return teamEvent == null ? null : MapToDto(teamEvent);
@@ -38,6 +39,7 @@ public class EventService : IEventService
         var query = _context.Events
             .Include(e => e.Team)
             .Include(e => e.Host)
+            .Include(e => e.Venue)
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(category))
@@ -52,7 +54,7 @@ public class EventService : IEventService
         var totalCount = await query.CountAsync(cancellationToken);
 
         var events = await query
-            .OrderBy(e => e.EventDateUtc)
+            .OrderBy(e => e.ScheduledStartUtc)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
@@ -71,15 +73,15 @@ public class EventService : IEventService
         if (createEventDto.EventDateUtc is not { } eventDate)
             throw new ArgumentException("EventDateUtc is required.", nameof(createEventDto));
 
-        var teamEvent = new TeamEvent
+        var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
             Name = createEventDto.Name,
             Description = createEventDto.Description,
-            EventDateUtc = eventDate,
+            ScheduledStartUtc = eventDate,
             Category = createEventDto.Category,
             Tags = createEventDto.Tags,
-            Location = createEventDto.Location,
+            LegacyLocation = createEventDto.Location,
             Region = createEventDto.Region,
             MaxParticipants = createEventDto.MaxParticipants,
             CurrentParticipantCount = 0,
@@ -96,7 +98,9 @@ public class EventService : IEventService
 
     public async Task<EventDto?> UpdateAsync(Guid id, UpdateEventDto updateEventDto, CancellationToken cancellationToken = default)
     {
-        var teamEvent = await _context.Events.FindAsync([id], cancellationToken);
+        var teamEvent = await _context.Events
+            .Include(e => e.Venue)
+            .FirstOrDefaultAsync(e => e.Id == id, cancellationToken);
         if (teamEvent == null) return null;
 
         if (!string.IsNullOrWhiteSpace(updateEventDto.Name))
@@ -106,7 +110,7 @@ public class EventService : IEventService
             teamEvent.Description = updateEventDto.Description;
 
         if (updateEventDto.EventDateUtc.HasValue)
-            teamEvent.EventDateUtc = updateEventDto.EventDateUtc.Value;
+            teamEvent.ScheduledStartUtc = updateEventDto.EventDateUtc.Value;
 
         if (updateEventDto.Status.HasValue)
             teamEvent.Status = updateEventDto.Status.Value;
@@ -118,7 +122,7 @@ public class EventService : IEventService
             teamEvent.Tags = updateEventDto.Tags;
 
         if (updateEventDto.Location != null)
-            teamEvent.Location = updateEventDto.Location;
+            teamEvent.LegacyLocation = updateEventDto.Location;
 
         if (updateEventDto.Region != null)
             teamEvent.Region = updateEventDto.Region;
@@ -142,21 +146,26 @@ public class EventService : IEventService
         return true;
     }
 
-    private static EventDto MapToDto(TeamEvent teamEvent)
+    private static EventDto MapToDto(EventOccurrence teamEvent)
     {
         return new EventDto
         {
             Id = teamEvent.Id,
             Name = teamEvent.Name,
             Description = teamEvent.Description,
-            EventDateUtc = teamEvent.EventDateUtc,
+            EventDateUtc = teamEvent.ScheduledStartUtc,
+            ScheduledStartUtc = teamEvent.ScheduledStartUtc,
+            ScheduledEndUtc = teamEvent.ScheduledEndUtc,
             Status = teamEvent.Status,
             Category = teamEvent.Category,
             Tags = teamEvent.Tags,
-            Location = teamEvent.Location,
+            Location = teamEvent.DisplayLocation,
             Region = teamEvent.Region,
             MaxParticipants = teamEvent.MaxParticipants,
             CurrentParticipantCount = teamEvent.CurrentParticipantCount,
+            SeriesId = teamEvent.SeriesId,
+            VenueId = teamEvent.VenueId,
+            IsDetached = teamEvent.IsDetached,
             TeamId = teamEvent.TeamId,
             TeamName = teamEvent.Team?.Name,
             HostId = teamEvent.HostId,

@@ -10,7 +10,7 @@ public class Player : BaseEntity
     public string? AvatarUrl { get; set; }
     public ICollection<TeamMember> TeamMemberships { get; set; } = [];
     public ICollection<Team> OwnedTeams { get; set; } = [];
-    public ICollection<TeamEvent> HostedEvents { get; set; } = [];
+    public ICollection<EventOccurrence> HostedEvents { get; set; } = [];
     public ICollection<RosterEntry> RosterEntries { get; set; } = [];
     public ICollection<JoinRequest> JoinRequests { get; set; } = [];
     public ICollection<PlayerIdentity> Identities { get; set; } = [];

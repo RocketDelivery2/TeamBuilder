@@ -765,6 +765,24 @@ Requires `Authorization: Bearer <token>` for the processing user.
 
 ### Events — `api/v1/events`
 
+Internally, every event served by these routes is an **event occurrence**: one
+concrete game or session (`EventOccurrence`, still stored in the `Events`
+table). The API is unchanged for existing clients:
+
+- `eventDateUtc` is still accepted on create/update and still returned; it is
+  the occurrence's scheduled start and always equals `scheduledStartUtc`.
+- `location` is still accepted and returned as free display text. It is stored
+  as legacy location text and is never geocoded or turned into a venue. When an
+  occurrence has a venue, `location` returns the venue's name.
+- Responses also carry additive fields: `scheduledStartUtc`, `scheduledEndUtc`
+  (null when no end is known, which includes every pre-existing event),
+  `seriesId`, `venueId` and `isDetached`.
+- An event created through `POST` is a one-off occurrence: it has no series,
+  and a pickup/community event has no team.
+
+Venues and recurring event series exist as persistence foundations only; they
+have no public API yet.
+
 #### `GET api/v1/events/{id}`
 
 Returns a single event by ID. Includes team name and host username.
@@ -777,10 +795,15 @@ Returns a single event by ID. Includes team name and host username.
   "name": "Spring Championship",
   "description": "Annual spring tournament",
   "eventDateUtc": "2025-04-01T18:00:00Z",
+  "scheduledStartUtc": "2025-04-01T18:00:00Z",
+  "scheduledEndUtc": null,
   "status": "Planned",
   "category": "FPS",
   "tags": "fps,tournament",
   "location": "Online",
+  "seriesId": null,
+  "venueId": null,
+  "isDetached": false,
   "region": "NA",
   "maxParticipants": 64,
   "currentParticipantCount": 0,
@@ -799,7 +822,7 @@ Returns a single event by ID. Includes team name and host username.
 
 #### `GET api/v1/events`
 
-Returns a paginated list of events, ordered by `EventDateUtc` ascending.
+Returns a paginated list of events, ordered by scheduled start (`eventDateUtc`) ascending.
 
 **Query parameters:**
 

@@ -76,6 +76,10 @@ The ASP.NET Core Web API acts as the **middle layer** between any client-side fr
 - Event status tracking (Scheduled, InProgress, Completed, Cancelled)
 - Category and tag organization
 - Roster entries for event participants
+- Each event is stored internally as an event occurrence (one concrete session);
+  the `/api/v1/events` contract, including `eventDateUtc` and free-text `location`,
+  is unchanged. Venues and recurring event series are persistence foundations
+  without public APIs yet, and legacy locations are never geocoded.
 
 ### Player Management
 - Player profiles with username, display name, email, bio, avatar
@@ -328,7 +332,8 @@ TeamBuilder uses **Entity Framework Core Code First** approach:
   - Teams → Owner (Player)
   - Teams → Members (TeamMember)
   - Teams → JoinRequests
-  - Teams → Events
+  - Teams → Events (event occurrences, stored in the `Events` table)
+  - Events → EventSeries and Venues (optional; foundation only)
   - Players → TeamMemberships
   - Events → RosterEntries
 
