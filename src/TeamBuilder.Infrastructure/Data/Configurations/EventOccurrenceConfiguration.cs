@@ -12,6 +12,7 @@ namespace TeamBuilder.Infrastructure.Data.Configurations;
 public class EventOccurrenceConfiguration : IEntityTypeConfiguration<EventOccurrence>
 {
     public const string TableName = "Events";
+    public const string SeriesStartUniqueIndexName = "UX_Events_SeriesId_ScheduledStartUtc";
 
     public void Configure(EntityTypeBuilder<EventOccurrence> builder)
     {
@@ -79,6 +80,13 @@ public class EventOccurrenceConfiguration : IEntityTypeConfiguration<EventOccurr
 
         builder.HasIndex(e => e.ScheduledStartUtc);
         builder.HasIndex(e => e.SeriesId);
+
+        // Recurrence materialization idempotency boundary: a series never has two occurrences
+        // at the same instant. One-off occurrences (no series) are unaffected.
+        builder.HasIndex(e => new { e.SeriesId, e.ScheduledStartUtc })
+            .IsUnique()
+            .HasDatabaseName(SeriesStartUniqueIndexName)
+            .HasFilter("[SeriesId] IS NOT NULL");
         builder.HasIndex(e => e.VenueId);
         builder.HasIndex(e => e.Status);
         builder.HasIndex(e => e.Category);

@@ -186,6 +186,19 @@ ambiguous local times during fall-back. Retain the series timezone and local
 wall-clock intent alongside resolved UTC instants. Use a maintained timezone
 database and a documented policy; do not silently shift recurrence times.
 
+**Implemented (TB-EVENTS-002):** series creation, reads and logical
+cancellation at `/api/v1/event-series`
+([`docs/api.md`](../api.md#event-series--apiv1event-series)). The RRULE
+parser accepts a strict V0.1 subset (`FREQ=DAILY|WEEKLY`, `INTERVAL` 1..52,
+`BYDAY` weekdays) and the series end date bounds the recurrence. Time zones
+are IANA ids validated with built-in .NET APIs. A spring-forward gap moves the
+occurrence to the first valid local instant after the gap; a fall-back overlap
+uses standard time. Creation materializes 21 local days from the series start
+in the same transaction, through a reusable materializer, with
+`UX_Events_SeriesId_ScheduledStartUtc` as the idempotency boundary. Not yet
+implemented: a rolling-horizon worker, series editing/regeneration, exception
+dates and per-occurrence overrides, the Venue API and geo discovery.
+
 ## Activity and position taxonomy
 
 Roles belong to an activity taxonomy, not a global fixed enum:

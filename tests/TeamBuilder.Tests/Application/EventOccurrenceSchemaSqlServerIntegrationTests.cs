@@ -174,7 +174,7 @@ public class EventOccurrenceSchemaSqlServerIntegrationTests : IAsyncLifetime
         var playerId = await AddPlayerAsync();
         var seriesId = await AddSeriesAsync();
         var first = await AddOccurrenceAsync(o => { o.SeriesId = seriesId; o.OccurrenceIndex = 0; });
-        var second = await AddOccurrenceAsync(o => { o.SeriesId = seriesId; o.OccurrenceIndex = 1; o.IsDetached = true; });
+        var second = await AddOccurrenceAsync(o => { o.SeriesId = seriesId; o.OccurrenceIndex = 1; o.IsDetached = true; o.ScheduledStartUtc = o.ScheduledStartUtc.AddDays(7); });
         var rosterId = await AddRosterEntryAsync(first, playerId);
 
         await ExecuteAsync($"DELETE FROM [EventSeries] WHERE [Id] = '{seriesId}'");
@@ -281,6 +281,7 @@ public class EventOccurrenceSchemaSqlServerIntegrationTests : IAsyncLifetime
             Name = "Weekly run",
             LocalStartTime = new TimeOnly(18, 0),
             DurationMinutes = 120,
+            MaxParticipants = 20,
             TimeZoneId = "America/Chicago",
             RecurrenceRule = "FREQ=WEEKLY;BYDAY=TU",
             SeriesStartDate = new DateOnly(2026, 11, 3),

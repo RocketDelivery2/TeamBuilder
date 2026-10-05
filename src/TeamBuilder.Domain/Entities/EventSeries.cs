@@ -3,8 +3,9 @@ using TeamBuilder.Domain.Enums;
 namespace TeamBuilder.Domain.Entities;
 
 /// <summary>
-/// A recurrence/scheduling definition from which occurrences are produced. Persistence
-/// foundation only: there is no series API, recurrence parsing or materialization yet.
+/// A recurrence/scheduling definition from which concrete <see cref="EventOccurrence"/> rows
+/// are materialized. <see cref="RecurrenceRule"/> holds an RFC 5545 RRULE value restricted to
+/// the documented V0.1 subset (DAILY/WEEKLY, INTERVAL, BYDAY); the series date range bounds it.
 /// </summary>
 public class EventSeries : BaseEntity
 {
@@ -31,6 +32,9 @@ public class EventSeries : BaseEntity
     public string TimeZoneId { get; set; } = string.Empty;
 
     public string RecurrenceRule { get; set; } = string.Empty;
+
+    /// <summary>Participant ceiling copied onto every generated occurrence.</summary>
+    public int MaxParticipants { get; set; }
 
     public DateOnly SeriesStartDate { get; set; }
     public DateOnly? SeriesEndDate { get; set; }
