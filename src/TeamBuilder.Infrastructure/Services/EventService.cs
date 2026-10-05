@@ -146,16 +146,17 @@ public class EventService : IEventService
         return true;
     }
 
-    private static EventDto MapToDto(EventOccurrence teamEvent)
+    internal static EventDto MapToDto(EventOccurrence teamEvent)
     {
+        var scheduledStartUtc = AsUtc(teamEvent.ScheduledStartUtc);
         return new EventDto
         {
             Id = teamEvent.Id,
             Name = teamEvent.Name,
             Description = teamEvent.Description,
-            EventDateUtc = teamEvent.ScheduledStartUtc,
-            ScheduledStartUtc = teamEvent.ScheduledStartUtc,
-            ScheduledEndUtc = teamEvent.ScheduledEndUtc,
+            EventDateUtc = scheduledStartUtc,
+            ScheduledStartUtc = scheduledStartUtc,
+            ScheduledEndUtc = teamEvent.ScheduledEndUtc is { } end ? AsUtc(end) : null,
             Status = teamEvent.Status,
             Category = teamEvent.Category,
             Tags = teamEvent.Tags,
@@ -174,4 +175,16 @@ public class EventService : IEventService
             UpdatedAtUtc = teamEvent.UpdatedAtUtc
         };
     }
+
+    /// <summary>
+    /// Scheduled instants are stored as UTC, but SQL Server datetime2 does not keep
+    /// <see cref="DateTime.Kind"/>, so values read back are Unspecified. Marking them UTC makes
+    /// the API serialize them with a <c>Z</c> suffix.
+    /// </summary>
+    internal static DateTime AsUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
 }

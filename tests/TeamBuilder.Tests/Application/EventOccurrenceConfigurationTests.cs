@@ -81,10 +81,14 @@ public class EventOccurrenceConfigurationTests
     }
 
     [Fact]
-    public void EventOccurrence_HasNoSeriesStartUniqueIndex()
+    public void EventOccurrence_HasOnlyTheFilteredSeriesStartUniqueIndex()
     {
-        Model().FindEntityType(typeof(EventOccurrence))!.GetIndexes()
-            .Should().NotContain(i => i.IsUnique);
+        var unique = Model().FindEntityType(typeof(EventOccurrence))!.GetIndexes()
+            .Where(i => i.IsUnique)
+            .Should().ContainSingle().Which;
+        unique.GetDatabaseName().Should().Be("UX_Events_SeriesId_ScheduledStartUtc");
+        unique.Properties.Select(p => p.Name).Should().Equal(nameof(EventOccurrence.SeriesId), nameof(EventOccurrence.ScheduledStartUtc));
+        unique.GetFilter().Should().Be("[SeriesId] IS NOT NULL");
     }
 
     [Theory]
@@ -99,13 +103,17 @@ public class EventOccurrenceConfigurationTests
     }
 
     [Fact]
-    public void Venue_DeclaresCoordinateChecks_AndSeriesDeclaresDurationCheck()
+    public void Venue_DeclaresCoordinateChecks_AndSeriesDeclaresDurationAndParticipantChecks()
     {
         var model = Model();
         model.FindEntityType(typeof(Venue))!.GetCheckConstraints().Select(c => c.Name)
             .Should().BeEquivalentTo("CK_Venues_Latitude_Range", "CK_Venues_Longitude_Range");
-        model.FindEntityType(typeof(EventSeries))!.GetCheckConstraints().Single().Sql
-            .Should().Be("[DurationMinutes] > 0 AND [DurationMinutes] <= 10080");
+        model.FindEntityType(typeof(EventSeries))!.GetCheckConstraints().ToDictionary(c => c.Name!, c => c.Sql)
+            .Should().BeEquivalentTo(new Dictionary<string, string>
+            {
+                ["CK_EventSeries_DurationMinutes_Range"] = "[DurationMinutes] > 0 AND [DurationMinutes] <= 10080",
+                ["CK_EventSeries_MaxParticipants_Range"] = "[MaxParticipants] >= 1 AND [MaxParticipants] <= 100000"
+            });
     }
 
     [Fact]

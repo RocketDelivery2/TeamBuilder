@@ -7,15 +7,26 @@ namespace TeamBuilder.Infrastructure.Data.Configurations;
 public class EventSeriesConfiguration : IEntityTypeConfiguration<EventSeries>
 {
     public const string DurationMinutesRangeCheckName = "CK_EventSeries_DurationMinutes_Range";
+    public const string MaxParticipantsRangeCheckName = "CK_EventSeries_MaxParticipants_Range";
+
+    /// <summary>Same public range as one-off events (CreateEventDto.MaxParticipants).</summary>
+    public const int MinParticipants = 1;
+    public const int MaxParticipants = 100000;
 
     /// <summary>One week. Business validation of durations belongs to the series API.</summary>
     public const int MaxDurationMinutes = 10080;
 
     public void Configure(EntityTypeBuilder<EventSeries> builder)
     {
-        builder.ToTable("EventSeries", t => t.HasCheckConstraint(
-            DurationMinutesRangeCheckName,
-            $"[DurationMinutes] > 0 AND [DurationMinutes] <= {MaxDurationMinutes}"));
+        builder.ToTable("EventSeries", t =>
+        {
+            t.HasCheckConstraint(
+                DurationMinutesRangeCheckName,
+                $"[DurationMinutes] > 0 AND [DurationMinutes] <= {MaxDurationMinutes}");
+            t.HasCheckConstraint(
+                MaxParticipantsRangeCheckName,
+                $"[MaxParticipants] >= {MinParticipants} AND [MaxParticipants] <= {MaxParticipants}");
+        });
 
         builder.HasKey(s => s.Id);
 
@@ -36,6 +47,10 @@ public class EventSeriesConfiguration : IEntityTypeConfiguration<EventSeries>
             .IsRequired();
 
         builder.Property(s => s.DurationMinutes)
+            .IsRequired();
+
+        // No model default: an unset value must fail the CHECK rather than silently become 50.
+        builder.Property(s => s.MaxParticipants)
             .IsRequired();
 
         builder.Property(s => s.TimeZoneId)

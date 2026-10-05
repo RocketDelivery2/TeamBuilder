@@ -156,6 +156,7 @@ is not linked yet.
 | `POST`, `PUT`, `DELETE` | `/api/v1/teams...` | Owner identity comes from `PlayerIdentity`; update/delete are owner-only. Leave is self-only; owners cannot remove another member through this route. |
 | `GET`, `POST`, `PUT` | `/api/v1/joinrequests...` | Reads are limited to the applicant or relevant team owner; creation is by the linked applicant; processing is team-owner-only. |
 | `POST`, `PUT`, `DELETE` | `/api/v1/events...` | Host identity comes from `PlayerIdentity`; updates/deletes are host-only. When an event names a team, only that team's owner may create it. |
+| `POST`, `DELETE` | `/api/v1/event-series...` | Host identity comes from `PlayerIdentity`; cancellation is host-only. When a series names a team, only that team's owner may create it. |
 | `GET`, `POST`, `PUT`, `DELETE` | `/api/v1/rosterimports...` | Reads and mutations are restricted to the linked original importer. |
 
 ### Anonymous endpoints (no token required)
@@ -166,6 +167,7 @@ is not linked yet.
 | `GET` | `/health/ready` |
 | `GET` | `/api/v1/teams`, `/api/v1/teams/{id}` |
 | `GET` | `/api/v1/events`, `/api/v1/events/{id}` |
+| `GET` | `/api/v1/event-series/{id}`, `/api/v1/event-series/{id}/occurrences` |
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
 | `GET` | `/api/v1/players/username/{username}` |
 | `GET` | `/swagger` (Development only) |
@@ -780,8 +782,13 @@ table). The API is unchanged for existing clients:
 - An event created through `POST` is a one-off occurrence: it has no series,
   and a pickup/community event has no team.
 
-Venues and recurring event series exist as persistence foundations only; they
+Occurrences generated from a recurring series (see
+[Event Series](#event-series--apiv1event-series)) are served by these routes
+too, with `seriesId` set. Venues exist as a persistence foundation only; they
 have no public API yet.
+
+All scheduled instants (`eventDateUtc`, `scheduledStartUtc`,
+`scheduledEndUtc`) are UTC and serialized with a `Z` suffix.
 
 #### `GET api/v1/events/{id}`
 
@@ -910,6 +917,193 @@ Deletes an event.
 **Response `403`:** Authenticated caller is not the event host.  
 **Response `404`:** Event not found.  
 **Response `409`:** Event has no host (orphaned); contact an administrator.
+
+---
+
+### Event Series — `api/v1/event-series`
+
+A recurring schedule ("every Tuesday at 5 PM") from which concrete event
+occurrences are generated. A series stores local wall-clock intent: a local
+start time, an IANA time zone, a recurrence rule and a local date range. Each
+occurrence carries its own resolved UTC start/end.
+
+There is no series editing yet, no background job that extends the horizon,
+no Venue API and no geo discovery; those are separate milestones.
+
+#### Recurrence rule — supported subset (V0.1)
+
+`recurrenceRule` is an RFC 5545 `RRULE` value (without the `RRULE:` prefix),
+restricted to this strict subset. Keys and values are upper case.
+
+| Component | Required | Values |
+|---|---|---|
+| `FREQ` | Yes | `DAILY` or `WEEKLY` |
+| `INTERVAL` | No (default `1`) | Integer `1`..`52` |
+| `BYDAY` | No, `WEEKLY` only | Comma-separated `MO`, `TU`, `WE`, `TH`, `FR`, `SA`, `SU` (no ordinals such as `1MO`) |
+
+Everything else is rejected with `400`: other `FREQ` values, unknown keys,
+duplicate keys or weekdays, `COUNT`, `UNTIL`, `BYHOUR`, `BYMINUTE`,
+`BYSECOND`, `BYMONTH`, `BYMONTHDAY`, `BYSETPOS`, `BYYEARDAY`, `BYWEEKNO`,
+`WKST`. The series' `seriesEndDate` is the recurrence bound.
+
+Expansion, with `seriesStartDate` acting as DTSTART:
+
+- `DAILY`: the start date, then every `INTERVAL` days.
+- `WEEKLY`: weeks run Monday to Sunday; the week containing the start date
+  is week 0 and every `INTERVAL`-th week is active. Active weeks produce their
+  `BYDAY` weekdays (the start date's weekday when `BYDAY` is omitted), never
+  before the start date.
+
+Examples: `FREQ=WEEKLY;BYDAY=TU` (every Tuesday),
+`FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH` (Tuesday and Thursday every other week),
+`FREQ=DAILY;INTERVAL=3`.
+
+#### Time zones and daylight saving
+
+`timeZoneId` must be an IANA identifier (for example `America/New_York` or
+`UTC`) that the server's built-in time zone data resolves, spelled exactly as
+the IANA id. Windows ids (`Eastern Standard Time`) and different-case
+spellings are rejected. The accepted id is stored as given.
+
+- When `venueId` is supplied and the venue has a time zone, `timeZoneId` may be
+  omitted (the venue's is used) or must equal the venue's exactly (otherwise
+  `400`).
+- Otherwise `timeZoneId` is required.
+
+Each occurrence is the local date plus `localStartTime` in the series time
+zone, converted to UTC per date, so Tuesday 5 PM stays 5 PM local across DST.
+
+- **Spring-forward gap** (the local time does not exist): the occurrence moves
+  to the first valid local instant after the gap (02:30 on a US spring-forward
+  day becomes 03:00 local). It is never skipped.
+- **Fall-back overlap** (the local time happens twice): the standard-time
+  instant is used (01:30 on a US fall-back day is 01:30 standard time).
+
+#### Materialization
+
+Creating a series also creates its occurrences for local dates from
+`seriesStartDate` through `seriesStartDate + 20 days` (21 local days), or
+through `seriesEndDate` if earlier, in the same database transaction as the
+series. Each occurrence copies the series' name, description, category, tags,
+team, host, venue and `maxParticipants`, and starts `Planned`, not detached,
+with no participants and `scheduledEndUtc = scheduledStartUtc +
+durationMinutes`. `OccurrenceIndex` (stored, not exposed) is the zero-based
+position in the series' recurrence from its start date.
+
+The unique index `UX_Events_SeriesId_ScheduledStartUtc` (filtered to rows
+with a series) guarantees a series never has two occurrences at the same
+instant; materialization inserts only missing occurrences and is safe to repeat
+or run concurrently. Extending the horizon later (a rolling worker) is not
+implemented yet.
+
+#### `POST api/v1/event-series`
+
+Creates a series and its initial occurrences. Requires a linked caller
+identity; `hostId` is the resolved internal `Player.Id`. If `teamId` is
+supplied, the same rules as team event creation apply: the team must exist
+(`404`), the caller must own it (`403`), and its `lifecycleStatus` must be
+`Active` (`409`). If `venueId` is supplied, the venue must exist (`404`).
+
+**Request body:**
+
+```json
+{
+  "name": "Tuesday pickup",
+  "description": "Bring both shirts",
+  "category": "Basketball",
+  "tags": "pickup,indoor",
+  "teamId": null,
+  "venueId": null,
+  "localStartTime": "17:00:00",
+  "durationMinutes": 90,
+  "timeZoneId": "America/New_York",
+  "recurrenceRule": "FREQ=WEEKLY;BYDAY=TU",
+  "seriesStartDate": "2026-10-13",
+  "seriesEndDate": "2026-12-15",
+  "maxParticipants": 12
+}
+```
+
+| Field | Rules |
+|---|---|
+| `name` | Required, 1..200 characters |
+| `localStartTime` | Required, local wall-clock time |
+| `durationMinutes` | Required, 1..10080 |
+| `recurrenceRule` | Required, V0.1 subset above |
+| `seriesStartDate` | Required; not before the current date in the series time zone |
+| `seriesEndDate` | Optional (null = indefinite); on or after `seriesStartDate` |
+| `maxParticipants` | Required, 1..100000 |
+
+- **Response `201`:** Created `EventSeriesDto` (with `Location` header).
+- **Response `400`:** Validation failure (rule, time zone, dates, ranges).
+- **Response `401`:** No valid JWT provided.
+- **Response `403`:** Caller has no linked player or does not own the supplied team.
+- **Response `404`:** Supplied team or venue not found.
+- **Response `409`:** Supplied team is inactive or disbanded.
+
+---
+
+#### `GET api/v1/event-series/{id}`
+
+Public. Returns the series template; occurrences are not embedded.
+
+- **Response `200`:**
+
+```json
+{
+  "id": "00000000-0000-0000-0000-000000000010",
+  "name": "Tuesday pickup",
+  "description": "Bring both shirts",
+  "category": "Basketball",
+  "tags": "pickup,indoor",
+  "teamId": null,
+  "hostId": "00000000-0000-0000-0000-000000000001",
+  "venueId": null,
+  "localStartTime": "17:00:00",
+  "durationMinutes": 90,
+  "timeZoneId": "America/New_York",
+  "recurrenceRule": "FREQ=WEEKLY;BYDAY=TU",
+  "seriesStartDate": "2026-10-13",
+  "seriesEndDate": "2026-12-15",
+  "status": "Active",
+  "maxParticipants": 12,
+  "createdAtUtc": "2026-10-05T12:00:00Z",
+  "updatedAtUtc": null
+}
+```
+
+`EventSeriesStatus` values: `Active`, `Paused`, `Cancelled`, `Completed`.
+
+- **Response `404`:** Series not found.
+
+---
+
+#### `GET api/v1/event-series/{id}/occurrences`
+
+Public. Returns the series' occurrences as `PaginatedResult<EventDto>`, ordered
+by `scheduledStartUtc` ascending. Supports `page` (default 1) and `pageSize`
+(default 20, max 100).
+
+- **Response `200`:** `PaginatedResult<EventDto>`
+- **Response `404`:** Series not found.
+
+---
+
+#### `DELETE api/v1/event-series/{id}`
+
+Logically cancels the series; nothing is deleted. Only the series host may
+cancel. In one transaction the series' `status` becomes `Cancelled` and every
+occurrence of it that starts in the future and is not detached becomes
+`Cancelled`. Past and in-progress occurrences, and detached occurrences, are
+left unchanged.
+
+- **Response `204`:** Cancelled.
+- **Response `401`:** No valid JWT provided.
+- **Response `403`:** Caller has no linked player or is not the series host.
+- **Response `404`:** Series not found.
+- **Response `409`:** Series has no host (orphaned), is already cancelled, or
+  was changed concurrently (the losing request of two simultaneous
+  cancellations).
 
 ---
 
