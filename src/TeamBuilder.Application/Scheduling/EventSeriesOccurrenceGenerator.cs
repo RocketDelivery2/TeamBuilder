@@ -22,11 +22,26 @@ public static class EventSeriesOccurrenceGenerator
         TimeZoneInfo timeZone,
         DateOnly throughLocalDate,
         IReadOnlySet<DateTime>? existingStartsUtc = null,
+        IReadOnlySet<int>? existingIndices = null) =>
+        Generate(series, rule, timeZone, series.SeriesStartDate, throughLocalDate, existingStartsUtc, existingIndices);
+
+    /// <summary>
+    /// Occurrences of <paramref name="series"/> whose local date is within
+    /// <paramref name="fromLocalDate"/>..<paramref name="throughLocalDate"/> (inclusive, bounded by
+    /// the series dates). Each keeps the occurrence index full generation would assign.
+    /// </summary>
+    public static List<EventOccurrence> Generate(
+        EventSeries series,
+        RecurrenceRule rule,
+        TimeZoneInfo timeZone,
+        DateOnly fromLocalDate,
+        DateOnly throughLocalDate,
+        IReadOnlySet<DateTime>? existingStartsUtc = null,
         IReadOnlySet<int>? existingIndices = null)
     {
         var occurrences = new List<EventOccurrence>();
 
-        foreach (var (index, date) in RecurrenceSchedule.Enumerate(rule, series.SeriesStartDate, series.SeriesEndDate, throughLocalDate))
+        foreach (var (index, date) in RecurrenceSchedule.Enumerate(rule, series.SeriesStartDate, series.SeriesEndDate, fromLocalDate, throughLocalDate))
         {
             var startUtc = SeriesLocalTime.ToUtc(date, series.LocalStartTime, timeZone);
             if (existingStartsUtc?.Contains(startUtc) == true || existingIndices?.Contains(index) == true)

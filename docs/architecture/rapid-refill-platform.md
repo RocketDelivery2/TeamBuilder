@@ -195,9 +195,15 @@ are IANA ids validated with built-in .NET APIs. A spring-forward gap moves the
 occurrence to the first valid local instant after the gap; a fall-back overlap
 uses standard time. Creation materializes 21 local days from the series start
 in the same transaction, through a reusable materializer, with
-`UX_Events_SeriesId_ScheduledStartUtc` as the idempotency boundary. Not yet
-implemented: a rolling-horizon worker, series editing/regeneration, exception
-dates and per-occurrence overrides, the Venue API and geo discovery.
+`UX_Events_SeriesId_ScheduledStartUtc` as the idempotency boundary. **Implemented (TB-EVENTS-003):** an hourly background worker keeps every
+Active series materialized 21 local days ahead of today in the series' time
+zone, resuming from a per-series `MaterializedThroughLocalDate` checkpoint
+that commits atomically with the new occurrences under the series RowVersion
+(so cancellation wins cleanly over an in-flight pass). Any occurrence-level
+`PUT` on a generated occurrence detaches it, which protects it from series
+cancellation and from regeneration at its original slot. Not yet
+implemented: series editing/regeneration, exception dates, the Venue API and
+geo discovery.
 
 ## Activity and position taxonomy
 

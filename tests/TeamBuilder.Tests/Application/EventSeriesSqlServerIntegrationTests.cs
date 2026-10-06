@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
@@ -96,12 +97,12 @@ public class EventSeriesSqlServerIntegrationTests : IAsyncLifetime
     public async Task Materialize_Repeated_CreatesNoDuplicates_AndExtendsWithStableIndices()
     {
         var created = await CreateAsync(await AddPlayerAsync(), Body("FREQ=DAILY"));
-        var materializer = new EventSeriesMaterializer(_db.CreateContext());
+        var materializer = Materializer();
 
-        (await materializer.MaterializeAsync(created.Id, NextTuesday.AddDays(20))).Should().Be(0);
-        (await materializer.MaterializeAsync(created.Id, NextTuesday.AddDays(5))).Should().Be(0);
-        (await new EventSeriesMaterializer(_db.CreateContext()).MaterializeAsync(created.Id, NextTuesday.AddDays(27))).Should().Be(7);
-        (await new EventSeriesMaterializer(_db.CreateContext()).MaterializeAsync(created.Id, NextTuesday.AddDays(27))).Should().Be(0);
+        (await materializer.MaterializeAsync(created.Id, NextTuesday, NextTuesday.AddDays(20))).Inserted.Should().Be(0);
+        (await materializer.MaterializeAsync(created.Id, NextTuesday, NextTuesday.AddDays(5))).Inserted.Should().Be(0);
+        (await Materializer().MaterializeAsync(created.Id, NextTuesday, NextTuesday.AddDays(27))).Inserted.Should().Be(7);
+        (await Materializer().MaterializeAsync(created.Id, NextTuesday, NextTuesday.AddDays(27))).Inserted.Should().Be(0);
 
         await using var context = _db.CreateContext();
         var occurrences = await context.Events.AsNoTracking().Where(e => e.SeriesId == created.Id)
@@ -120,7 +121,7 @@ public class EventSeriesSqlServerIntegrationTests : IAsyncLifetime
             WHERE [SeriesId] = '{created.Id}' AND [OccurrenceIndex] = 3
             """);
 
-        (await new EventSeriesMaterializer(_db.CreateContext()).MaterializeAsync(created.Id, NextTuesday.AddDays(20))).Should().Be(0);
+        (await Materializer().MaterializeAsync(created.Id, NextTuesday, NextTuesday.AddDays(20))).Inserted.Should().Be(0);
 
         await using var context = _db.CreateContext();
         (await context.Events.CountAsync(e => e.SeriesId == created.Id)).Should().Be(21);
@@ -136,13 +137,15 @@ public class EventSeriesSqlServerIntegrationTests : IAsyncLifetime
         await using var loserContext = new InterferingTeamBuilderDbContext(Options(), async () =>
         {
             // The loser has already read "nothing exists" when the winner commits.
-            winnerInserted = await new EventSeriesMaterializer(_db.CreateContext()).MaterializeAsync(seriesId, through);
+            winnerInserted = (await Materializer().MaterializeAsync(seriesId, NextTuesday, through)).Inserted;
         });
 
-        var loserInserted = await new EventSeriesMaterializer(loserContext).MaterializeAsync(seriesId, through);
+        var loser = await new EventSeriesMaterializer(loserContext, new FixedTimeProvider(Now)).MaterializeAsync(seriesId, NextTuesday, through);
 
         winnerInserted.Should().Be(14);
-        loserInserted.Should().Be(0);
+        loser.Inserted.Should().Be(0);
+        loser.Outcome.Should().Be(EventSeriesMaterializationOutcome.UpToDate);
+        loser.CheckpointAfter.Should().Be(through);
         loserContext.ChangeTracker.Entries<EventOccurrence>().Should().BeEmpty();
         await using var context = _db.CreateContext();
         var starts = await context.Events.Where(e => e.SeriesId == seriesId).Select(e => e.ScheduledStartUtc).ToListAsync();
@@ -155,11 +158,16 @@ public class EventSeriesSqlServerIntegrationTests : IAsyncLifetime
         var seriesId = await AddBareSeriesAsync(name: "boom");
         await ExecuteAsync("ALTER TABLE [Events] ADD CONSTRAINT [CK_Test_NoBoom] CHECK ([Name] <> N'boom')");
 
-        var act = () => new EventSeriesMaterializer(_db.CreateContext()).MaterializeAsync(seriesId, NextTuesday.AddDays(3));
+        var act = () => Materializer().MaterializeAsync(seriesId, NextTuesday, NextTuesday.AddDays(3));
 
         var exception = (await act.Should().ThrowAsync<DbUpdateException>()).Which;
         exception.InnerException.Should().BeOfType<SqlException>().Which.Number.Should().Be(CheckConstraintViolation);
         EventSeriesOccurrenceConflictClassifier.IsDuplicateSeriesOccurrence(exception).Should().BeFalse();
+
+        // Occurrences and checkpoint roll back together.
+        await using var context = _db.CreateContext();
+        (await context.EventSeries.AsNoTracking().SingleAsync(s => s.Id == seriesId)).MaterializedThroughLocalDate.Should().BeNull();
+        (await context.Events.CountAsync()).Should().Be(0);
     }
 
     [Fact]
@@ -167,8 +175,8 @@ public class EventSeriesSqlServerIntegrationTests : IAsyncLifetime
     {
         var seriesId = await AddBareSeriesAsync(status: EventSeriesStatus.Cancelled);
 
-        (await new EventSeriesMaterializer(_db.CreateContext()).MaterializeAsync(seriesId, NextTuesday.AddDays(20))).Should().Be(0);
-        (await new EventSeriesMaterializer(_db.CreateContext()).MaterializeAsync(Guid.NewGuid(), NextTuesday.AddDays(20))).Should().Be(0);
+        (await Materializer().MaterializeAsync(seriesId, NextTuesday, NextTuesday.AddDays(20))).Outcome.Should().Be(EventSeriesMaterializationOutcome.NotActive);
+        (await Materializer().MaterializeAsync(Guid.NewGuid(), NextTuesday, NextTuesday.AddDays(20))).Outcome.Should().Be(EventSeriesMaterializationOutcome.NotFound);
         await using var context = _db.CreateContext();
         (await context.Events.CountAsync()).Should().Be(0);
     }
@@ -245,6 +253,8 @@ public class EventSeriesSqlServerIntegrationTests : IAsyncLifetime
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private EventSeriesService Service() => new(_db.CreateContext(), new FixedTimeProvider(Now));
+
+    private EventSeriesMaterializer Materializer() => new(_db.CreateContext(), new FixedTimeProvider(Now));
 
     private Task<EventSeriesDto> CreateAsync(Guid hostId, CreateEventSeriesDto body) => Service().CreateAsync(body, hostId);
 

@@ -130,6 +130,13 @@ public class EventService : IEventService
         if (updateEventDto.MaxParticipants.HasValue)
             teamEvent.MaxParticipants = updateEventDto.MaxParticipants.Value;
 
+        // An explicit occurrence-level edit customizes a series-generated occurrence: it is now
+        // independent of series-level behavior (e.g. series cancellation skips it). This holds
+        // for any PUT, even one that changes no value. The series provenance (SeriesId,
+        // OccurrenceIndex) is kept. One-off occurrences are never detached.
+        if (teamEvent.SeriesId != null)
+            teamEvent.IsDetached = true;
+
         await _context.SaveChangesAsync(cancellationToken);
 
         return MapToDto(teamEvent);

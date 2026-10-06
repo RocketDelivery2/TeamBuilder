@@ -15,4 +15,5 @@ internal static class MigrationIds
     public const string SeparateTeamLifecycleFromRecruitment = "20261004061312_SeparateTeamLifecycleFromRecruitment";
     public const string AddEventOccurrenceSchedulingFoundation = "20261004172211_AddEventOccurrenceSchedulingFoundation";
     public const string AddRecurringEventSeries = "20261005030841_AddRecurringEventSeries";
+    public const string AddEventSeriesMaterializationCheckpoint = "20261006003505_AddEventSeriesMaterializationCheckpoint";
 }

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
@@ -468,6 +469,145 @@ public sealed class EventSeriesControllerIntegrationTests : IClassFixture<EventS
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
 
+    // ── materialization checkpoint ───────────────────────────────────────────
+
+    [Fact]
+    public async Task Create_StoresTheInitialCheckpoint_AtTheEndOfThe21DayWindow()
+    {
+        var series = await CreateSeriesAsync(Guid.NewGuid(), Body());
+
+        (await LoadSeriesAsync(series.Id)).MaterializedThroughLocalDate.Should().Be(NextTuesday.AddDays(20));
+    }
+
+    [Fact]
+    public async Task Create_BoundedSeries_CheckpointStopsAtSeriesEndDate()
+    {
+        var series = await CreateSeriesAsync(Guid.NewGuid(), Body(rrule: "FREQ=DAILY", seriesEndDate: NextTuesday.AddDays(4)));
+
+        (await LoadSeriesAsync(series.Id)).MaterializedThroughLocalDate.Should().Be(NextTuesday.AddDays(4));
+    }
+
+    // ── occurrence-level edits detach ────────────────────────────────────────
+
+    [Fact]
+    public async Task PutStandaloneEvent_LeavesItNotDetached()
+    {
+        var hostId = Guid.NewGuid();
+        var token = await TokenForAsync(hostId);
+        var eventId = Guid.NewGuid();
+        using (var scope = _fixture.App.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            db.Events.Add(new EventOccurrence
+            {
+                Id = eventId,
+                Name = "One-off",
+                HostId = hostId,
+                ScheduledStartUtc = Utc(2026, 10, 20, 18),
+                Status = EventStatus.Planned,
+                MaxParticipants = 10
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var response = await SendAsync(HttpMethod.Put, $"/api/v1/events/{eventId}", token, new { name = "One-off renamed" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dto = (await response.Content.ReadFromJsonAsync<EventDto>())!;
+        dto.IsDetached.Should().BeFalse();
+        dto.SeriesId.Should().BeNull();
+        (await LoadOccurrenceAsync(eventId)).IsDetached.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PutSeriesOccurrence_MarksItDetached_AndKeepsSeriesIdAndOccurrenceIndex()
+    {
+        var hostId = Guid.NewGuid();
+        var series = await CreateSeriesAsync(hostId, Body());
+        var target = (await OccurrencesAsync(series.Id))[1];
+
+        var response = await SendAsync(HttpMethod.Put, $"/api/v1/events/{target.Id}", await TokenForAsync(hostId),
+            new { description = "Bring the blue bibs" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dto = (await response.Content.ReadFromJsonAsync<EventDto>())!;
+        dto.IsDetached.Should().BeTrue();
+        dto.SeriesId.Should().Be(series.Id);
+        var stored = await LoadOccurrenceAsync(target.Id);
+        stored.IsDetached.Should().BeTrue();
+        stored.SeriesId.Should().Be(series.Id);
+        stored.OccurrenceIndex.Should().Be(1);
+        stored.Description.Should().Be("Bring the blue bibs");
+    }
+
+    [Fact]
+    public async Task PutSeriesOccurrence_WithNoEffectiveChange_StillDetaches()
+    {
+        var hostId = Guid.NewGuid();
+        var series = await CreateSeriesAsync(hostId, Body(name: "Same name"));
+        var target = (await OccurrencesAsync(series.Id))[0];
+
+        var response = await SendAsync(HttpMethod.Put, $"/api/v1/events/{target.Id}", await TokenForAsync(hostId), new { name = "Same name" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await LoadOccurrenceAsync(target.Id)).IsDetached.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PutSeriesOccurrence_ByNonHost_IsForbidden_AndDoesNotDetach()
+    {
+        var series = await CreateSeriesAsync(Guid.NewGuid(), Body());
+        var target = (await OccurrencesAsync(series.Id))[0];
+
+        var response = await SendAsync(HttpMethod.Put, $"/api/v1/events/{target.Id}", await TokenForAsync(Guid.NewGuid()), new { name = "Hijack" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await LoadOccurrenceAsync(target.Id)).IsDetached.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EditedFutureOccurrence_SurvivesSeriesCancellation_UntouchedOnesAreCancelled()
+    {
+        var hostId = Guid.NewGuid();
+        var token = await TokenForAsync(hostId);
+        var series = await CreateSeriesAsync(hostId, Body());
+        var occurrences = await OccurrencesAsync(series.Id);
+        occurrences.Should().HaveCount(3);
+        var edited = occurrences[2];
+        (await SendAsync(HttpMethod.Put, $"/api/v1/events/{edited.Id}", token, new { maxParticipants = 20 }))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await SendAsync(HttpMethod.Delete, $"{BaseUrl}/{series.Id}", token)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var after = (await OccurrencesAsync(series.Id)).ToDictionary(o => o.Id);
+        after[edited.Id].Status.Should().Be(EventStatus.Planned);
+        after[edited.Id].MaxParticipants.Should().Be(20);
+        after.Values.Where(o => o.Id != edited.Id).Should().HaveCount(2).And.OnlyContain(o => o.Status == EventStatus.Cancelled);
+    }
+
+    [Fact]
+    public async Task MovedDetachedOccurrence_IsNotRegeneratedAtItsOriginalSlot()
+    {
+        var hostId = Guid.NewGuid();
+        var series = await CreateSeriesAsync(hostId, Body());
+        var original = (await OccurrencesAsync(series.Id))[1];
+        var moved = original.ScheduledStartUtc.AddHours(26);
+
+        (await SendAsync(HttpMethod.Put, $"/api/v1/events/{original.Id}", await TokenForAsync(hostId), new { eventDateUtc = moved }))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using (var scope = _fixture.App.Services.CreateScope())
+        {
+            var materializer = scope.ServiceProvider.GetRequiredService<IEventSeriesMaterializer>();
+            (await materializer.MaterializeAsync(series.Id, NextTuesday, NextTuesday.AddDays(20))).Inserted.Should().Be(0);
+        }
+
+        var after = await OccurrencesAsync(series.Id);
+        after.Should().HaveCount(3);
+        after.Should().NotContain(o => o.ScheduledStartUtc == original.ScheduledStartUtc);
+        after.Single(o => o.Id == original.Id).ScheduledStartUtc.Should().Be(moved);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private static DateTime Utc(int y, int mo, int d, int h, int mi = 0) => new(y, mo, d, h, mi, 0, DateTimeKind.Utc);
@@ -571,6 +711,18 @@ public sealed class EventSeriesControllerIntegrationTests : IClassFixture<EventS
         db.Venues.Add(venue);
         await db.SaveChangesAsync();
         return venue;
+    }
+
+    private async Task<EventSeries> LoadSeriesAsync(Guid id)
+    {
+        using var scope = _fixture.App.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>().EventSeries.AsNoTracking().SingleAsync(s => s.Id == id);
+    }
+
+    private async Task<EventOccurrence> LoadOccurrenceAsync(Guid id)
+    {
+        using var scope = _fixture.App.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>().Events.AsNoTracking().SingleAsync(e => e.Id == id);
     }
 
     private async Task MarkDetachedAsync(Guid occurrenceId)

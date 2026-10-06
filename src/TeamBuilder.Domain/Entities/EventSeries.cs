@@ -41,5 +41,13 @@ public class EventSeries : BaseEntity
 
     public EventSeriesStatus Status { get; set; }
 
+    /// <summary>
+    /// Materialization checkpoint: the latest local date (in <see cref="TimeZoneId"/>) through
+    /// which the recurrence has been evaluated for materialization. A horizon, not necessarily
+    /// the date of an occurrence; nothing is implied about later dates. Null means unknown
+    /// (series created before checkpoints existed): the materializer reconciles safely.
+    /// </summary>
+    public DateOnly? MaterializedThroughLocalDate { get; set; }
+
     public ICollection<EventOccurrence> Occurrences { get; set; } = new List<EventOccurrence>();
 }
