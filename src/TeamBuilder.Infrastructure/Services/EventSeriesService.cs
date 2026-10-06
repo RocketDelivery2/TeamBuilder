@@ -134,10 +134,13 @@ public class EventSeriesService : IEventSeriesService
         // Initial rolling window, anchored on the series start date (a new series may start in
         // the future): local dates start .. start + 20 days, bounded by the end date.
         var throughLocalDate = seriesStartDate.AddDays(IEventSeriesMaterializer.InitialHorizonDays - 1);
+        if (series.SeriesEndDate is { } seriesEndDate && seriesEndDate < throughLocalDate)
+            throughLocalDate = seriesEndDate;
         var occurrences = EventSeriesOccurrenceGenerator.Generate(series, rule, timeZone, throughLocalDate);
+        series.MaterializedThroughLocalDate = throughLocalDate;
 
-        // One SaveChanges is one database transaction: the series and its initial occurrences
-        // are committed together or not at all.
+        // One SaveChanges is one database transaction: the series, its checkpoint and its initial
+        // occurrences are committed together or not at all.
         _context.EventSeries.Add(series);
         _context.Events.AddRange(occurrences);
         await _context.SaveChangesAsync(cancellationToken);

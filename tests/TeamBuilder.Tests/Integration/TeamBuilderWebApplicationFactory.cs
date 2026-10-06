@@ -90,6 +90,9 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
                 ["Jwt:SigningKey"] = TestSigningKey,
                 ["Jwt:Issuer"]    = TestIssuer,
                 ["Jwt:Audience"]  = TestAudience,
+                // Tests that exercise the rolling-horizon worker drive it explicitly; the hosted
+                // pass would otherwise race with seeding in shared fixtures.
+                ["EventSeriesMaterialization:Enabled"] = "false",
             });
         });
 

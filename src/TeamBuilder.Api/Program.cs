@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
 using TeamBuilder.Api.Middleware;
+using TeamBuilder.Api.Workers;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
 using TeamBuilder.Infrastructure.Services;
@@ -24,6 +25,13 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IEventSeriesService, EventSeriesService>();
 builder.Services.AddScoped<IEventSeriesMaterializer, EventSeriesMaterializer>();
 builder.Services.AddSingleton(TimeProvider.System);
+
+// Keeps active recurring series materialized 21 local days ahead (hourly; first pass at startup).
+builder.Services.AddOptions<EventSeriesMaterializationOptions>()
+    .BindConfiguration(EventSeriesMaterializationOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddHostedService<EventSeriesMaterializationWorker>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
