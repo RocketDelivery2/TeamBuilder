@@ -156,6 +156,7 @@ is not linked yet.
 | `POST`, `PUT`, `DELETE` | `/api/v1/teams...` | Owner identity comes from `PlayerIdentity`; update/delete are owner-only. Leave is self-only; owners cannot remove another member through this route. |
 | `GET`, `POST`, `PUT` | `/api/v1/joinrequests...` | Reads are limited to the applicant or relevant team owner; creation is by the linked applicant; processing is team-owner-only. |
 | `POST`, `PUT`, `DELETE` | `/api/v1/events...` | Host identity comes from `PlayerIdentity`; updates/deletes are host-only. When an event names a team, only that team's owner may create it. |
+| `POST` | `/api/v1/events/{occurrenceId}/roster/...` | Roster requirement and assignment creation are host-only. |
 | `POST`, `DELETE` | `/api/v1/event-series...` | Host identity comes from `PlayerIdentity`; cancellation is host-only. When a series names a team, only that team's owner may create it. |
 | `GET`, `POST`, `PUT`, `DELETE` | `/api/v1/rosterimports...` | Reads and mutations are restricted to the linked original importer. |
 
@@ -167,6 +168,7 @@ is not linked yet.
 | `GET` | `/health/ready` |
 | `GET` | `/api/v1/teams`, `/api/v1/teams/{id}` |
 | `GET` | `/api/v1/events`, `/api/v1/events/{id}` |
+| `GET` | `/api/v1/events/{occurrenceId}/roster`, `/api/v1/events/{occurrenceId}/roster/requirements`, `/api/v1/events/{occurrenceId}/roster/assignments` |
 | `GET` | `/api/v1/event-series/{id}`, `/api/v1/event-series/{id}/occurrences` |
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
 | `GET` | `/api/v1/players/username/{username}` |
@@ -924,6 +926,135 @@ Deletes an event.
 **Response `403`:** Authenticated caller is not the event host.  
 **Response `404`:** Event not found.  
 **Response `409`:** Event has no host (orphaned); contact an administrator.
+
+---
+
+### Event Roster — `api/v1/events/{occurrenceId}/roster`
+
+Live participation for one event occurrence. **Event participation is
+independent of team membership**: any existing player can be assigned to an
+occurrence, whether or not they belong to its team (pickup games, substitutes,
+free agents).
+
+- **RosterRequirement** is quantity-based demand: "this occurrence needs
+  `requiredCount` players in role `roleCode`". There are no numbered slots.
+  `roleCode` follows the TBRL code grammar (`^[a-z0-9][a-z0-9._-]*$`, at most
+  100 characters), is trimmed and lowercased, and is interpreted within the
+  activity (`guard`, `tank`, `healer`, …). Generic demand uses the canonical
+  code `participant`, which is also the default when `roleCode` is omitted.
+  An occurrence has at most one requirement per role code.
+- **RosterAssignment** is a player's participation state for the occurrence.
+  Rows are history: a departure or no-show stays on its row, and a replacement
+  is a new row whose `replacedAssignmentId` points back to it.
+- **RosterEntry** (roster imports) is imported/raw roster provenance and is
+  not live participation.
+
+Assignment `status` values (integers): `1` Reserved, `2` Confirmed,
+`3` CheckedIn, `4` Active, `5` Departed, `6` NoShow, `7` Cancelled.
+Reserved, Confirmed, CheckedIn and Active hold roster **supply**; the others
+are historical. A player holds at most one supply assignment per occurrence
+(enforced by a filtered unique index). `source`: `1` Player, `2` Host,
+`3` Import, `4` System. `exitReason`: `1` PlayerLeft, `2` HostRemoved,
+`3` NoShow, `4` Replaced, `5` Other.
+
+For each requirement, `supplyCount` counts its linked supply assignments and
+`openQuantity = max(0, requiredCount - supplyCount)`. Open quantity is derived
+on read and never stored. Assignments without a `requirementId` count toward
+no requirement. The legacy `EventDto.currentParticipantCount` and
+`maxParticipants` are neither changed nor consulted by roster operations.
+
+**Readiness.** `isRosterReady` is true only when the occurrence has at least
+one requirement and every requirement has `openQuantity` 0. An occurrence with
+no requirements is never ready. The occurrence-level `openQuantity` is the sum
+of per-requirement open quantities, so surplus on one role never fills
+another. Example (5-v-5 pickup basketball, one `participant` requirement of
+10): 0 assigned is 0/10, 9 is 9/10 not ready, 10 is 10/10 ready.
+
+**No overbooking.** A host assignment linked to a requirement is rejected
+with `409` once that requirement's supply equals its `requiredCount`. The
+check runs in the same transaction as the insert, guarded by the
+requirement's `RowVersion` (each linked assignment touches the requirement
+row, advancing its `updatedAtUtc`), so concurrent fills of the last spot
+cannot both commit; the loser gets `409` and may retry.
+
+Mutations are host-only and checked in this order: unlinked identity `403`,
+missing occurrence `404`, occurrence without a host `409`, caller not the
+host `403`, occurrence `Completed`/`Cancelled`/`Archived` `409`.
+
+#### `GET api/v1/events/{occurrenceId}/roster`
+
+Public readiness summary:
+
+```json
+{
+  "occurrenceId": "…",
+  "requiredCount": 10,
+  "supplyCount": 9,
+  "openQuantity": 1,
+  "isRosterReady": false,
+  "requirements": [ { "roleCode": "participant", "requiredCount": 10, "supplyCount": 9, "openQuantity": 1, "…": "…" } ],
+  "assignments": [ { "playerId": "…", "username": "…", "status": 2, "…": "…" } ]
+}
+```
+
+`supplyCount` counts every supply assignment, including ones linked to no
+requirement. `assignments` lists every assignment, history included, in
+creation order, with the same shape as the assignments endpoint. **Response
+`404`:** occurrence not found.
+
+#### `GET api/v1/events/{occurrenceId}/roster/requirements`
+
+Public. Returns the occurrence's requirements (array, creation order) with
+`id`, `occurrenceId`, `roleCode`, `displayPosition`, `sourceRoleLabel`,
+`requiredCount`, `supplyCount`, `openQuantity`, `createdAtUtc`,
+`updatedAtUtc`. **Response `404`:** occurrence not found.
+
+#### `POST api/v1/events/{occurrenceId}/roster/requirements`
+
+```json
+{ "roleCode": "guard", "displayPosition": "Guard", "sourceRoleLabel": "Point Guard", "requiredCount": 2 }
+```
+
+`requiredCount` is required, 1–100000. **Response `201`:** the requirement.
+**`400`:** validation failure. **`409`:** duplicate role code for the
+occurrence, orphaned or closed occurrence.
+
+#### `GET api/v1/events/{occurrenceId}/roster/assignments`
+
+Public, paginated (`page`, `pageSize` ≤ 100, default 50), all statuses in
+creation order. Each item: `id`, `occurrenceId`, `playerId`, `username`,
+`displayName`, `requirementId`, `roleCode`, `sourceRoleLabel`, `status`, `source`,
+`reservedAtUtc`, `confirmedAtUtc`, `checkedInAtUtc`, `activatedAtUtc`,
+`departedAtUtc`, `exitReason`, `replacedAssignmentId`, `createdAtUtc`,
+`updatedAtUtc`. No email or external identity data is exposed.
+**Response `404`:** occurrence not found.
+
+#### `POST api/v1/events/{occurrenceId}/roster/assignments`
+
+The host assigns any existing player (source `Host`). Self-service
+reservation is a later API.
+
+```json
+{ "playerId": "…", "requirementId": "…", "status": 2, "replacedAssignmentId": null }
+```
+
+- `status` defaults to Confirmed and must be a supply status; the matching
+  timestamp (`reservedAtUtc`, `confirmedAtUtc`, …) is set to now.
+- `requirementId` must belong to this occurrence. `roleCode` defaults to the
+  requirement's code and must match it when both are given.
+- `replacedAssignmentId` must name an assignment of this occurrence that no
+  longer holds supply; that row is not modified.
+
+**Response `201`:** the assignment. **`400`:** validation failure, unknown
+player, requirement or replaced assignment of another occurrence, conflicting
+role code. **`409`:** the player already holds a supply assignment for this
+occurrence, the requirement is already filled or changed concurrently, the
+replaced assignment still holds supply, or the occurrence is orphaned or
+closed.
+
+A player with any roster assignment cannot be deleted
+(`DELETE api/v1/players/{id}` returns `409`), so participation history is
+never erased.
 
 ---
 
