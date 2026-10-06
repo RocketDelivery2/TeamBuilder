@@ -139,13 +139,23 @@ TeamBuilder/
 │       │   └── Configurations/       # Entity type configurations
 │       └── Services/                 # Service implementations
 ├── tests/
-│   └── TeamBuilder.Tests/            # Unit and integration tests
+│   ├── TeamBuilder.Tests/            # Unit and integration tests
 │       ├── Domain/                   # Domain entity tests
 │       └── Application/              # Service tests
+│   ├── TeamBuilder.Simulation.Tests/ # Deterministic simulation tests
+│   └── performance/k6/               # Conservative HTTP smoke/load harness
+├── tools/
+│   └── TeamBuilder.Simulation/       # Aggregate deterministic workload simulator
 ├── docs/
+│   ├── performance/                  # Simulation, load, capacity, and telemetry contracts
 │   └── deployment.md                 # Deployment guide
 └── README.md
 ```
+
+Performance tooling separates projected logical simulation, measured HTTP load,
+and output-only dataset planning. See [simulation architecture](docs/performance/simulation-architecture.md)
+and [HTTP load testing](docs/performance/load-testing.md). A 50M logical population
+does not represent 50M simultaneous HTTP clients.
 
 ## API Endpoints
 
