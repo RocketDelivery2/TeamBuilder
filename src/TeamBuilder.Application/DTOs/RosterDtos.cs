@@ -158,3 +158,28 @@ public class CreateRosterAssignmentDto : IValidatableObject
         }
     }
 }
+
+/// <summary>
+/// A player's self-claim of open quantity on one requirement of an occurrence. The claimant is
+/// always the authenticated caller; team membership is not required.
+/// </summary>
+public class ClaimRosterSpotDto
+{
+    /// <summary>The requirement of this occurrence to claim open quantity on.</summary>
+    [Required]
+    [NonEmptyGuid]
+    public Guid? RequirementId { get; set; }
+
+    /// <summary>
+    /// Optional replacement lineage: an earlier assignment of the same occurrence and the same
+    /// requirement that no longer holds supply. Generic refill does not need it.
+    /// </summary>
+    [NonEmptyGuid]
+    public Guid? ReplacesAssignmentId { get; set; }
+}
+
+/// <summary>
+/// Outcome of a self-claim. <see cref="Created"/> is false when the caller already held a live
+/// assignment on the same requirement and that existing assignment was returned (safe retry).
+/// </summary>
+public sealed record RosterClaimResult(RosterAssignmentDto Assignment, bool Created);

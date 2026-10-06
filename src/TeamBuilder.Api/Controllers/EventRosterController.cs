@@ -12,9 +12,11 @@ namespace TeamBuilder.Api.Controllers;
 
 /// <summary>
 /// Roster requirements and live assignments of one event occurrence. Reads are public and
-/// expose no email or identity data. Mutations are host-only: missing occurrence 404, orphaned
-/// (no host) 409, non-host 403, then completed/cancelled/archived occurrence 409.
-/// Event participation does not require team membership.
+/// expose no email or identity data. Requirement creation, host assignment and host removal are
+/// host-only: missing occurrence 404, orphaned (no host) 409, non-host 403, then
+/// completed/cancelled/archived occurrence 409. Any linked player may self-claim open quantity
+/// and leave their own assignment. Event participation does not require team membership, and
+/// the host holds no roster spot unless they claim one.
 /// </summary>
 [ApiController]
 [Route("api/v1/events/{occurrenceId}/roster")]
@@ -126,8 +128,8 @@ public class EventRosterController : ControllerBase
     }
 
     /// <summary>
-    /// Host assigns any existing player (team membership not required). Self-service
-    /// reservation is a separate, later API.
+    /// Host assigns any existing player (team membership not required). Shares the allocation
+    /// path, and therefore the capacity guard, with player self-claim.
     /// </summary>
     [HttpPost("assignments")]
     [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
@@ -156,6 +158,127 @@ public class EventRosterController : ControllerBase
             return CreatedAtAction(nameof(GetAssignments), new { occurrenceId }, assignment);
         }
         catch (EventOccurrenceNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// The caller claims one unit of open quantity on a requirement (a Confirmed assignment with
+    /// source Player). Any linked player may claim, the host included; team membership is not
+    /// required. Order: unlinked 403, missing occurrence 404, requirement not on this occurrence
+    /// 404, closed occurrence 409, then 200 with the existing assignment when the caller already
+    /// holds one on this requirement (safe retry), 409 AlreadyParticipating when it is on another,
+    /// 409 RequirementFull / RosterChanged when capacity is lost.
+    /// </summary>
+    [HttpPost("claims")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(RosterAssignmentDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(RosterAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<RosterAssignmentDto>> Claim(
+        Guid occurrenceId,
+        [FromBody] ClaimRosterSpotDto claimDto,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
+        try
+        {
+            var result = await _rosterService.ClaimAsync(occurrenceId, playerId.Value, claimDto, cancellationToken);
+            if (!result.Created)
+                return Ok(result.Assignment);
+
+            _logger.LogInformation("Player {PlayerId} claimed roster assignment {AssignmentId} for event {EventId}", playerId.Value, result.Assignment.Id, occurrenceId);
+            return CreatedAtAction(nameof(GetAssignments), new { occurrenceId }, result.Assignment);
+        }
+        catch (EventOccurrenceNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (RosterRequirementNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// The caller leaves their own live assignment. Reserved/Confirmed become Cancelled,
+    /// CheckedIn/Active become Departed, with exit reason PlayerLeft; the row is kept and its
+    /// spot reopens immediately. Order: unlinked 403, missing occurrence or assignment 404,
+    /// not the caller's assignment 403, closed occurrence 409, already ended 409.
+    /// </summary>
+    [HttpPost("assignments/{assignmentId}/leave")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(RosterAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<RosterAssignmentDto>> Leave(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken)
+    {
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
+        try
+        {
+            var assignment = await _rosterService.LeaveAsync(occurrenceId, assignmentId, playerId.Value, cancellationToken);
+            _logger.LogInformation("Player {PlayerId} left roster assignment {AssignmentId} of event {EventId}", playerId.Value, assignmentId, occurrenceId);
+            return Ok(assignment);
+        }
+        catch (EventOccurrenceNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (RosterAssignmentNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (RosterAssignmentForbiddenException)
+        {
+            return Forbid();
+        }
+    }
+
+    /// <summary>
+    /// The host ends a participant's live assignment (exit reason HostRemoved), with the same
+    /// transitions and history retention as leave. Host checks first (see the class summary),
+    /// then missing assignment 404 and already ended 409.
+    /// </summary>
+    [HttpPost("assignments/{assignmentId}/remove")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(RosterAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<RosterAssignmentDto>> Remove(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken)
+    {
+        var denied = await AuthorizeHostMutationAsync(occurrenceId, cancellationToken);
+        if (denied != null)
+            return denied;
+
+        try
+        {
+            var assignment = await _rosterService.RemoveAsync(occurrenceId, assignmentId, cancellationToken);
+            _logger.LogInformation("Host removed roster assignment {AssignmentId} of event {EventId}", assignmentId, occurrenceId);
+            return Ok(assignment);
+        }
+        catch (EventOccurrenceNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (RosterAssignmentNotFoundException)
         {
             return NotFound();
         }

@@ -15,9 +15,10 @@ namespace TeamBuilder.Tests.Integration;
 
 /// <summary>
 /// Bootstraps the API under test with an isolated in-memory database so
-/// integration tests never touch a real SQL Server instance.
+/// integration tests never touch a real SQL Server instance. Subclasses may swap the
+/// database through <see cref="ConfigureDatabase"/> (see <c>SqlServerWebApplicationFactory</c>).
 /// </summary>
-public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
+public class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
 {
     /// <summary>Symmetric key used only in tests to sign and validate tokens.</summary>
     internal const string TestSigningKey = "teambuilder-test-signing-key-32ch!";
@@ -124,14 +125,17 @@ public sealed class TeamBuilderWebApplicationFactory : WebApplicationFactory<Pro
                 opts.Registrations.Clear());
 
             // Register an in-memory database isolated per factory instance.
-            services.AddDbContext<TeamBuilderDbContext>(options =>
-                options.UseInMemoryDatabase(_databaseName));
+            services.AddDbContext<TeamBuilderDbContext>(ConfigureDatabase);
 
             services.AddControllers().AddApplicationPart(typeof(PlainAuthorizeTestController).Assembly);
         });
 
         builder.UseEnvironment("Development");
     }
+
+    /// <summary>The test database; an isolated in-memory database by default.</summary>
+    protected virtual void ConfigureDatabase(DbContextOptionsBuilder options) =>
+        options.UseInMemoryDatabase(_databaseName);
 }
 
 [ApiController]

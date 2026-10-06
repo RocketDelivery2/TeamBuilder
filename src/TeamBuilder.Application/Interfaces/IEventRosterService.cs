@@ -39,4 +39,39 @@ public interface IEventRosterService
     /// the replaced assignment still holds supply.
     /// </exception>
     Task<RosterAssignmentDto> CreateAssignmentAsync(Guid occurrenceId, CreateRosterAssignmentDto createDto, RosterAssignmentSource source, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Player self-claim: <paramref name="playerId"/> takes one unit of open quantity on a
+    /// requirement through the same allocation (duplicate check, capacity guard) as host
+    /// assignment, as a Confirmed assignment with source Player. When the player already holds
+    /// a live assignment on the same requirement, that assignment is returned with
+    /// <see cref="RosterClaimResult.Created"/> false (safe retry).
+    /// </summary>
+    /// <exception cref="Exceptions.EventOccurrenceNotFoundException">The occurrence does not exist.</exception>
+    /// <exception cref="Exceptions.RosterRequirementNotFoundException">The requirement is not one of this occurrence.</exception>
+    /// <exception cref="ArgumentException">The replaced assignment is unknown or on another requirement.</exception>
+    /// <exception cref="Exceptions.RosterConflictException">
+    /// Closed occurrence, already participating on another requirement, requirement full,
+    /// concurrent change (retryable), or the replaced assignment still holds supply.
+    /// </exception>
+    Task<RosterClaimResult> ClaimAsync(Guid occurrenceId, Guid playerId, ClaimRosterSpotDto claimDto, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The holder ends their own live assignment (exit reason PlayerLeft). The row is kept as
+    /// history; its open quantity reopens in the same commit.
+    /// </summary>
+    /// <exception cref="Exceptions.EventOccurrenceNotFoundException">The occurrence does not exist.</exception>
+    /// <exception cref="Exceptions.RosterAssignmentNotFoundException">The assignment is not one of this occurrence.</exception>
+    /// <exception cref="Exceptions.RosterAssignmentForbiddenException">The caller does not hold the assignment.</exception>
+    /// <exception cref="Exceptions.RosterConflictException">Closed occurrence, assignment already ended, or concurrent change.</exception>
+    Task<RosterAssignmentDto> LeaveAsync(Guid occurrenceId, Guid assignmentId, Guid callerPlayerId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ends a live assignment on the host's behalf (exit reason HostRemoved). Host
+    /// authorization is the caller's responsibility.
+    /// </summary>
+    /// <exception cref="Exceptions.EventOccurrenceNotFoundException">The occurrence does not exist.</exception>
+    /// <exception cref="Exceptions.RosterAssignmentNotFoundException">The assignment is not one of this occurrence.</exception>
+    /// <exception cref="Exceptions.RosterConflictException">Closed occurrence, assignment already ended, or concurrent change.</exception>
+    Task<RosterAssignmentDto> RemoveAsync(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken = default);
 }

@@ -4,6 +4,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Domain;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
@@ -252,7 +253,8 @@ public class EventRosterSqlServerIntegrationTests : IAsyncLifetime
             await AssignViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
 
         // Another host request takes the 10th spot after this request counted 9 but before it
-        // commits: the forced RowVersion-checked requirement UPDATE makes this save fail.
+        // commits: the forced RowVersion-checked requirement UPDATE makes this save fail, and
+        // the re-read classifies the loss as a deterministic "filled".
         var competitor = await AddPlayerAsync();
         var playerId = await AddPlayerAsync();
         await using var context = InterferingContext(() => AssignViaServiceAsync(occurrenceId, competitor, requirementId));
@@ -263,10 +265,125 @@ public class EventRosterSqlServerIntegrationTests : IAsyncLifetime
             new CreateRosterAssignmentDto { PlayerId = playerId, RequirementId = requirementId },
             RosterAssignmentSource.Host);
 
-        (await act.Should().ThrowAsync<InvalidOperationException>())
-            .WithMessage(EventRosterService.RequirementChangedMessage)
+        (await act.Should().ThrowAsync<RosterConflictException>())
+            .WithMessage(EventRosterService.RequirementFilledMessage)
             .Which.InnerException.Should().BeOfType<DbUpdateConcurrencyException>();
         (await SupplyOfRequirementAsync(requirementId)).Should().Be(10);
+    }
+
+    [Fact]
+    public async Task CreateAssignment_ConcurrentFillWithCapacityLeft_IsARetryable409()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        for (var i = 0; i < 5; i++)
+            await AssignViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
+
+        // The competitor bumps the requirement RowVersion but leaves open quantity: the loser
+        // gets RosterChanged (retryable) rather than RequirementFull, and a retry succeeds.
+        var competitor = await AddPlayerAsync();
+        var playerId = await AddPlayerAsync();
+        await using var context = InterferingContext(() => AssignViaServiceAsync(occurrenceId, competitor, requirementId));
+        var service = new EventRosterService(context, TimeProvider.System);
+        var dto = new CreateRosterAssignmentDto { PlayerId = playerId, RequirementId = requirementId };
+
+        var act = () => service.CreateAssignmentAsync(occurrenceId, dto, RosterAssignmentSource.Host);
+
+        (await act.Should().ThrowAsync<RosterConflictException>())
+            .Which.Code.Should().Be(RosterConflictCodes.RosterChanged);
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(6);
+        await AssignViaServiceAsync(occurrenceId, playerId, requirementId);
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(7);
+    }
+
+    // ── self-claim / leave interleavings (shared allocation path) ────────────
+
+    [Fact]
+    public async Task Claim_HostAssignsTheLastSpotFirst_ClaimLosesWithRequirementFull()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        for (var i = 0; i < 9; i++)
+            await ClaimViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
+
+        var assigned = await AddPlayerAsync();
+        var claimant = await AddPlayerAsync();
+        await using var context = InterferingContext(() => AssignViaServiceAsync(occurrenceId, assigned, requirementId));
+        var service = new EventRosterService(context, TimeProvider.System);
+
+        var act = () => service.ClaimAsync(occurrenceId, claimant, new ClaimRosterSpotDto { RequirementId = requirementId });
+
+        (await act.Should().ThrowAsync<RosterConflictException>()).Which.Code.Should().Be(RosterConflictCodes.RequirementFull);
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(10);
+    }
+
+    [Fact]
+    public async Task Claim_TheSamePlayerCommitsFirst_IsReturnedAsTheExistingClaim()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        var playerId = await AddPlayerAsync();
+        Guid committedId = default;
+
+        // The twin request commits between this request's checks and its save: the filtered
+        // index / RowVersion stops the second row and the claim returns the committed one.
+        await using var context = InterferingContext(async () => committedId = await ClaimViaServiceAsync(occurrenceId, playerId, requirementId));
+        var result = await new EventRosterService(context, TimeProvider.System)
+            .ClaimAsync(occurrenceId, playerId, new ClaimRosterSpotDto { RequirementId = requirementId });
+
+        result.Created.Should().BeFalse();
+        result.Assignment.Id.Should().Be(committedId);
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Claim_WhileAnotherPlayerLeaves_CommitsAndReadinessFollowsBoth()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        var leaver = await AddPlayerAsync();
+        var leaverAssignment = await ClaimViaServiceAsync(occurrenceId, leaver, requirementId);
+        for (var i = 0; i < 8; i++)
+            await ClaimViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
+
+        // A leave commits after the claim counted 9 but before it saves. Leaving never adds
+        // supply, so it does not touch the requirement RowVersion and the claim still commits.
+        var claimant = await AddPlayerAsync();
+        await using var context = InterferingContext(async () =>
+        {
+            await using var leaveContext = _db.CreateContext();
+            await new EventRosterService(leaveContext, TimeProvider.System).LeaveAsync(occurrenceId, leaverAssignment, leaver);
+        });
+        var result = await new EventRosterService(context, TimeProvider.System)
+            .ClaimAsync(occurrenceId, claimant, new ClaimRosterSpotDto { RequirementId = requirementId });
+
+        result.Created.Should().BeTrue();
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(9);
+        var summary = await new EventRosterService(_db.CreateContext(), TimeProvider.System).GetSummaryAsync(occurrenceId);
+        (summary!.SupplyCount, summary.OpenQuantity, summary.IsRosterReady).Should().Be((9, 1, false));
+        summary.Assignments.Should().HaveCount(10);
+    }
+
+    [Fact]
+    public async Task Leave_WhileTheHostRemovesTheSameAssignment_EndsItOnce()
+    {
+        var hostId = await AddPlayerAsync();
+        var occurrenceId = await AddOccurrenceAsync(hostId);
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        var playerId = await AddPlayerAsync();
+        var assignmentId = await ClaimViaServiceAsync(occurrenceId, playerId, requirementId);
+
+        await using var context = InterferingContext(async () =>
+        {
+            await using var hostContext = _db.CreateContext();
+            await new EventRosterService(hostContext, TimeProvider.System).RemoveAsync(occurrenceId, assignmentId);
+        });
+        var act = () => new EventRosterService(context, TimeProvider.System).LeaveAsync(occurrenceId, assignmentId, playerId);
+
+        (await act.Should().ThrowAsync<RosterConflictException>()).Which.Code.Should().Be(RosterConflictCodes.AssignmentEnded);
+        await using var verify = _db.CreateContext();
+        var row = await verify.RosterAssignments.SingleAsync(a => a.Id == assignmentId);
+        (row.Status, row.ExitReason).Should().Be((RosterAssignmentStatus.Cancelled, RosterExitReason.HostRemoved));
     }
 
     [Fact]
@@ -526,6 +643,14 @@ public class EventRosterSqlServerIntegrationTests : IAsyncLifetime
             new CreateRosterAssignmentDto { PlayerId = playerId, RequirementId = requirementId },
             RosterAssignmentSource.Host);
         return assignment.Id;
+    }
+
+    private async Task<Guid> ClaimViaServiceAsync(Guid occurrenceId, Guid playerId, Guid requirementId)
+    {
+        await using var context = _db.CreateContext();
+        var result = await new EventRosterService(context, TimeProvider.System)
+            .ClaimAsync(occurrenceId, playerId, new ClaimRosterSpotDto { RequirementId = requirementId });
+        return result.Assignment.Id;
     }
 
     private async Task<int> SupplyOfRequirementAsync(Guid requirementId) =>

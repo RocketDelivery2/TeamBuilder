@@ -33,6 +33,18 @@ public static class RosterState
     public static bool AcceptsNewRosterMutations(EventStatus status) =>
         status is not (EventStatus.Completed or EventStatus.Cancelled or EventStatus.Archived);
 
+    /// <summary>
+    /// The terminal status a live assignment moves to when it ends (player left, host removed):
+    /// Reserved/Confirmed never participated, so they become Cancelled; CheckedIn/Active did, so
+    /// they become Departed. Either way the row stops holding supply.
+    /// </summary>
+    public static RosterAssignmentStatus ExitStatusFor(RosterAssignmentStatus status) => status switch
+    {
+        RosterAssignmentStatus.Reserved or RosterAssignmentStatus.Confirmed => RosterAssignmentStatus.Cancelled,
+        RosterAssignmentStatus.CheckedIn or RosterAssignmentStatus.Active => RosterAssignmentStatus.Departed,
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Only a supply status can end.")
+    };
+
     public static int OpenQuantity(int requiredCount, int supplyCount) =>
         Math.Max(0, requiredCount - supplyCount);
 
