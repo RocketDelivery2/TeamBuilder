@@ -334,11 +334,173 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = requirement.Id });
         (await GetRequirementsAsync(occurrence.Id)).Single().OpenQuantity.Should().Be(0);
 
-        // The host may over-assign; open quantity clamps at zero.
-        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = requirement.Id });
+        // Supply above RequiredCount can still exist (e.g. imported rows); open quantity clamps at zero.
+        await SeedAssignmentAsync(occurrence.Id, await SeedPlayerAsync(), RosterAssignmentStatus.Active, requirement.Id);
         var refreshed = (await GetRequirementsAsync(occurrence.Id)).Single();
         refreshed.SupplyCount.Should().Be(2);
         refreshed.OpenQuantity.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreateAssignment_IntoAFilledRequirement_Returns409_NoOverbooking()
+    {
+        var (hostId, occurrence) = await SeedHostedEventAsync();
+        var requirement = await CreateRequirementAsync(hostId, occurrence.Id, new { roleCode = "center", requiredCount = 1 });
+        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = requirement.Id });
+
+        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = requirement.Id });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("already filled");
+        (await GetRequirementsAsync(occurrence.Id)).Single().SupplyCount.Should().Be(1);
+    }
+
+    // ── basketball dogfood: 5-v-5 pickup needs 10 players ───────────────────
+
+    [Fact]
+    public async Task Basketball_PickupGame_ReportsZeroFiveNineAndTenOfTenReady()
+    {
+        var (hostId, occurrence) = await SeedHostedEventAsync();
+        occurrence.TeamId.Should().BeNull();
+        var participant = await CreateRequirementAsync(hostId, occurrence.Id, new { requiredCount = 10 });
+        participant.RoleCode.Should().Be("participant");
+
+        await AssertSummaryAsync(occurrence.Id, supply: 0, open: 10, ready: false);
+
+        // Ten unrelated players, none of them team members.
+        var players = new List<Guid>();
+        for (var i = 1; i <= 10; i++)
+        {
+            var playerId = await SeedPlayerAsync();
+            players.Add(playerId);
+            await AssignAsync(hostId, occurrence.Id, new { playerId, requirementId = participant.Id });
+
+            if (i == 5) await AssertSummaryAsync(occurrence.Id, supply: 5, open: 5, ready: false);
+            if (i == 9) await AssertSummaryAsync(occurrence.Id, supply: 9, open: 1, ready: false);
+        }
+
+        var summary = await AssertSummaryAsync(occurrence.Id, supply: 10, open: 0, ready: true);
+        summary.Assignments.Select(a => a.PlayerId).Should().BeEquivalentTo(players);
+        summary.Requirements.Should().ContainSingle().Which.Should().Match<RosterRequirementDto>(r => r.SupplyCount == 10 && r.OpenQuantity == 0);
+
+        // An 11th player is rejected: no overbooking; the roster stays 10/10 READY.
+        (await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = participant.Id }))
+            .StatusCode.Should().Be(HttpStatusCode.Conflict);
+        await AssertSummaryAsync(occurrence.Id, supply: 10, open: 0, ready: true);
+    }
+
+    [Theory]
+    [InlineData(RosterAssignmentStatus.Departed, RosterExitReason.PlayerLeft)]
+    [InlineData(RosterAssignmentStatus.Cancelled, RosterExitReason.Other)]
+    [InlineData(RosterAssignmentStatus.NoShow, RosterExitReason.NoShow)]
+    public async Task Basketball_PlayerLeaves_SupplyDrops_ReplacementRestoresReadiness_HistoryKept(RosterAssignmentStatus exitStatus, RosterExitReason exitReason)
+    {
+        var (hostId, occurrence) = await SeedHostedEventAsync();
+        var participant = await CreateRequirementAsync(hostId, occurrence.Id, new { requiredCount = 10 });
+        var assignments = new List<RosterAssignmentDto>();
+        for (var i = 0; i < 10; i++)
+            assignments.Add(await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = participant.Id }));
+        await AssertSummaryAsync(occurrence.Id, supply: 10, open: 0, ready: true);
+
+        // No transition endpoint exists yet: the exit is recorded on the row directly.
+        await RecordExitAsync(assignments[3].Id, exitStatus, exitReason);
+        await AssertSummaryAsync(occurrence.Id, supply: 9, open: 1, ready: false);
+
+        var replacement = await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = participant.Id, replacedAssignmentId = assignments[3].Id });
+
+        var summary = await AssertSummaryAsync(occurrence.Id, supply: 10, open: 0, ready: true);
+        summary.Assignments.Should().HaveCount(11);
+        var original = summary.Assignments.Single(a => a.Id == assignments[3].Id);
+        original.Status.Should().Be(exitStatus);
+        original.ExitReason.Should().Be(exitReason);
+        original.PlayerId.Should().Be(assignments[3].PlayerId);
+        summary.Assignments.Single(a => a.Id == replacement.Id).ReplacedAssignmentId.Should().Be(assignments[3].Id);
+    }
+
+    [Fact]
+    public async Task Basketball_TeamGame_MixesTeamMembersAndGuests()
+    {
+        var hostId = await SeedPlayerAsync();
+        var memberId = await SeedPlayerAsync();
+        var teamId = await SeedTeamWithMemberAsync(hostId, memberId);
+        var occurrence = await SeedEventAsync(hostId, teamId: teamId);
+        var participant = await CreateRequirementAsync(hostId, occurrence.Id, new { requiredCount = 3 });
+
+        await AssignAsync(hostId, occurrence.Id, new { playerId = memberId, requirementId = participant.Id });
+        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = participant.Id });
+        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = participant.Id, sourceRoleLabel = "Sub" });
+
+        await AssertSummaryAsync(occurrence.Id, supply: 3, open: 0, ready: true, required: 3);
+    }
+
+    [Fact]
+    public async Task Basketball_RoleRequirements_ReadyOnlyWhenEveryPositionIsFilled()
+    {
+        var (hostId, occurrence) = await SeedHostedEventAsync();
+        var guards = await CreateRequirementAsync(hostId, occurrence.Id, new { roleCode = "guard", requiredCount = 4 });
+        var forwards = await CreateRequirementAsync(hostId, occurrence.Id, new { roleCode = "forward", requiredCount = 4 });
+        var centers = await CreateRequirementAsync(hostId, occurrence.Id, new { roleCode = "center", requiredCount = 2 });
+
+        foreach (var (requirement, count) in new[] { (guards, 4), (forwards, 4), (centers, 1) })
+            for (var i = 0; i < count; i++)
+                await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = requirement.Id });
+
+        await AssertSummaryAsync(occurrence.Id, supply: 9, open: 1, ready: false, required: 10);
+        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = centers.Id });
+        await AssertSummaryAsync(occurrence.Id, supply: 10, open: 0, ready: true, required: 10);
+    }
+
+    [Fact]
+    public async Task Summary_WithoutRequirements_IsNotReady_AndIgnoresMaxParticipants()
+    {
+        var (hostId, occurrence) = await SeedHostedEventAsync();
+        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync() });
+
+        var summary = await AssertSummaryAsync(occurrence.Id, supply: 1, open: 0, ready: false, required: 0);
+        summary.Requirements.Should().BeEmpty();
+        summary.Assignments.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Summary_MissingOccurrence_Returns404()
+    {
+        (await _client.GetAsync(SummaryUrl(Guid.NewGuid()))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task RosterOperations_LeaveLegacyCountAndRosterEntriesUntouched()
+    {
+        var (hostId, occurrence) = await SeedHostedEventAsync();
+        var legacyPlayer = await SeedPlayerAsync();
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            var ev = await db.Events.SingleAsync(e => e.Id == occurrence.Id);
+            ev.CurrentParticipantCount = 7;
+            db.RosterEntries.Add(new RosterEntry
+            {
+                Id = Guid.NewGuid(),
+                EventId = occurrence.Id,
+                PlayerId = legacyPlayer,
+                IsConfirmed = true,
+                RegisteredAtUtc = DateTime.UtcNow,
+                RowVersion = []
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var requirement = await CreateRequirementAsync(hostId, occurrence.Id, new { requiredCount = 10 });
+        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = requirement.Id });
+
+        // Legacy state is not authoritative and is never written by roster operations...
+        await AssertSummaryAsync(occurrence.Id, supply: 1, open: 9, ready: false);
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+            (await db.Events.AsNoTracking().SingleAsync(e => e.Id == occurrence.Id)).CurrentParticipantCount.Should().Be(7);
+            (await db.RosterEntries.CountAsync(re => re.EventId == occurrence.Id)).Should().Be(1);
+            (await db.RosterAssignments.AnyAsync(a => a.PlayerId == legacyPlayer)).Should().BeFalse();
+        }
     }
 
     [Fact]
@@ -544,20 +706,23 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
 
         var assignmentsJson = await _client.GetStringAsync(AssignmentsUrl(occurrence.Id));
         var requirementsJson = await _client.GetStringAsync(RequirementsUrl(occurrence.Id));
+        var summaryJson = await _client.GetStringAsync(SummaryUrl(occurrence.Id));
 
-        foreach (var json in new[] { assignmentsJson, requirementsJson })
+        foreach (var json in new[] { assignmentsJson, requirementsJson, summaryJson })
         {
             json.Should().NotContain("secret-roster@example.com");
             json.Should().NotContainEquivalentOf("email");
             json.Should().NotContainEquivalentOf("subject");
             json.Should().NotContainEquivalentOf("issuer");
+            json.Should().NotContainEquivalentOf("tenant");
+            json.Should().NotContainEquivalentOf("provider");
             json.Should().NotContain(TeamBuilderWebApplicationFactory.TestIssuer);
         }
 
         using var document = JsonDocument.Parse(assignmentsJson);
         var item = document.RootElement.GetProperty("items")[0];
         item.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
-            "id", "occurrenceId", "playerId", "username", "requirementId", "roleCode", "sourceRoleLabel",
+            "id", "occurrenceId", "playerId", "username", "displayName", "requirementId", "roleCode", "sourceRoleLabel",
             "status", "source", "reservedAtUtc", "confirmedAtUtc", "checkedInAtUtc", "activatedAtUtc",
             "departedAtUtc", "exitReason", "replacedAssignmentId", "createdAtUtc", "updatedAtUtc");
     }
@@ -586,6 +751,29 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
 
     private static string RequirementsUrl(Guid occurrenceId) => $"/api/v1/events/{occurrenceId}/roster/requirements";
     private static string AssignmentsUrl(Guid occurrenceId) => $"/api/v1/events/{occurrenceId}/roster/assignments";
+    private static string SummaryUrl(Guid occurrenceId) => $"/api/v1/events/{occurrenceId}/roster";
+
+    private async Task<RosterSummaryDto> AssertSummaryAsync(Guid occurrenceId, int supply, int open, bool ready, int required = 10)
+    {
+        var summary = (await _client.GetFromJsonAsync<RosterSummaryDto>(SummaryUrl(occurrenceId)))!;
+        summary.OccurrenceId.Should().Be(occurrenceId);
+        summary.RequiredCount.Should().Be(required);
+        summary.SupplyCount.Should().Be(supply);
+        summary.OpenQuantity.Should().Be(open);
+        summary.IsRosterReady.Should().Be(ready);
+        return summary;
+    }
+
+    private async Task RecordExitAsync(Guid assignmentId, RosterAssignmentStatus status, RosterExitReason reason)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        var assignment = await db.RosterAssignments.SingleAsync(a => a.Id == assignmentId);
+        assignment.Status = status;
+        assignment.ExitReason = reason;
+        assignment.DepartedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
 
     private static DateTime? StatusTimestamp(RosterAssignmentDto assignment, RosterAssignmentStatus status) => status switch
     {

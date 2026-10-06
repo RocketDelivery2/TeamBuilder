@@ -28,6 +28,36 @@ public class RosterRequirementDto
     public DateTime? UpdatedAtUtc { get; set; }
 }
 
+/// <summary>
+/// Readiness projection of one occurrence, served by <c>GET /api/v1/events/{occurrenceId}/roster</c>.
+/// Computed from supply-status assignments only; the legacy
+/// <c>EventDto.CurrentParticipantCount</c> and <c>MaxParticipants</c> are never consulted.
+/// </summary>
+public class RosterSummaryDto
+{
+    public Guid OccurrenceId { get; set; }
+
+    /// <summary>Sum of RequiredCount over all requirements (0 when there are none).</summary>
+    public int RequiredCount { get; set; }
+
+    /// <summary>All supply-status assignments, including ones linked to no requirement.</summary>
+    public int SupplyCount { get; set; }
+
+    /// <summary>Sum of per-requirement open quantities; surplus on one requirement never offsets another.</summary>
+    public int OpenQuantity { get; set; }
+
+    /// <summary>
+    /// True only when at least one requirement exists and every requirement has zero open
+    /// quantity. An occurrence without requirements is never ready.
+    /// </summary>
+    public bool IsRosterReady { get; set; }
+
+    public IReadOnlyList<RosterRequirementDto> Requirements { get; set; } = [];
+
+    /// <summary>Every assignment, history included, in creation order.</summary>
+    public IReadOnlyList<RosterAssignmentDto> Assignments { get; set; } = [];
+}
+
 public class CreateRosterRequirementDto : IValidatableObject
 {
     /// <summary>
@@ -64,6 +94,10 @@ public class RosterAssignmentDto
     public Guid OccurrenceId { get; set; }
     public Guid PlayerId { get; set; }
     public string Username { get; set; } = string.Empty;
+
+    /// <summary>The player's public display name (also exposed by public player reads).</summary>
+    public string? DisplayName { get; set; }
+
     public Guid? RequirementId { get; set; }
     public string? RoleCode { get; set; }
     public string? SourceRoleLabel { get; set; }

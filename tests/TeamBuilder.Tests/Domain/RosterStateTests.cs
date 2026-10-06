@@ -43,7 +43,9 @@ public class RosterStateTests
         var guards = Guid.NewGuid();
         var centers = Guid.NewGuid();
 
+        var occurrenceId = Guid.NewGuid();
         var snapshot = RosterState.Compute(
+            occurrenceId,
             [(guards, 2), (centers, 1)],
             [
                 (guards, RosterAssignmentStatus.Reserved),
@@ -56,10 +58,59 @@ public class RosterStateTests
                 (null, RosterAssignmentStatus.Departed)
             ]);
 
-        snapshot.SupplyCount.Should().Be(4);
+        snapshot.OccurrenceId.Should().Be(occurrenceId);
+        snapshot.TotalSupplyCount.Should().Be(4);
         snapshot.UnlinkedSupplyCount.Should().Be(1);
+        snapshot.TotalRequiredCount.Should().Be(3);
+        // Surplus guards never offset the open center.
+        snapshot.TotalOpenQuantity.Should().Be(1);
+        snapshot.IsRosterReady.Should().BeFalse();
         snapshot.Requirements[guards].Should().Be(new RequirementSupply(guards, 2, 3, 0));
         snapshot.Requirements[centers].Should().Be(new RequirementSupply(centers, 1, 0, 1));
+    }
+
+    [Theory]
+    [InlineData(0, 10, false)]
+    [InlineData(5, 5, false)]
+    [InlineData(9, 1, false)]
+    [InlineData(10, 0, true)]
+    public void Basketball_TenParticipants_Readiness(int confirmed, int expectedOpen, bool expectedReady)
+    {
+        var participant = Guid.NewGuid();
+
+        var snapshot = RosterState.Compute(
+            Guid.NewGuid(),
+            [(participant, 10)],
+            Enumerable.Repeat<(Guid?, RosterAssignmentStatus)>((participant, RosterAssignmentStatus.Confirmed), confirmed)
+                .Append((participant, RosterAssignmentStatus.Departed)));
+
+        snapshot.TotalRequiredCount.Should().Be(10);
+        snapshot.TotalSupplyCount.Should().Be(confirmed);
+        snapshot.TotalOpenQuantity.Should().Be(expectedOpen);
+        snapshot.IsRosterReady.Should().Be(expectedReady);
+    }
+
+    [Fact]
+    public void NoRequirements_IsNeverReady_EvenWithSupply()
+    {
+        var snapshot = RosterState.Compute(Guid.NewGuid(), [], [(null, RosterAssignmentStatus.Active)]);
+
+        snapshot.TotalRequiredCount.Should().Be(0);
+        snapshot.TotalOpenQuantity.Should().Be(0);
+        snapshot.TotalSupplyCount.Should().Be(1);
+        snapshot.IsRosterReady.Should().BeFalse();
+    }
+
+    [Fact]
+    public void MultipleRoles_ReadyOnlyWhenEveryRoleIsFilled()
+    {
+        var tank = Guid.NewGuid();
+        var healer = Guid.NewGuid();
+
+        RosterState.Compute(Guid.NewGuid(), [(tank, 1), (healer, 1)], [(tank, RosterAssignmentStatus.Active), (null, RosterAssignmentStatus.Active)])
+            .IsRosterReady.Should().BeFalse();
+        RosterState.Compute(Guid.NewGuid(), [(tank, 1), (healer, 1)], [(tank, RosterAssignmentStatus.Active), (healer, RosterAssignmentStatus.Reserved)])
+            .IsRosterReady.Should().BeTrue();
     }
 
     [Theory]

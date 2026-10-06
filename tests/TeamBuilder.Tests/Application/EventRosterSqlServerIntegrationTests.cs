@@ -1,7 +1,10 @@
+using System.Data.Common;
 using FluentAssertions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Domain;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
@@ -238,6 +241,121 @@ public class EventRosterSqlServerIntegrationTests : IAsyncLifetime
         (await verify.RosterAssignments.CountAsync(a => a.OccurrenceId == occurrenceId)).Should().Be(1);
     }
 
+    // ── requirement capacity (no overbooking) ────────────────────────────────
+
+    [Fact]
+    public async Task CreateAssignment_ConcurrentFillOfTheLastOpenQuantity_IsAnOrderly409()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        for (var i = 0; i < 9; i++)
+            await AssignViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
+
+        // Another host request takes the 10th spot after this request counted 9 but before it
+        // commits: the forced RowVersion-checked requirement UPDATE makes this save fail.
+        var competitor = await AddPlayerAsync();
+        var playerId = await AddPlayerAsync();
+        await using var context = InterferingContext(() => AssignViaServiceAsync(occurrenceId, competitor, requirementId));
+        var service = new EventRosterService(context, TimeProvider.System);
+
+        var act = () => service.CreateAssignmentAsync(
+            occurrenceId,
+            new CreateRosterAssignmentDto { PlayerId = playerId, RequirementId = requirementId },
+            RosterAssignmentSource.Host);
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage(EventRosterService.RequirementChangedMessage)
+            .Which.InnerException.Should().BeOfType<DbUpdateConcurrencyException>();
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(10);
+    }
+
+    [Fact]
+    public async Task CreateAssignment_ParallelFills_NeverExceedRequiredCount()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        for (var i = 0; i < 8; i++)
+            await AssignViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
+        var candidates = new List<Guid>();
+        for (var i = 0; i < 8; i++)
+            candidates.Add(await AddPlayerAsync());
+
+        var results = await Task.WhenAll(candidates.Select(async playerId =>
+        {
+            await using var context = _db.CreateContext();
+            try
+            {
+                await new EventRosterService(context, TimeProvider.System).CreateAssignmentAsync(
+                    occurrenceId,
+                    new CreateRosterAssignmentDto { PlayerId = playerId, RequirementId = requirementId },
+                    RosterAssignmentSource.Host);
+                return true;
+            }
+            catch (InvalidOperationException ex) when (
+                ex.Message is EventRosterService.RequirementFilledMessage or EventRosterService.RequirementChangedMessage)
+            {
+                return false;
+            }
+        }));
+
+        var supply = await SupplyOfRequirementAsync(requirementId);
+        supply.Should().BeLessThanOrEqualTo(10);
+        supply.Should().Be(8 + results.Count(r => r));
+        results.Count(r => r).Should().BeGreaterThan(0);
+
+        // Whatever lost a race can retry until the requirement is full, and never beyond it.
+        foreach (var playerId in candidates.Where((_, i) => !results[i]))
+        {
+            try { await AssignViaServiceAsync(occurrenceId, playerId, requirementId); }
+            catch (InvalidOperationException ex) when (ex.Message == EventRosterService.RequirementFilledMessage) { }
+        }
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(10);
+    }
+
+    [Fact]
+    public async Task CreateAssignment_AfterADeparture_MayRefillTheRequirement()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 1);
+        var first = await AssignViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
+        await ExecuteAsync($"UPDATE [RosterAssignments] SET [Status] = 5, [ExitReason] = 1, [DepartedAtUtc] = SYSUTCDATETIME() WHERE [Id] = '{first}'");
+
+        await new EventRosterService(_db.CreateContext(), TimeProvider.System).CreateAssignmentAsync(
+            occurrenceId,
+            new CreateRosterAssignmentDto { PlayerId = await AddPlayerAsync(), RequirementId = requirementId, ReplacedAssignmentId = first },
+            RosterAssignmentSource.Host);
+
+        (await SupplyOfRequirementAsync(requirementId)).Should().Be(1);
+    }
+
+    // ── read shape ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Summary_UsesAFixedNumberOfQueries_AndSelectsNoPrivatePlayerColumns()
+    {
+        var occurrenceId = await AddOccurrenceAsync(await AddPlayerAsync());
+        var requirementId = await AddRequirementAsync(occurrenceId, RosterRoleCodesParticipant, 10);
+        for (var i = 0; i < 10; i++)
+            await AssignViaServiceAsync(occurrenceId, await AddPlayerAsync(), requirementId);
+        await AddAssignmentAsync(occurrenceId, await AddPlayerAsync(), RosterAssignmentStatus.Departed);
+
+        var recorder = new CommandRecorder();
+        var options = new DbContextOptionsBuilder<TeamBuilderDbContext>()
+            .UseSqlServer(_db.ConnectionString)
+            .AddInterceptors(recorder)
+            .Options;
+        await using var context = new TeamBuilderDbContext(options);
+
+        var summary = await new EventRosterService(context, TimeProvider.System).GetSummaryAsync(occurrenceId);
+
+        summary!.IsRosterReady.Should().BeTrue();
+        summary.SupplyCount.Should().Be(10);
+        summary.Assignments.Should().HaveCount(11);
+        summary.Assignments.Should().OnlyContain(a => a.Username.StartsWith("p-") && a.CreatedAtUtc.Kind == DateTimeKind.Utc);
+        recorder.Commands.Should().HaveCount(3, "existence, requirements and one projected assignment query");
+        recorder.Commands.Should().NotContain(c => c.Contains("[Email]") || c.Contains("PlayerIdentities"));
+    }
+
     // ── requirement relationship ─────────────────────────────────────────────
 
     [Fact]
@@ -397,6 +515,46 @@ public class EventRosterSqlServerIntegrationTests : IAsyncLifetime
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    private const string RosterRoleCodesParticipant = RosterRoleCodes.Participant;
+
+    private async Task<Guid> AssignViaServiceAsync(Guid occurrenceId, Guid playerId, Guid requirementId)
+    {
+        await using var context = _db.CreateContext();
+        var assignment = await new EventRosterService(context, TimeProvider.System).CreateAssignmentAsync(
+            occurrenceId,
+            new CreateRosterAssignmentDto { PlayerId = playerId, RequirementId = requirementId },
+            RosterAssignmentSource.Host);
+        return assignment.Id;
+    }
+
+    private async Task<int> SupplyOfRequirementAsync(Guid requirementId) =>
+        await ScalarAsync<int>($"SELECT COUNT(*) FROM [RosterAssignments] WHERE [RequirementId] = '{requirementId}' AND [Status] IN (1, 2, 3, 4)");
+
+    private sealed class CommandRecorder : DbCommandInterceptor
+    {
+        public List<string> Commands { get; } = [];
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Add(command.CommandText);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Add(command.CommandText);
+            return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
 
     private TeamBuilderDbContext InterferingContext(Func<Task> beforeFirstSave)
     {

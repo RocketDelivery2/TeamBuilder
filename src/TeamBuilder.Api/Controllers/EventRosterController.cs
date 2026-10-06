@@ -37,6 +37,25 @@ public class EventRosterController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Readiness summary: total required/supply/open quantity, IsRosterReady, the requirements
+    /// and every assignment (history included). Public.
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(RosterSummaryDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<RosterSummaryDto>> GetSummary(Guid occurrenceId, CancellationToken cancellationToken)
+    {
+        var summary = await _rosterService.GetSummaryAsync(occurrenceId, cancellationToken);
+        if (summary == null)
+        {
+            _logger.LogInformation("Event with ID {EventId} not found for roster summary", occurrenceId);
+            return NotFound();
+        }
+
+        return Ok(summary);
+    }
+
     [HttpGet("requirements")]
     [ProducesResponseType(typeof(IReadOnlyList<RosterRequirementDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

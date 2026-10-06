@@ -168,7 +168,7 @@ is not linked yet.
 | `GET` | `/health/ready` |
 | `GET` | `/api/v1/teams`, `/api/v1/teams/{id}` |
 | `GET` | `/api/v1/events`, `/api/v1/events/{id}` |
-| `GET` | `/api/v1/events/{occurrenceId}/roster/requirements`, `/api/v1/events/{occurrenceId}/roster/assignments` |
+| `GET` | `/api/v1/events/{occurrenceId}/roster`, `/api/v1/events/{occurrenceId}/roster/requirements`, `/api/v1/events/{occurrenceId}/roster/assignments` |
 | `GET` | `/api/v1/event-series/{id}`, `/api/v1/event-series/{id}/occurrences` |
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
 | `GET` | `/api/v1/players/username/{username}` |
@@ -960,12 +960,47 @@ are historical. A player holds at most one supply assignment per occurrence
 For each requirement, `supplyCount` counts its linked supply assignments and
 `openQuantity = max(0, requiredCount - supplyCount)`. Open quantity is derived
 on read and never stored. Assignments without a `requirementId` count toward
-no requirement. The legacy `EventDto.currentParticipantCount` is not changed
-by roster operations.
+no requirement. The legacy `EventDto.currentParticipantCount` and
+`maxParticipants` are neither changed nor consulted by roster operations.
+
+**Readiness.** `isRosterReady` is true only when the occurrence has at least
+one requirement and every requirement has `openQuantity` 0. An occurrence with
+no requirements is never ready. The occurrence-level `openQuantity` is the sum
+of per-requirement open quantities, so surplus on one role never fills
+another. Example (5-v-5 pickup basketball, one `participant` requirement of
+10): 0 assigned is 0/10, 9 is 9/10 not ready, 10 is 10/10 ready.
+
+**No overbooking.** A host assignment linked to a requirement is rejected
+with `409` once that requirement's supply equals its `requiredCount`. The
+check runs in the same transaction as the insert, guarded by the
+requirement's `RowVersion` (each linked assignment touches the requirement
+row, advancing its `updatedAtUtc`), so concurrent fills of the last spot
+cannot both commit; the loser gets `409` and may retry.
 
 Mutations are host-only and checked in this order: unlinked identity `403`,
 missing occurrence `404`, occurrence without a host `409`, caller not the
 host `403`, occurrence `Completed`/`Cancelled`/`Archived` `409`.
+
+#### `GET api/v1/events/{occurrenceId}/roster`
+
+Public readiness summary:
+
+```json
+{
+  "occurrenceId": "…",
+  "requiredCount": 10,
+  "supplyCount": 9,
+  "openQuantity": 1,
+  "isRosterReady": false,
+  "requirements": [ { "roleCode": "participant", "requiredCount": 10, "supplyCount": 9, "openQuantity": 1, "…": "…" } ],
+  "assignments": [ { "playerId": "…", "username": "…", "status": 2, "…": "…" } ]
+}
+```
+
+`supplyCount` counts every supply assignment, including ones linked to no
+requirement. `assignments` lists every assignment, history included, in
+creation order, with the same shape as the assignments endpoint. **Response
+`404`:** occurrence not found.
 
 #### `GET api/v1/events/{occurrenceId}/roster/requirements`
 
@@ -988,7 +1023,7 @@ occurrence, orphaned or closed occurrence.
 
 Public, paginated (`page`, `pageSize` ≤ 100, default 50), all statuses in
 creation order. Each item: `id`, `occurrenceId`, `playerId`, `username`,
-`requirementId`, `roleCode`, `sourceRoleLabel`, `status`, `source`,
+`displayName`, `requirementId`, `roleCode`, `sourceRoleLabel`, `status`, `source`,
 `reservedAtUtc`, `confirmedAtUtc`, `checkedInAtUtc`, `activatedAtUtc`,
 `departedAtUtc`, `exitReason`, `replacedAssignmentId`, `createdAtUtc`,
 `updatedAtUtc`. No email or external identity data is exposed.
@@ -1013,8 +1048,9 @@ reservation is a later API.
 **Response `201`:** the assignment. **`400`:** validation failure, unknown
 player, requirement or replaced assignment of another occurrence, conflicting
 role code. **`409`:** the player already holds a supply assignment for this
-occurrence, the replaced assignment still holds supply, or the occurrence is
-orphaned or closed.
+occurrence, the requirement is already filled or changed concurrently, the
+replaced assignment still holds supply, or the occurrence is orphaned or
+closed.
 
 A player with any roster assignment cannot be deleted
 (`DELETE api/v1/players/{id}` returns `409`), so participation history is

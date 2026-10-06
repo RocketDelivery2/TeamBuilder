@@ -60,7 +60,10 @@ by this design. Event-roster capacity is a separate future domain concern.
 Supply-status assignments (Reserved, Confirmed, CheckedIn, Active) are the
 authoritative participation source for new roster operations, and open
 quantity is derived as `max(0, RequiredCount - SupplyCount)` without being
-persisted. `EventOccurrence.CurrentParticipantCount` remains legacy stored
+persisted. A central `RosterSupplySnapshot` (Domain `RosterState.Compute`)
+reports total required, supply and open quantity and `IsRosterReady` (true only
+when at least one requirement exists and all are filled); host assignments
+cannot overbook a requirement. `EventOccurrence.CurrentParticipantCount` remains legacy stored
 state for now. The older `RosterEntry` entity is imported/raw roster
 provenance (roster-import staging), not live participation. OpenSpot,
 SpotReservation and ReplacementOffer are not implemented yet.

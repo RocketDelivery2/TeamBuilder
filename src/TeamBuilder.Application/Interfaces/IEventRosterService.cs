@@ -10,6 +10,12 @@ namespace TeamBuilder.Application.Interfaces;
 /// </summary>
 public interface IEventRosterService
 {
+    /// <summary>
+    /// Readiness projection (totals, requirements, all assignments) computed from one read of
+    /// requirements and one of assignments; null when the occurrence does not exist.
+    /// </summary>
+    Task<RosterSummaryDto?> GetSummaryAsync(Guid occurrenceId, CancellationToken cancellationToken = default);
+
     /// <summary>Requirements of the occurrence with derived supply; null when the occurrence does not exist.</summary>
     Task<IReadOnlyList<RosterRequirementDto>?> GetRequirementsAsync(Guid occurrenceId, CancellationToken cancellationToken = default);
 
@@ -28,8 +34,9 @@ public interface IEventRosterService
     /// Unknown player, requirement or replaced assignment of this occurrence, or a role code that conflicts with the requirement.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// The occurrence is closed, the player already holds a supply assignment for it, or the
-    /// replaced assignment still holds supply.
+    /// The occurrence is closed, the player already holds a supply assignment for it, the
+    /// requirement is already filled (no overbooking), the requirement changed concurrently, or
+    /// the replaced assignment still holds supply.
     /// </exception>
     Task<RosterAssignmentDto> CreateAssignmentAsync(Guid occurrenceId, CreateRosterAssignmentDto createDto, RosterAssignmentSource source, CancellationToken cancellationToken = default);
 }
