@@ -55,7 +55,18 @@ public class EventOccurrence : BaseEntity
     public Team? Team { get; set; }
     public Guid? HostId { get; set; }
     public Player? Host { get; set; }
+
+    /// <summary>Imported/raw roster provenance. Not live participation; see <see cref="RosterAssignments"/>.</summary>
     public ICollection<RosterEntry> RosterEntries { get; set; } = new List<RosterEntry>();
+
+    /// <summary>Quantity-based roster demand for this occurrence.</summary>
+    public ICollection<RosterRequirement> RosterRequirements { get; set; } = new List<RosterRequirement>();
+
+    /// <summary>
+    /// Live participation history. Supply-status rows are the authoritative participant source
+    /// for roster operations; <see cref="CurrentParticipantCount"/> is legacy stored state.
+    /// </summary>
+    public ICollection<RosterAssignment> RosterAssignments { get; set; } = new List<RosterAssignment>();
 
     /// <summary>
     /// The location shown to API clients: the venue's name when a venue is attached,

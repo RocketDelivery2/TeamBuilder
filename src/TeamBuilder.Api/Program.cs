@@ -23,6 +23,7 @@ builder.Services.AddScoped<ITeamService, TeamService>();
 builder.Services.AddScoped<IPlayerService, PlayerService>();
 builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IEventSeriesService, EventSeriesService>();
+builder.Services.AddScoped<IEventRosterService, EventRosterService>();
 builder.Services.AddScoped<IEventSeriesMaterializer, EventSeriesMaterializer>();
 builder.Services.AddSingleton(TimeProvider.System);
 

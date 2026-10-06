@@ -17,6 +17,8 @@ public class TeamBuilderDbContext : DbContext
     public DbSet<EventSeries> EventSeries => Set<EventSeries>();
     public DbSet<Venue> Venues => Set<Venue>();
     public DbSet<RosterEntry> RosterEntries => Set<RosterEntry>();
+    public DbSet<RosterRequirement> RosterRequirements => Set<RosterRequirement>();
+    public DbSet<RosterAssignment> RosterAssignments => Set<RosterAssignment>();
     public DbSet<JoinRequest> JoinRequests => Set<JoinRequest>();
     public DbSet<RosterImport> RosterImports => Set<RosterImport>();
 

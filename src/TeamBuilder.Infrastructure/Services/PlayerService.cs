@@ -242,6 +242,13 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
             throw new InvalidOperationException(OwnedTeamsDeletionConflictMessage);
         }
 
+        // Event participation history is never erased or rewritten by a player delete; there is
+        // no anonymization flow yet, so a player with any roster assignment cannot be deleted.
+        if (await _context.RosterAssignments.AnyAsync(a => a.PlayerId == id, cancellationToken))
+        {
+            throw new InvalidOperationException(RosterHistoryDeletionConflictMessage);
+        }
+
         // Every membership row (active and inactive history) is deleted explicitly: the
         // TeamMember -> Player FK no longer cascades, so a membership inserted after this query
         // makes the player delete fail instead of being silently removed uncounted.
@@ -314,8 +321,16 @@ public class PlayerService(TeamBuilderDbContext context) : IPlayerService
                 ex);
         }
 
+        catch (DbUpdateException ex) when (PlayerDeletionConflictClassifier.IsRosterAssignmentReference(ex))
+        {
+            throw new InvalidOperationException(RosterHistoryDeletionConflictMessage, ex);
+        }
+
         return true;
     }
+
+    private const string RosterHistoryDeletionConflictMessage =
+        "This player has event roster history and cannot be deleted.";
 
     private const string OwnedTeamsDeletionConflictMessage =
         "Delete or transfer ownership of all owned teams before deleting this player.";

@@ -56,6 +56,15 @@ administrative; the owner consumes capacity only when represented by an
 active membership row. No `TeamVacancy` or `JoinAsMember` concept is implied
 by this design. Event-roster capacity is a separate future domain concern.
 
+`RosterRequirement` and `RosterAssignment` are implemented (TB-ROSTER-001).
+Supply-status assignments (Reserved, Confirmed, CheckedIn, Active) are the
+authoritative participation source for new roster operations, and open
+quantity is derived as `max(0, RequiredCount - SupplyCount)` without being
+persisted. `EventOccurrence.CurrentParticipantCount` remains legacy stored
+state for now. The older `RosterEntry` entity is imported/raw roster
+provenance (roster-import staging), not live participation. OpenSpot,
+SpotReservation and ReplacementOffer are not implemented yet.
+
 ## Rapid-refill lifecycle
 
 An occurrence's assignment and opening state should follow an explicit

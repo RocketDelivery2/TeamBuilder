@@ -12,6 +12,7 @@ public class Player : BaseEntity
     public ICollection<Team> OwnedTeams { get; set; } = [];
     public ICollection<EventOccurrence> HostedEvents { get; set; } = [];
     public ICollection<RosterEntry> RosterEntries { get; set; } = [];
+    public ICollection<RosterAssignment> RosterAssignments { get; set; } = [];
     public ICollection<JoinRequest> JoinRequests { get; set; } = [];
     public ICollection<PlayerIdentity> Identities { get; set; } = [];
 }
