@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using TeamBuilder.Application.Exceptions;
 
 namespace TeamBuilder.Api.Errors;
 
 /// <summary>
 /// Maps unhandled application exceptions to consistent ProblemDetails responses.
 /// ArgumentException => 400, InvalidOperationException => 409, everything else => 500.
+/// A <see cref="RosterConflictException"/> also carries its stable <c>code</c>.
 /// </summary>
 internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IExceptionHandler
 {
@@ -34,6 +36,9 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
                 ? "An unexpected error occurred."
                 : exception.Message
         };
+
+        if (exception is RosterConflictException rosterConflict)
+            problemDetails.Extensions["code"] = rosterConflict.Code;
 
         httpContext.Response.StatusCode = statusCode;
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);

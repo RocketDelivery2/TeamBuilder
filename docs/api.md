@@ -156,7 +156,7 @@ is not linked yet.
 | `POST`, `PUT`, `DELETE` | `/api/v1/teams...` | Owner identity comes from `PlayerIdentity`; update/delete are owner-only. Leave is self-only; owners cannot remove another member through this route. |
 | `GET`, `POST`, `PUT` | `/api/v1/joinrequests...` | Reads are limited to the applicant or relevant team owner; creation is by the linked applicant; processing is team-owner-only. |
 | `POST`, `PUT`, `DELETE` | `/api/v1/events...` | Host identity comes from `PlayerIdentity`; updates/deletes are host-only. When an event names a team, only that team's owner may create it. |
-| `POST` | `/api/v1/events/{occurrenceId}/roster/...` | Roster requirement and assignment creation are host-only. |
+| `POST` | `/api/v1/events/{occurrenceId}/roster/...` | Requirement creation, host assignment and host removal are host-only. Any linked player may self-claim (`/claims`) and leave their own assignment (`/assignments/{id}/leave`). |
 | `POST`, `DELETE` | `/api/v1/event-series...` | Host identity comes from `PlayerIdentity`; cancellation is host-only. When a series names a team, only that team's owner may create it. |
 | `GET`, `POST`, `PUT`, `DELETE` | `/api/v1/rosterimports...` | Reads and mutations are restricted to the linked original importer. |
 
@@ -970,16 +970,39 @@ of per-requirement open quantities, so surplus on one role never fills
 another. Example (5-v-5 pickup basketball, one `participant` requirement of
 10): 0 assigned is 0/10, 9 is 9/10 not ready, 10 is 10/10 ready.
 
-**No overbooking.** A host assignment linked to a requirement is rejected
-with `409` once that requirement's supply equals its `requiredCount`. The
-check runs in the same transaction as the insert, guarded by the
-requirement's `RowVersion` (each linked assignment touches the requirement
-row, advancing its `updatedAtUtc`), so concurrent fills of the last spot
-cannot both commit; the loser gets `409` and may retry.
+**No overbooking.** Host assignment and player self-claim share one
+allocation path. An assignment linked to a requirement is rejected with `409`
+once that requirement's supply equals its `requiredCount`. The check runs in
+the same transaction as the insert, guarded by the requirement's `RowVersion`
+(each linked assignment touches the requirement row, advancing its
+`updatedAtUtc`), so concurrent fills of the last spot cannot both commit.
+A request that loses such a race gets `409` with code `RequirementFull` when
+the competing commit took the last open quantity, or `RosterChanged` when
+open quantity remains; `RosterChanged` is safe to retry. The server does not
+retry on its own.
 
-Mutations are host-only and checked in this order: unlinked identity `403`,
-missing occurrence `404`, occurrence without a host `409`, caller not the
-host `403`, occurrence `Completed`/`Cancelled`/`Archived` `409`.
+**Who holds a spot.** Only assignments hold roster supply. The occurrence's
+host is an administrator and holds no spot unless they claim one through the
+same self-claim endpoint as everyone else. Standalone pickup occurrences
+(`teamId` null) and team occurrences use the same roster; claiming never
+requires team membership.
+
+**Conflict codes.** Roster `409` responses are ProblemDetails with a stable
+`code`: `AlreadyParticipating`, `RequirementFull`, `RosterChanged`,
+`OccurrenceClosed`, `AssignmentEnded`, `ReplacedAssignmentStillActive` or
+`DuplicateRequirementRole`. Database messages are never exposed. (The host
+authorization checks below return `409` for an orphaned or closed occurrence
+before reaching the roster rules, with a `message` and no `code`.)
+
+**Joinable statuses.** `Planned`, `Open` and `InProgress` occurrences accept
+roster changes, including self-claims, so a player who leaves mid-game can be
+replaced while the game is underway. `Completed`, `Cancelled` and `Archived`
+occurrences are closed.
+
+Host mutations (requirements, host assignment, host removal) are checked in
+this order: unlinked identity `403`, missing occurrence `404`, occurrence
+without a host `409`, caller not the host `403`, occurrence
+`Completed`/`Cancelled`/`Archived` `409`.
 
 #### `GET api/v1/events/{occurrenceId}/roster`
 
@@ -1031,8 +1054,8 @@ creation order. Each item: `id`, `occurrenceId`, `playerId`, `username`,
 
 #### `POST api/v1/events/{occurrenceId}/roster/assignments`
 
-The host assigns any existing player (source `Host`). Self-service
-reservation is a later API.
+The host assigns any existing player (source `Host`), through the same
+allocation and capacity guard as player self-claim.
 
 ```json
 { "playerId": "…", "requirementId": "…", "status": 2, "replacedAssignmentId": null }
@@ -1051,6 +1074,78 @@ role code. **`409`:** the player already holds a supply assignment for this
 occurrence, the requirement is already filled or changed concurrently, the
 replaced assignment still holds supply, or the occurrence is orphaned or
 closed.
+
+#### `POST api/v1/events/{occurrenceId}/roster/claims`
+
+The authenticated caller claims one unit of open quantity on a requirement.
+The claimant is always the caller (resolved from `PlayerIdentity`); any
+linked player may claim, the host included, and no team membership is
+required.
+
+```json
+{ "requirementId": "…", "replacesAssignmentId": null }
+```
+
+- The new assignment is `Confirmed` with source `Player` and
+  `confirmedAtUtc` set. There is no reservation or expiry step.
+- `replacesAssignmentId` is optional replacement lineage. It must name an
+  assignment of this occurrence, on the same requirement, that no longer holds
+  supply; that row is not modified. Generic refill does not need it.
+- A retry is safe: when the caller already holds a live assignment on the same
+  requirement (for example after a lost response), it is returned with `200`
+  and nothing new is created. This also holds when the requirement has filled
+  since.
+
+Checked in this order: no token `401`, unlinked identity `403`, missing
+occurrence `404`, requirement not found on this occurrence (including a
+requirement of another occurrence) `404`, closed occurrence `409`
+`OccurrenceClosed`, then the existing-claim check, then the replacement rules
+(`400` unknown, other occurrence or other requirement; `409`
+`ReplacedAssignmentStillActive`), then capacity.
+
+**Response `201`:** the new assignment (`Location` is the assignments list).
+**`200`:** the caller's existing assignment on this requirement. **`400`:**
+validation failure (missing or empty `requirementId`). **`409`:**
+`AlreadyParticipating` (the caller holds a live assignment on another
+requirement of this occurrence), `RequirementFull`, `RosterChanged`
+(retryable), `OccurrenceClosed`, `ReplacedAssignmentStillActive`.
+
+#### `POST api/v1/events/{occurrenceId}/roster/assignments/{assignmentId}/leave`
+
+The caller ends their own live assignment. Nothing is deleted:
+
+- `Reserved` or `Confirmed` (never played) becomes `Cancelled`;
+- `CheckedIn` or `Active` (played) becomes `Departed`;
+- `exitReason` becomes `PlayerLeft` and `departedAtUtc` records the exit time
+  in both cases.
+
+The spot reopens in the same commit, so the summary immediately shows the
+lower supply and `isRosterReady` false (10/10 ready becomes 9/10 with
+`openQuantity` 1). Anyone can then claim it.
+
+Checked in this order: no token `401`, unlinked identity `403`, missing
+occurrence or assignment (including an assignment of another occurrence)
+`404`, assignment held by someone else `403` (the host included; the host
+uses remove), closed occurrence `409` `OccurrenceClosed`, assignment already
+`Departed`/`NoShow`/`Cancelled` `409` `AssignmentEnded`. A concurrent
+transition of the same assignment returns `409` (`AssignmentEnded` when it
+has ended). **Response `200`:** the ended assignment.
+
+#### `POST api/v1/events/{occurrenceId}/roster/assignments/{assignmentId}/remove`
+
+The host ends a participant's live assignment, with the same transitions and
+history retention as leave and `exitReason` `HostRemoved`. The host may also
+remove their own claim. Host checks first (see above), then missing
+assignment `404` and already ended `409` `AssignmentEnded`. **Response
+`200`:** the ended assignment.
+
+**Rapid refill example** (Wednesday 8 PM 5-on-5 pickup, one `participant`
+requirement of 10, no team): the host creates the occurrence and the
+requirement (0/10), optionally claims (1/10), players claim until 9/10, two
+players race for the last spot (one `201`, one `409` `RequirementFull`, 10/10
+ready), a player leaves (9/10, not ready, their row kept as `Cancelled`), and
+a new player claims (10/10 ready again). The same works while the occurrence
+is `InProgress`.
 
 A player with any roster assignment cannot be deleted
 (`DELETE api/v1/players/{id}` returns `409`), so participation history is

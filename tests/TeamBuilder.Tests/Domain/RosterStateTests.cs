@@ -157,4 +157,28 @@ public class RosterStateTests
         RosterRoleCodes.TryNormalize(new string('a', RosterRoleCodes.MaxLength + 1), out _, out _).Should().BeFalse();
         RosterRoleCodes.TryNormalize(new string('a', RosterRoleCodes.MaxLength), out _, out _).Should().BeTrue();
     }
+
+    [Theory]
+    [InlineData(RosterAssignmentStatus.Reserved, RosterAssignmentStatus.Cancelled)]
+    [InlineData(RosterAssignmentStatus.Confirmed, RosterAssignmentStatus.Cancelled)]
+    [InlineData(RosterAssignmentStatus.CheckedIn, RosterAssignmentStatus.Departed)]
+    [InlineData(RosterAssignmentStatus.Active, RosterAssignmentStatus.Departed)]
+    public void ExitStatusFor_LiveStatuses_EndOutsideSupply(RosterAssignmentStatus from, RosterAssignmentStatus expected)
+    {
+        var exit = RosterState.ExitStatusFor(from);
+
+        exit.Should().Be(expected);
+        RosterState.IsSupply(exit).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(RosterAssignmentStatus.Departed)]
+    [InlineData(RosterAssignmentStatus.NoShow)]
+    [InlineData(RosterAssignmentStatus.Cancelled)]
+    public void ExitStatusFor_HistoricalStatuses_Throws(RosterAssignmentStatus from)
+    {
+        var act = () => RosterState.ExitStatusFor(from);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
 }
