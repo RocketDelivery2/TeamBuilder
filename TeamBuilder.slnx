@@ -7,5 +7,9 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TeamBuilder.Tests/TeamBuilder.Tests.csproj" />
+    <Project Path="tests/TeamBuilder.Simulation.Tests/TeamBuilder.Simulation.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/TeamBuilder.Simulation/TeamBuilder.Simulation.csproj" />
   </Folder>
 </Solution>
