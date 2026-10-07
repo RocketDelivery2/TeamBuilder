@@ -125,6 +125,15 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
+// Opt-in only (default off): the private-QA docker-compose stack sets
+// Database__ApplyMigrationsOnStartup=true so a fresh SQL Server container gets the schema.
+// Deployed environments keep applying migrations through their own release process.
+if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+{
+    using var scope = app.Services.CreateScope();
+    scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>().Database.Migrate();
+}
+
 // Configure the HTTP request pipeline
 app.UseExceptionHandler();
 

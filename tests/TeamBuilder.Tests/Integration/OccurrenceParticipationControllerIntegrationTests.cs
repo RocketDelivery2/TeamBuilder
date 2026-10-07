@@ -290,12 +290,13 @@ public sealed class OccurrenceParticipationControllerIntegrationTests : IClassFi
     public async Task Transfer_ToYourself_IsANoOp()
     {
         var (hostToken, occurrenceId, _) = await SeedPickupAsync();
-        var hostId = (await EventAsync(occurrenceId)).HostId!.Value;
+        var before = await EventAsync(occurrenceId);
+        var hostId = before.HostId!.Value;
 
         var response = await SendAsync(HttpMethod.Post, TransferUrl(occurrenceId), hostToken, new { newHostPlayerId = hostId });
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        (await EventAsync(occurrenceId)).UpdatedAtUtc.Should().BeNull();
+        (await EventAsync(occurrenceId)).UpdatedAtUtc.Should().Be(before.UpdatedAtUtc, "a transfer to yourself writes nothing");
     }
 
     [Fact]

@@ -5,8 +5,9 @@ using TeamBuilder.Domain.Enums;
 namespace TeamBuilder.Application.Interfaces;
 
 /// <summary>
-/// Roster requirements and live assignments of event occurrences. Authorization (host-only
-/// mutation, orphan handling) is the caller's responsibility; the service enforces data rules.
+/// Roster requirements and live assignments of event occurrences. Host-only writes take the
+/// caller's player id and enforce host authority themselves, re-validated at commit time
+/// against the occurrence RowVersion; the service also enforces every data rule.
 /// </summary>
 public interface IEventRosterService
 {
@@ -19,26 +20,42 @@ public interface IEventRosterService
     /// <summary>Requirements of the occurrence with derived supply; null when the occurrence does not exist.</summary>
     Task<IReadOnlyList<RosterRequirementDto>?> GetRequirementsAsync(Guid occurrenceId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Host-only: adds a roster requirement. Order: missing occurrence, no host (409
+    /// OccurrenceHasNoHost), non-host (403), closed occurrence (409 OccurrenceClosed), duplicate
+    /// role (409 DuplicateRequirementRole). Host authority and status are re-validated at commit
+    /// time; a stale former host gets 403 even when the transfer lands mid-request.
+    /// </summary>
     /// <exception cref="Exceptions.EventOccurrenceNotFoundException">The occurrence does not exist.</exception>
-    /// <exception cref="ArgumentException">The role code is invalid.</exception>
-    /// <exception cref="InvalidOperationException">
-    /// The occurrence is closed (Completed/Cancelled/Archived) or already has a requirement for the role.
+    /// <exception cref="Exceptions.OccurrenceHostForbiddenException">The caller is not the occurrence's host.</exception>
+    /// <exception cref="ArgumentException">The role code or count is invalid.</exception>
+    /// <exception cref="Exceptions.RosterConflictException">
+    /// No host, closed occurrence, duplicate role, or repeated concurrent change (RosterChanged).
     /// </exception>
-    Task<RosterRequirementDto> CreateRequirementAsync(Guid occurrenceId, CreateRosterRequirementDto createDto, CancellationToken cancellationToken = default);
+    Task<RosterRequirementDto> CreateRequirementAsync(Guid occurrenceId, CreateRosterRequirementDto createDto, Guid hostPlayerId, CancellationToken cancellationToken = default);
 
     /// <summary>Assignments (all statuses) ordered by creation; null when the occurrence does not exist.</summary>
     Task<PaginatedResult<RosterAssignmentDto>?> GetAssignmentsAsync(Guid occurrenceId, int page, int pageSize, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Host-only: assigns any existing player (source Host) to a requirement of this occurrence,
+    /// through the same allocation (duplicate check, capacity guard) as player self-claim.
+    /// RequirementId is mandatory (400 RequirementIdRequired); a requirement of another
+    /// occurrence is 400 RequirementNotOnOccurrence. Host authority and status are re-validated
+    /// at commit time as for <see cref="CreateRequirementAsync"/>.
+    /// </summary>
     /// <exception cref="Exceptions.EventOccurrenceNotFoundException">The occurrence does not exist.</exception>
+    /// <exception cref="Exceptions.OccurrenceHostForbiddenException">The caller is not the occurrence's host.</exception>
     /// <exception cref="ArgumentException">
-    /// Unknown player, requirement or replaced assignment of this occurrence, or a role code that conflicts with the requirement.
+    /// Missing or foreign requirement (<see cref="Exceptions.RosterValidationException"/>), unknown
+    /// player or replaced assignment, or a role code that conflicts with the requirement.
     /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// The occurrence is closed, the player already holds a supply assignment for it, the
-    /// requirement is already filled (no overbooking), the requirement changed concurrently, or
-    /// the replaced assignment still holds supply.
+    /// <exception cref="Exceptions.RosterConflictException">
+    /// No host, closed occurrence, the player already holds a supply assignment for it, the
+    /// requirement is already filled (no overbooking), repeated concurrent change, or the
+    /// replaced assignment still holds supply.
     /// </exception>
-    Task<RosterAssignmentDto> CreateAssignmentAsync(Guid occurrenceId, CreateRosterAssignmentDto createDto, RosterAssignmentSource source, CancellationToken cancellationToken = default);
+    Task<RosterAssignmentDto> CreateAssignmentAsync(Guid occurrenceId, CreateRosterAssignmentDto createDto, Guid hostPlayerId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Player self-claim: <paramref name="playerId"/> takes one unit of open quantity on a
@@ -106,4 +123,12 @@ public interface IEventRosterService
     /// </summary>
     /// <exception cref="ArgumentException">Invalid window or cursor.</exception>
     Task<PlayerOccurrencePageDto> GetPlayerOccurrencesAsync(Guid playerId, PlayerOccurrenceQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The game-page projection of one occurrence (see <see cref="OccurrenceDetailDto"/>) in a
+    /// fixed number of queries: occurrence with host and venue, requirements, live participants.
+    /// <paramref name="callerPlayerId"/> (null when anonymous or unlinked) fills the caller's
+    /// relationship. Null when the occurrence does not exist.
+    /// </summary>
+    Task<OccurrenceDetailDto?> GetOccurrenceDetailAsync(Guid occurrenceId, Guid? callerPlayerId, CancellationToken cancellationToken = default);
 }

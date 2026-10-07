@@ -7,7 +7,8 @@ namespace TeamBuilder.Api.Errors;
 /// <summary>
 /// Maps unhandled application exceptions to consistent ProblemDetails responses.
 /// ArgumentException => 400, InvalidOperationException => 409, everything else => 500.
-/// A <see cref="RosterConflictException"/> also carries its stable <c>code</c>.
+/// A <see cref="RosterConflictException"/> or <see cref="RosterValidationException"/> also
+/// carries its stable <c>code</c>.
 /// </summary>
 internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IExceptionHandler
 {
@@ -39,6 +40,8 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
 
         if (exception is RosterConflictException rosterConflict)
             problemDetails.Extensions["code"] = rosterConflict.Code;
+        else if (exception is RosterValidationException rosterValidation)
+            problemDetails.Extensions["code"] = rosterValidation.Code;
 
         httpContext.Response.StatusCode = statusCode;
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);

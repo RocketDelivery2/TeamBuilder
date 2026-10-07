@@ -213,7 +213,8 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         var (hostId, occurrence) = await SeedHostedEventAsync(status);
 
         (await PostRequirementAsync(hostId, occurrence.Id, new { requiredCount = 1 })).StatusCode.Should().Be(HttpStatusCode.Conflict);
-        (await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync() })).StatusCode.Should().Be(HttpStatusCode.Conflict);
+        // The closed check precedes the requirement lookup, so any requirement id shows it.
+        (await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = Guid.NewGuid() })).StatusCode.Should().Be(HttpStatusCode.Conflict);
         (await GetRequirementsAsync(occurrence.Id)).Should().BeEmpty();
         (await GetAssignmentsAsync(occurrence.Id)).Should().BeEmpty();
     }
@@ -226,8 +227,8 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     {
         var (hostId, occurrence) = await SeedHostedEventAsync(status);
 
-        (await PostRequirementAsync(hostId, occurrence.Id, new { requiredCount = 1 })).StatusCode.Should().Be(HttpStatusCode.Created);
-        (await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync() })).StatusCode.Should().Be(HttpStatusCode.Created);
+        var requirement = await CreateRequirementAsync(hostId, occurrence.Id, new { requiredCount = 1 });
+        (await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = requirement.Id })).StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
@@ -242,9 +243,10 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     public async Task Host_AssignsNonTeamMember_Returns201()
     {
         var (hostId, occurrence) = await SeedHostedEventAsync();
+        var requirementId = await SeedRequirementAsync(occurrence.Id);
         var playerId = await SeedPlayerAsync();
 
-        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId });
+        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId, requirementId });
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         response.Headers.Location!.AbsolutePath.Should().Be(AssignmentsUrl(occurrence.Id));
@@ -257,8 +259,8 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         assignment.ConfirmedAtUtc.Should().NotBeNull();
         assignment.ConfirmedAtUtc!.Value.Kind.Should().Be(DateTimeKind.Utc);
         assignment.ReservedAtUtc.Should().BeNull();
-        assignment.RequirementId.Should().BeNull();
-        assignment.RoleCode.Should().BeNull();
+        assignment.RequirementId.Should().Be(requirementId);
+        assignment.RoleCode.Should().Be("participant");
         assignment.ReplacedAssignmentId.Should().BeNull();
 
         await using var scope = _factory.Services.CreateAsyncScope();
@@ -274,7 +276,7 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         var teamId = await SeedTeamWithMemberAsync(hostId, memberId);
         var occurrence = await SeedEventAsync(hostId, teamId: teamId);
 
-        var assignment = await AssignAsync(hostId, occurrence.Id, new { playerId = memberId });
+        var assignment = await AssignAsync(hostId, occurrence.Id, new { playerId = memberId, requirementId = await SeedRequirementAsync(occurrence.Id) });
 
         assignment.PlayerId.Should().Be(memberId);
     }
@@ -453,8 +455,10 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     [Fact]
     public async Task Summary_WithoutRequirements_IsNotReady_AndIgnoresMaxParticipants()
     {
-        var (hostId, occurrence) = await SeedHostedEventAsync();
-        await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync() });
+        // The API never creates unlinked supply; an internal/historical row without a
+        // requirement still counts toward total supply but never makes the roster ready.
+        var (_, occurrence) = await SeedHostedEventAsync();
+        await SeedAssignmentAsync(occurrence.Id, await SeedPlayerAsync(), RosterAssignmentStatus.Confirmed);
 
         var summary = await AssertSummaryAsync(occurrence.Id, supply: 1, open: 0, ready: false, required: 0);
         summary.Requirements.Should().BeEmpty();
@@ -541,15 +545,16 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     }
 
     [Fact]
-    public async Task CreateAssignment_NullRequirement_IsAllowed_AndCountsOnlyTowardTheOccurrence()
+    public async Task CreateAssignment_WithoutRequirement_Returns400RequirementIdRequired_AndWritesNothing()
     {
         var (hostId, occurrence) = await SeedHostedEventAsync();
         await CreateRequirementAsync(hostId, occurrence.Id, new { requiredCount = 5 });
 
-        var assignment = await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), roleCode = "participant" });
+        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), roleCode = "participant" });
 
-        assignment.RequirementId.Should().BeNull();
-        assignment.RoleCode.Should().Be("participant");
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ProblemCodeAsync(response)).Should().Be("RequirementIdRequired");
+        (await GetAssignmentsAsync(occurrence.Id)).Should().BeEmpty();
         (await GetRequirementsAsync(occurrence.Id)).Single().SupplyCount.Should().Be(0);
     }
 
@@ -558,7 +563,7 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     {
         var (hostId, occurrence) = await SeedHostedEventAsync();
 
-        (await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = Guid.NewGuid() })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = Guid.NewGuid(), requirementId = await SeedRequirementAsync(occurrence.Id) })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -575,9 +580,10 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     {
         var (hostId, occurrence) = await SeedHostedEventAsync();
         var playerId = await SeedPlayerAsync();
-        await AssignAsync(hostId, occurrence.Id, new { playerId, status = RosterAssignmentStatus.Reserved });
+        var requirementId = await SeedRequirementAsync(occurrence.Id);
+        await AssignAsync(hostId, occurrence.Id, new { playerId, requirementId, status = RosterAssignmentStatus.Reserved });
 
-        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId, status = RosterAssignmentStatus.Active });
+        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId, requirementId, status = RosterAssignmentStatus.Active });
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
         (await GetAssignmentsAsync(occurrence.Id)).Should().ContainSingle();
@@ -590,8 +596,8 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         var other = await SeedEventAsync(hostId);
         var playerId = await SeedPlayerAsync();
 
-        await AssignAsync(hostId, occurrence.Id, new { playerId });
-        await AssignAsync(hostId, other.Id, new { playerId });
+        await AssignAsync(hostId, occurrence.Id, new { playerId, requirementId = await SeedRequirementAsync(occurrence.Id) });
+        await AssignAsync(hostId, other.Id, new { playerId, requirementId = await SeedRequirementAsync(other.Id) });
     }
 
     [Fact]
@@ -624,7 +630,7 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         var playerId = await SeedPlayerAsync();
         var departed = await SeedAssignmentAsync(occurrence.Id, playerId, RosterAssignmentStatus.Departed);
 
-        var rejoined = await AssignAsync(hostId, occurrence.Id, new { playerId, replacedAssignmentId = departed.Id });
+        var rejoined = await AssignAsync(hostId, occurrence.Id, new { playerId, requirementId = await SeedRequirementAsync(occurrence.Id), replacedAssignmentId = departed.Id });
 
         rejoined.Id.Should().NotBe(departed.Id);
         (await GetAssignmentsAsync(occurrence.Id)).Should().HaveCount(2);
@@ -634,9 +640,10 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     public async Task Replacement_OfAssignmentStillHoldingSupply_Returns409()
     {
         var (hostId, occurrence) = await SeedHostedEventAsync();
-        var current = await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync() });
+        var requirementId = await SeedRequirementAsync(occurrence.Id);
+        var current = await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId });
 
-        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), replacedAssignmentId = current.Id });
+        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId, replacedAssignmentId = current.Id });
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
@@ -648,7 +655,7 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         var other = await SeedEventAsync(hostId);
         var foreign = await SeedAssignmentAsync(other.Id, await SeedPlayerAsync(), RosterAssignmentStatus.NoShow);
 
-        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), replacedAssignmentId = foreign.Id });
+        var response = await PostAssignmentAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = await SeedRequirementAsync(occurrence.Id), replacedAssignmentId = foreign.Id });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
@@ -658,7 +665,7 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     {
         var (_, occurrence) = await SeedHostedEventAsync();
 
-        var response = await PostAssignmentAsync(Guid.NewGuid(), occurrence.Id, new { playerId = await SeedPlayerAsync() });
+        var response = await PostAssignmentAsync(Guid.NewGuid(), occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = await SeedRequirementAsync(occurrence.Id) });
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await GetAssignmentsAsync(occurrence.Id)).Should().BeEmpty();
@@ -670,7 +677,7 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         var (_, occurrence) = await SeedHostedEventAsync();
         var playerId = await SeedPlayerAsync();
 
-        (await PostAssignmentAsync(playerId, occurrence.Id, new { playerId })).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await PostAssignmentAsync(playerId, occurrence.Id, new { playerId, requirementId = await SeedRequirementAsync(occurrence.Id) })).StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
@@ -678,13 +685,16 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     {
         var occurrence = await SeedEventAsync(hostId: null);
 
-        (await PostAssignmentAsync(Guid.NewGuid(), occurrence.Id, new { playerId = await SeedPlayerAsync() })).StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var response = await PostAssignmentAsync(Guid.NewGuid(), occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId = Guid.NewGuid() });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await ProblemCodeAsync(response)).Should().Be("OccurrenceHasNoHost");
     }
 
     [Fact]
     public async Task CreateAssignment_MissingOccurrence_Returns404()
     {
-        (await PostAssignmentAsync(Guid.NewGuid(), Guid.NewGuid(), new { playerId = await SeedPlayerAsync() })).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await PostAssignmentAsync(Guid.NewGuid(), Guid.NewGuid(), new { playerId = await SeedPlayerAsync(), requirementId = Guid.NewGuid() })).StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]
@@ -732,8 +742,9 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
     {
         var (hostId, occurrence) = await SeedHostedEventAsync();
         await SeedAssignmentAsync(occurrence.Id, await SeedPlayerAsync(), RosterAssignmentStatus.Cancelled);
+        var requirementId = await SeedRequirementAsync(occurrence.Id);
         for (var i = 0; i < 3; i++)
-            await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync() });
+            await AssignAsync(hostId, occurrence.Id, new { playerId = await SeedPlayerAsync(), requirementId });
 
         var page = (await _client.GetFromJsonAsync<PaginatedResult<RosterAssignmentDto>>($"{AssignmentsUrl(occurrence.Id)}?page=2&pageSize=3"))!;
 
@@ -882,6 +893,29 @@ public sealed class EventRosterControllerIntegrationTests : IClassFixture<TeamBu
         db.RosterAssignments.Add(assignment);
         await db.SaveChangesAsync();
         return assignment;
+    }
+
+    private async Task<Guid> SeedRequirementAsync(Guid occurrenceId, int requiredCount = 10, string roleCode = "participant")
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>();
+        var requirement = new RosterRequirement
+        {
+            Id = Guid.NewGuid(),
+            OccurrenceId = occurrenceId,
+            RoleCode = roleCode,
+            RequiredCount = requiredCount,
+            RowVersion = []
+        };
+        db.RosterRequirements.Add(requirement);
+        await db.SaveChangesAsync();
+        return requirement.Id;
+    }
+
+    private static async Task<string?> ProblemCodeAsync(HttpResponseMessage response)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.TryGetProperty("code", out var code) ? code.GetString() : null;
     }
 
     private async Task<HttpResponseMessage> PostRequirementAsync(Guid playerId, Guid occurrenceId, object body) =>

@@ -3,6 +3,7 @@ using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
+using TeamBuilder.Domain;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
@@ -16,14 +17,18 @@ public class EventService : IEventService
         "The event changed while it was being saved. Reload it and try again.";
     public const string ParticipationHistoryMessage =
         "This event has roster participation history and cannot be deleted. Cancel it instead.";
+    public const string ClosedOccurrenceTransferMessage =
+        "Hosting cannot be transferred for a completed, cancelled or archived event.";
     public const string HostTransferTargetNotLinkedMessage =
         "The new host has no linked sign-in identity, so they could not manage this event.";
 
     private readonly TeamBuilderDbContext _context;
+    private readonly TimeProvider _timeProvider;
 
-    public EventService(TeamBuilderDbContext context)
+    public EventService(TeamBuilderDbContext context, TimeProvider? timeProvider = null)
     {
         _context = context;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<EventDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
@@ -77,10 +82,20 @@ public class EventService : IEventService
         };
     }
 
+    /// <summary>
+    /// Creates a standalone or team occurrence hosted by <paramref name="hostId"/>, optionally
+    /// with its initial roster requirements and the host's own participation, in one atomic
+    /// commit: the occurrence, every requirement and the host's assignment are saved by a single
+    /// SaveChanges (one database transaction), so any failure leaves nothing behind. Hosting is
+    /// administrative only; the host consumes capacity only when <c>HostParticipates</c> is true,
+    /// through the same allocation invariant as every other assignment.
+    /// </summary>
     public async Task<EventDto> CreateAsync(CreateEventDto createEventDto, Guid hostId, CancellationToken cancellationToken = default)
     {
         if (createEventDto.EventDateUtc is not { } eventDate)
             throw new ArgumentException("EventDateUtc is required.", nameof(createEventDto));
+
+        var plannedRequirements = PlanRequirements(createEventDto);
 
         var teamEvent = new EventOccurrence
         {
@@ -88,6 +103,7 @@ public class EventService : IEventService
             Name = createEventDto.Name,
             Description = createEventDto.Description,
             ScheduledStartUtc = eventDate,
+            ScheduledEndUtc = createEventDto.ScheduledEndUtc,
             Category = createEventDto.Category,
             Tags = createEventDto.Tags,
             LegacyLocation = createEventDto.Location,
@@ -100,9 +116,96 @@ public class EventService : IEventService
         };
 
         _context.Events.Add(teamEvent);
+
+        var requirements = plannedRequirements
+            .Select(r => EventRosterService.NewRequirement(teamEvent.Id, r.RoleCode, r.RequiredCount, r.DisplayPosition, r.SourceRoleLabel))
+            .ToList();
+        _context.RosterRequirements.AddRange(requirements);
+
+        if (createEventDto.HostParticipates == true)
+        {
+            var hostRequirement = requirements[HostRequirementIndex(createEventDto, plannedRequirements)];
+            await new EventRosterService(_context, _timeProvider).StageAllocationAsync(
+                teamEvent.Id,
+                hostId,
+                hostRequirement,
+                hostRequirement.RoleCode,
+                sourceRoleLabel: null,
+                RosterAssignmentStatus.Confirmed,
+                RosterAssignmentSource.Player,
+                replacedAssignmentId: null,
+                cancellationToken);
+        }
+
         await _context.SaveChangesAsync(cancellationToken);
 
         return MapToDto(teamEvent);
+    }
+
+    private sealed record PlannedRequirement(string RoleCode, int RequiredCount, string? DisplayPosition, string? SourceRoleLabel);
+
+    /// <summary>
+    /// Validates the optional initial roster with the same role-code normalization and count
+    /// rules as <c>POST …/roster/requirements</c>. Role codes must be distinct after
+    /// normalization; nothing is written before the whole request is valid.
+    /// </summary>
+    private static List<PlannedRequirement> PlanRequirements(CreateEventDto createEventDto)
+    {
+        var planned = new List<PlannedRequirement>();
+        foreach (var requirement in createEventDto.RosterRequirements ?? [])
+        {
+            if (requirement is null)
+                throw new ArgumentException("RosterRequirements must not contain null entries.");
+            if (requirement.RequiredCount is not { } requiredCount)
+                throw new ArgumentException("RequiredCount is required for every roster requirement.");
+
+            var roleCode = EventRosterService.NormalizeRoleCode(requirement.RoleCode) ?? RosterRoleCodes.Participant;
+            if (planned.Any(p => p.RoleCode == roleCode))
+            {
+                throw new RosterValidationException(
+                    RosterValidationCodes.DuplicateRequirementRoleInRequest,
+                    $"Role code '{roleCode}' appears more than once in rosterRequirements.");
+            }
+
+            planned.Add(new PlannedRequirement(roleCode, requiredCount, requirement.DisplayPosition, requirement.SourceRoleLabel));
+        }
+
+        return planned;
+    }
+
+    /// <summary>
+    /// The requirement the host fills when <c>HostParticipates</c> is true: the only one, or
+    /// the one named by <c>HostRoleCode</c> (required when there are several).
+    /// </summary>
+    private static int HostRequirementIndex(CreateEventDto createEventDto, List<PlannedRequirement> planned)
+    {
+        if (planned.Count == 0)
+        {
+            throw new RosterValidationException(
+                RosterValidationCodes.HostParticipationRequiresRequirement,
+                "hostParticipates requires at least one roster requirement for the host to fill.");
+        }
+
+        if (createEventDto.HostRoleCode is null)
+        {
+            if (planned.Count == 1)
+                return 0;
+
+            throw new RosterValidationException(
+                RosterValidationCodes.HostRoleCodeInvalid,
+                "hostRoleCode is required when hostParticipates is true and there are several roster requirements.");
+        }
+
+        var hostRoleCode = EventRosterService.NormalizeRoleCode(createEventDto.HostRoleCode);
+        var index = planned.FindIndex(p => p.RoleCode == hostRoleCode);
+        if (index < 0)
+        {
+            throw new RosterValidationException(
+                RosterValidationCodes.HostRoleCodeInvalid,
+                "hostRoleCode must name one of the roster requirements in this request.");
+        }
+
+        return index;
     }
 
     public async Task<EventDto?> UpdateAsync(Guid id, UpdateEventDto updateEventDto, CancellationToken cancellationToken = default)
@@ -196,6 +299,11 @@ public class EventService : IEventService
 
         if (occurrence.HostId != callerPlayerId)
             throw new OccurrenceHostForbiddenException(occurrenceId, callerPlayerId);
+
+        // Stewardship of a finished occurrence is history: it is never rewritten. A status change
+        // racing this transfer is caught by the RowVersion check below (OccurrenceChanged).
+        if (!RosterState.AcceptsNewRosterMutations(occurrence.Status))
+            throw new RosterConflictException(RosterConflictCodes.OccurrenceClosed, ClosedOccurrenceTransferMessage);
 
         if (!await _context.Players.AnyAsync(p => p.Id == newHostPlayerId, cancellationToken))
             throw new ArgumentException("NewHostPlayerId does not reference an existing player.");

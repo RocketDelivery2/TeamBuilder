@@ -1,0 +1,96 @@
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #16181d;
+  --muted: #5f6672;
+  --border: #dde1e7;
+  --accent: #0f766e;
+  --accent-text: #ffffff;
+  --ready: #15803d;
+  --open: #b45309;
+  --danger: #b91c1c;
+  --radius: 12px;
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.45;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --surface: #181b21;
+    --text: #e8eaee;
+    --muted: #9aa2ae;
+    --border: #2a2f38;
+    --accent: #2dd4bf;
+    --accent-text: #062a26;
+    --ready: #4ade80;
+    --open: #fbbf24;
+    --danger: #f87171;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+h1 { font-size: 1.35rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0; }
+
+.app-header {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top));
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; color: var(--accent); text-decoration: none; }
+.header-actions { display: flex; gap: 12px; align-items: center; }
+.app-main { max-width: 640px; margin: 0 auto; padding: 16px; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.dev-banner { background: var(--open); color: #111; text-align: center; font-size: 0.85rem; padding: 6px 16px; }
+
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.row { display: flex; align-items: center; }
+.row.spread { justify-content: space-between; gap: 12px; }
+.row.gap { gap: 8px; }
+.row.wrap { flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 380px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.game-card { display: flex; flex-direction: column; gap: 6px; color: inherit; text-decoration: none; }
+.game-card:hover { border-color: var(--accent); }
+.participant { display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.participant:last-child { border-bottom: none; padding-bottom: 0; }
+
+.muted { color: var(--muted); }
+.small { font-size: 0.875rem; }
+.center { text-align: center; }
+
+.badge {
+  display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; margin-left: 6px;
+  border-radius: 999px; border: 1px solid var(--border); white-space: nowrap;
+}
+.row .badge:first-child { margin-left: 0; }
+.badge.ready { color: var(--ready); border-color: var(--ready); }
+.badge.open { color: var(--open); border-color: var(--open); }
+.badge.host { color: var(--accent); border-color: var(--accent); }
+
+.notice { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }
+.notice.error { border-color: var(--danger); color: var(--danger); }
+
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; }
+.field > span { color: var(--muted); }
+.check { display: flex; gap: 10px; align-items: center; font-size: 1rem; }
+.check input { width: 22px; height: 22px; }
+input, select, textarea {
+  font: inherit; font-size: 16px; /* 16px keeps iOS Safari from zooming on focus */
+  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); width: 100%;
+}
+button {
+  font: inherit; min-height: 44px; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.link { border: none; background: none; color: var(--accent); min-height: auto; padding: 0; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.share { display: flex; flex-direction: column; gap: 8px; }
