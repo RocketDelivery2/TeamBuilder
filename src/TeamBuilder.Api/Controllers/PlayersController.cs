@@ -69,8 +69,11 @@ public class PlayersController : ControllerBase
     /// from or no-showed), not over yet relative to <paramref name="fromUtc"/> (default now; an
     /// in-progress occurrence always counts), starting before <paramref name="toUtc"/> when
     /// given, nearest first. Keyset-paged: pass the returned <c>nextCursor</c> as
-    /// <paramref name="cursor"/>. Occurrence participation, not team membership; the caller
-    /// being host alone does not list an occurrence. Unlinked caller 403.
+    /// <paramref name="cursor"/>. Occurrence participation, not team membership; by default the
+    /// caller being host alone does not list an occurrence. With <paramref name="includeHosted"/>
+    /// occurrences the caller hosts are listed too (once, even when also playing), with
+    /// <c>isHost=true</c> and a null <c>myAssignmentId</c>/<c>myAssignmentStatus</c> when
+    /// organizer-only. Unlinked caller 403.
     /// </summary>
     [HttpGet("me/occurrences")]
     [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
@@ -85,6 +88,7 @@ public class PlayersController : ControllerBase
         [FromQuery] bool includeTerminal = false,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? cursor = null,
+        [FromQuery] bool includeHosted = false,
         CancellationToken cancellationToken = default)
     {
         var playerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
@@ -95,7 +99,7 @@ public class PlayersController : ControllerBase
 
         var page = await rosterService.GetPlayerOccurrencesAsync(
             playerId.Value,
-            new PlayerOccurrenceQuery(fromUtc, toUtc, includeTerminal, pageSize, cursor),
+            new PlayerOccurrenceQuery(fromUtc, toUtc, includeTerminal, pageSize, cursor, includeHosted),
             cancellationToken);
         return Ok(page);
     }

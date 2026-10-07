@@ -23,18 +23,15 @@ namespace TeamBuilder.Api.Controllers;
 public class EventRosterController : ControllerBase
 {
     private readonly IEventRosterService _rosterService;
-    private readonly IEventService _eventService;
     private readonly ICurrentPlayerResolver _currentPlayerResolver;
     private readonly ILogger<EventRosterController> _logger;
 
     public EventRosterController(
         IEventRosterService rosterService,
-        IEventService eventService,
         ICurrentPlayerResolver currentPlayerResolver,
         ILogger<EventRosterController> logger)
     {
         _rosterService = rosterService;
-        _eventService = eventService;
         _currentPlayerResolver = currentPlayerResolver;
         _logger = logger;
     }
@@ -73,6 +70,11 @@ public class EventRosterController : ControllerBase
         return Ok(requirements);
     }
 
+    /// <summary>
+    /// Host-only. Order: invalid body 400, unlinked 403, missing occurrence 404, no host 409
+    /// OccurrenceHasNoHost, non-host 403, closed occurrence 409 OccurrenceClosed, duplicate role
+    /// 409 DuplicateRequirementRole. Host authority is re-validated at commit time.
+    /// </summary>
     [HttpPost("requirements")]
     [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
     [ProducesResponseType(typeof(RosterRequirementDto), StatusCodes.Status201Created)]
@@ -89,19 +91,24 @@ public class EventRosterController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var denied = await AuthorizeHostMutationAsync(occurrenceId, cancellationToken);
-        if (denied != null)
-            return denied;
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
 
         try
         {
-            var requirement = await _rosterService.CreateRequirementAsync(occurrenceId, createDto, cancellationToken);
+            var requirement = await _rosterService.CreateRequirementAsync(occurrenceId, createDto, playerId.Value, cancellationToken);
             _logger.LogInformation("Created roster requirement {RequirementId} for event {EventId}", requirement.Id, occurrenceId);
             return CreatedAtAction(nameof(GetRequirements), new { occurrenceId }, requirement);
         }
         catch (EventOccurrenceNotFoundException)
         {
             return NotFound();
+        }
+        catch (OccurrenceHostForbiddenException)
+        {
+            _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, occurrenceId);
+            return Forbid();
         }
     }
 
@@ -128,8 +135,13 @@ public class EventRosterController : ControllerBase
     }
 
     /// <summary>
-    /// Host assigns any existing player (team membership not required). Shares the allocation
-    /// path, and therefore the capacity guard, with player self-claim.
+    /// Host assigns any existing player (team membership not required) to a requirement of this
+    /// occurrence. Shares the allocation path, and therefore the capacity guard, with player
+    /// self-claim. Order: invalid body 400 (missing requirementId: 400 RequirementIdRequired),
+    /// unlinked 403, missing occurrence 404, no host 409 OccurrenceHasNoHost, non-host 403,
+    /// closed occurrence 409 OccurrenceClosed, unknown player 400, requirement of another
+    /// occurrence 400 RequirementNotOnOccurrence, then the capacity 409s. Host authority is
+    /// re-validated at commit time.
     /// </summary>
     [HttpPost("assignments")]
     [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
@@ -147,19 +159,24 @@ public class EventRosterController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var denied = await AuthorizeHostMutationAsync(occurrenceId, cancellationToken);
-        if (denied != null)
-            return denied;
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
 
         try
         {
-            var assignment = await _rosterService.CreateAssignmentAsync(occurrenceId, createDto, RosterAssignmentSource.Host, cancellationToken);
+            var assignment = await _rosterService.CreateAssignmentAsync(occurrenceId, createDto, playerId.Value, cancellationToken);
             _logger.LogInformation("Created roster assignment {AssignmentId} for event {EventId}", assignment.Id, occurrenceId);
             return CreatedAtAction(nameof(GetAssignments), new { occurrenceId }, assignment);
         }
         catch (EventOccurrenceNotFoundException)
         {
             return NotFound();
+        }
+        catch (OccurrenceHostForbiddenException)
+        {
+            _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, occurrenceId);
+            return Forbid();
         }
     }
 
@@ -357,40 +374,5 @@ public class EventRosterController : ControllerBase
             _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, occurrenceId);
             return Forbid();
         }
-    }
-
-    /// <summary>Returns the denial result, or null when the caller is the occurrence's host and it accepts roster changes.</summary>
-    private async Task<ActionResult?> AuthorizeHostMutationAsync(Guid occurrenceId, CancellationToken cancellationToken)
-    {
-        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
-        if (playerId == null)
-            return Forbid();
-
-        var occurrence = await _eventService.GetByIdAsync(occurrenceId, cancellationToken);
-        if (occurrence == null)
-        {
-            _logger.LogInformation("Event with ID {EventId} not found for roster change", occurrenceId);
-            return NotFound();
-        }
-
-        if (occurrence.HostId == null)
-        {
-            _logger.LogInformation("Event {EventId} has no host; cannot change roster of orphaned event", occurrenceId);
-            return Conflict(new { message = "This event has no host and its roster cannot be changed. Contact an administrator." });
-        }
-
-        if (occurrence.HostId != playerId.Value)
-        {
-            _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, occurrenceId);
-            return Forbid();
-        }
-
-        if (!RosterState.AcceptsNewRosterMutations(occurrence.Status))
-        {
-            _logger.LogInformation("Event {EventId} has status {Status}; roster is closed", occurrenceId, occurrence.Status);
-            return Conflict(new { message = "Roster changes are not allowed for a completed, cancelled or archived event." });
-        }
-
-        return null;
     }
 }

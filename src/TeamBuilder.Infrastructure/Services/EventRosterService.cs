@@ -35,12 +35,16 @@ public class EventRosterService : IEventRosterService
         "The roster assignment changed while it was being updated. Please try again.";
     public const string NoHostMessage =
         "This event has no host, so host-only actions are not possible. Contact an administrator.";
+    public const string RequirementIdRequiredMessage =
+        "RequirementId is required: every roster assignment fills a roster requirement of this event.";
+    public const string RequirementNotOnOccurrenceMessage =
+        "RequirementId does not reference a roster requirement of this event.";
 
     /// <summary>
     /// Attempts of one host-only assignment write. Each concurrency loss re-runs every check on
     /// fresh state; only repeated losses to sibling changes surface as retryable RosterChanged.
     /// </summary>
-    internal const int MaxHostUpdateAttempts = 5;
+    public const int MaxHostUpdateAttempts = 5;
 
     private readonly TeamBuilderDbContext _context;
     private readonly TimeProvider _timeProvider;
@@ -89,40 +93,37 @@ public class EventRosterService : IEventRosterService
         return requirements.Select(r => MapToDto(r, snapshot)).ToList();
     }
 
-    public async Task<RosterRequirementDto> CreateRequirementAsync(Guid occurrenceId, CreateRosterRequirementDto createDto, CancellationToken cancellationToken = default)
+    public async Task<RosterRequirementDto> CreateRequirementAsync(
+        Guid occurrenceId,
+        CreateRosterRequirementDto createDto,
+        Guid hostPlayerId,
+        CancellationToken cancellationToken = default)
     {
         if (createDto.RequiredCount is not { } requiredCount)
             throw new ArgumentException("RequiredCount is required.");
 
         var roleCode = NormalizeRoleCode(createDto.RoleCode) ?? RosterRoleCodes.Participant;
 
-        await EnsureOpenOccurrenceAsync(occurrenceId, cancellationToken);
-
-        if (await _context.RosterRequirements.AnyAsync(r => r.OccurrenceId == occurrenceId && r.RoleCode == roleCode, cancellationToken))
-            throw new RosterConflictException(RosterConflictCodes.DuplicateRequirementRole, DuplicateRequirementMessage);
-
-        var requirement = new RosterRequirement
+        return await WithCommitTimeHostAuthorityAsync(occurrenceId, hostPlayerId, async occurrence =>
         {
-            Id = Guid.NewGuid(),
-            OccurrenceId = occurrenceId,
-            RoleCode = roleCode,
-            DisplayPosition = createDto.DisplayPosition,
-            SourceRoleLabel = createDto.SourceRoleLabel,
-            RequiredCount = requiredCount
-        };
+            if (await _context.RosterRequirements.AnyAsync(r => r.OccurrenceId == occurrenceId && r.RoleCode == roleCode, cancellationToken))
+                throw new RosterConflictException(RosterConflictCodes.DuplicateRequirementRole, DuplicateRequirementMessage);
 
-        _context.RosterRequirements.Add(requirement);
-        try
-        {
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException ex) when (RosterConflictClassifier.IsDuplicateRequirementRole(ex))
-        {
-            throw new RosterConflictException(RosterConflictCodes.DuplicateRequirementRole, DuplicateRequirementMessage, ex);
-        }
+            var requirement = NewRequirement(occurrenceId, roleCode, requiredCount, createDto.DisplayPosition, createDto.SourceRoleLabel);
+            _context.RosterRequirements.Add(requirement);
+            TouchForCommitTimeAuthority(occurrence);
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex) when (ex is not DbUpdateConcurrencyException && RosterConflictClassifier.IsDuplicateRequirementRole(ex))
+            {
+                throw new RosterConflictException(RosterConflictCodes.DuplicateRequirementRole, DuplicateRequirementMessage, ex);
+            }
 
-        // A new requirement has no linked assignments yet.
-        return MapToDto(requirement, RosterState.Compute(occurrenceId, [(requirement.Id, requirement.RequiredCount)], []));
+            // A new requirement has no linked assignments yet.
+            return MapToDto(requirement, RosterState.Compute(occurrenceId, [(requirement.Id, requirement.RequiredCount)], []));
+        }, cancellationToken);
     }
 
     public async Task<PaginatedResult<RosterAssignmentDto>?> GetAssignmentsAsync(Guid occurrenceId, int page, int pageSize, CancellationToken cancellationToken = default)
@@ -149,11 +150,16 @@ public class EventRosterService : IEventRosterService
     public async Task<RosterAssignmentDto> CreateAssignmentAsync(
         Guid occurrenceId,
         CreateRosterAssignmentDto createDto,
-        RosterAssignmentSource source,
+        Guid hostPlayerId,
         CancellationToken cancellationToken = default)
     {
         if (createDto.PlayerId is not { } playerId || playerId == Guid.Empty)
             throw new ArgumentException("PlayerId is required.");
+
+        // Every public assignment fills a requirement of this occurrence, so it always counts
+        // toward capacity and readiness. Unlinked supply is never created through the API.
+        if (createDto.RequirementId is not { } requirementId || requirementId == Guid.Empty)
+            throw new RosterValidationException(RosterValidationCodes.RequirementIdRequired, RequirementIdRequiredMessage);
 
         var status = createDto.Status ?? RosterAssignmentStatus.Confirmed;
         if (!RosterState.IsSupply(status))
@@ -161,37 +167,47 @@ public class EventRosterService : IEventRosterService
 
         var roleCode = NormalizeRoleCode(createDto.RoleCode);
 
-        await EnsureOpenOccurrenceAsync(occurrenceId, cancellationToken);
-
-        // Membership is deliberately not consulted: any existing player may participate.
-        var player = await LoadPublicPlayerAsync(playerId, cancellationToken)
-            ?? throw new ArgumentException("PlayerId does not reference an existing player.");
-
-        RosterRequirement? requirement = null;
-        if (createDto.RequirementId is { } requirementId)
+        return await WithCommitTimeHostAuthorityAsync(occurrenceId, hostPlayerId, async occurrence =>
         {
-            requirement = await LoadTrackedRequirementAsync(occurrenceId, requirementId, cancellationToken)
-                ?? throw new ArgumentException("RequirementId does not reference a roster requirement of this event.");
+            // Membership is deliberately not consulted: any existing player may participate.
+            var player = await LoadPublicPlayerAsync(playerId, cancellationToken)
+                ?? throw new ArgumentException("PlayerId does not reference an existing player.");
+
+            var requirement = await LoadTrackedRequirementAsync(occurrenceId, requirementId, cancellationToken)
+                ?? throw new RosterValidationException(RosterValidationCodes.RequirementNotOnOccurrence, RequirementNotOnOccurrenceMessage);
 
             if (roleCode is not null && !string.Equals(roleCode, requirement.RoleCode, StringComparison.Ordinal))
                 throw new ArgumentException($"RoleCode must match the requirement's role code '{requirement.RoleCode}' or be omitted.");
-        }
 
-        if (createDto.ReplacedAssignmentId is { } replacedId)
-            await EnsureReplaceableAsync(occurrenceId, replacedId, requiredRequirementId: null, cancellationToken);
+            if (createDto.ReplacedAssignmentId is { } replacedId)
+                await EnsureReplaceableAsync(occurrenceId, replacedId, requiredRequirementId: null, cancellationToken);
 
-        var assignment = await AllocateAsync(
-            occurrenceId,
-            playerId,
-            requirement,
-            requirement?.RoleCode ?? roleCode,
-            createDto.SourceRoleLabel,
-            status,
-            source,
-            createDto.ReplacedAssignmentId,
-            cancellationToken);
+            var assignment = await StageAllocationAsync(
+                occurrenceId,
+                playerId,
+                requirement,
+                requirement.RoleCode,
+                createDto.SourceRoleLabel,
+                status,
+                RosterAssignmentSource.Host,
+                createDto.ReplacedAssignmentId,
+                cancellationToken);
+            TouchForCommitTimeAuthority(occurrence);
 
-        return MapToDto(assignment, player.Username, player.DisplayName);
+            // A concurrency loss (host transfer, status change, a competing fill of the same
+            // requirement) propagates to the bounded re-validation, which re-reads everything
+            // and turns it into the real outcome: 403, OccurrenceClosed, RequirementFull or success.
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex) when (ex is not DbUpdateConcurrencyException && RosterConflictClassifier.IsDuplicateSupplyAssignment(ex))
+            {
+                throw AlreadyParticipating(ex);
+            }
+
+            return MapToDto(assignment, player.Username, player.DisplayName);
+        }, cancellationToken);
     }
 
     public async Task<RosterClaimResult> ClaimAsync(
@@ -294,9 +310,13 @@ public class EventRosterService : IEventRosterService
 
         // Upcoming = not over yet: its end (or start, when no end was recorded) is at or after
         // fromUtc. An in-progress occurrence is never over, whatever its schedule says.
+        // With includeHosted, an occurrence the caller hosts is listed even without a qualifying
+        // assignment. One predicate over Events, so an occurrence the caller both hosts and plays
+        // in appears once.
+        var includeHosted = query.IncludeHosted;
         var occurrences = _context.Events
             .AsNoTracking()
-            .Where(e => mine.Any(a => a.OccurrenceId == e.Id))
+            .Where(e => mine.Any(a => a.OccurrenceId == e.Id) || (includeHosted && e.HostId == playerId))
             .Where(e => (e.ScheduledEndUtc ?? e.ScheduledStartUtc) >= fromUtc || e.Status == EventStatus.InProgress);
         if (toUtc is { } until)
             occurrences = occurrences.Where(e => e.ScheduledStartUtc < until);
@@ -365,13 +385,14 @@ public class EventRosterService : IEventRosterService
         foreach (var occurrence in page)
         {
             // The live assignment when the caller holds one (at most one, by the filtered unique
-            // index); otherwise, with includeTerminal, the most recent historical row.
+            // index); otherwise, with includeTerminal, the most recent historical row; none for
+            // an organizer-only hosted occurrence.
             var mineHere = myAssignments
                 .Where(a => a.OccurrenceId == occurrence.Id)
                 .OrderByDescending(a => RosterState.IsSupply(a.Status))
                 .ThenByDescending(a => a.CreatedAtUtc)
                 .ThenByDescending(a => a.Id)
-                .First();
+                .FirstOrDefault();
 
             var occurrenceRequirements = requirementsByOccurrence[occurrence.Id].ToList();
             var snapshot = RosterState.Compute(
@@ -379,7 +400,7 @@ public class EventRosterService : IEventRosterService
                 occurrenceRequirements.Select(r => (r.Id, r.RequiredCount)),
                 supplyByOccurrence[occurrence.Id].Select(a => (a.RequirementId, a.Status)));
 
-            var requirement = mineHere.RequirementId is { } requirementId
+            var requirement = mineHere?.RequirementId is { } requirementId
                 ? occurrenceRequirements.FirstOrDefault(r => r.Id == requirementId)
                 : null;
             var requirementSupply = requirement is null ? null : snapshot.Requirements[requirement.Id];
@@ -400,14 +421,17 @@ public class EventRosterService : IEventRosterService
                 HostUsername = occurrence.HostUsername,
                 HostDisplayName = occurrence.HostDisplayName,
                 IsHost = occurrence.HostId == playerId,
-                MyAssignmentId = mineHere.Id,
-                MyAssignmentStatus = mineHere.Status,
-                MyRoleCode = mineHere.RoleCode ?? requirement?.RoleCode,
-                MyRequirementId = mineHere.RequirementId,
+                MyAssignmentId = mineHere?.Id,
+                MyAssignmentStatus = mineHere?.Status,
+                MyRoleCode = mineHere is null ? null : mineHere.RoleCode ?? requirement?.RoleCode,
+                MyRequirementId = mineHere?.RequirementId,
                 RequiredCount = requirementSupply?.RequiredCount,
                 SupplyCount = requirementSupply?.SupplyCount,
                 OpenQuantity = requirementSupply?.OpenQuantity,
-                IsRosterReady = snapshot.IsRosterReady
+                IsRosterReady = snapshot.IsRosterReady,
+                TotalRequiredCount = snapshot.TotalRequiredCount,
+                TotalSupplyCount = snapshot.TotalSupplyCount,
+                TotalOpenQuantity = snapshot.TotalOpenQuantity
             });
         }
 
@@ -419,23 +443,141 @@ public class EventRosterService : IEventRosterService
         };
     }
 
+    public async Task<OccurrenceDetailDto?> GetOccurrenceDetailAsync(
+        Guid occurrenceId,
+        Guid? callerPlayerId,
+        CancellationToken cancellationToken = default)
+    {
+        // Query 1 of 3: the occurrence with its host's public fields and display location.
+        var occurrence = await _context.Events
+            .AsNoTracking()
+            .Where(e => e.Id == occurrenceId)
+            .Select(e => new
+            {
+                e.Id,
+                e.SeriesId,
+                e.TeamId,
+                e.Name,
+                e.Description,
+                e.ScheduledStartUtc,
+                e.ScheduledEndUtc,
+                e.Status,
+                e.Category,
+                e.Region,
+                e.VenueId,
+                Location = e.Venue != null ? e.Venue.Name : e.LegacyLocation,
+                e.HostId,
+                HostUsername = e.Host != null ? e.Host.Username : null,
+                HostDisplayName = e.Host != null ? e.Host.DisplayName : null
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (occurrence is null)
+            return null;
+
+        // Query 2: requirements. Query 3: live participants only (history stays on the paged
+        // assignments route), public player fields only.
+        var requirements = await LoadRequirementsAsync(occurrenceId, cancellationToken);
+        var supplyStatuses = RosterState.SupplyStatuses;
+        var participants = await _context.RosterAssignments
+            .AsNoTracking()
+            .Where(a => a.OccurrenceId == occurrenceId && supplyStatuses.Contains(a.Status))
+            .OrderBy(a => a.CreatedAtUtc)
+            .ThenBy(a => a.Id)
+            .Select(a => new OccurrenceParticipantDto
+            {
+                AssignmentId = a.Id,
+                PlayerId = a.PlayerId,
+                Username = a.Player.Username,
+                DisplayName = a.Player.DisplayName,
+                RequirementId = a.RequirementId,
+                RoleCode = a.RoleCode,
+                Status = a.Status
+            })
+            .ToListAsync(cancellationToken);
+
+        var snapshot = RosterState.Compute(
+            occurrenceId,
+            requirements.Select(r => (r.Id, r.RequiredCount)),
+            participants.Select(p => (p.RequirementId, p.Status)));
+
+        foreach (var participant in participants)
+            participant.IsHost = participant.PlayerId == occurrence.HostId;
+
+        var mine = callerPlayerId is { } caller ? participants.FirstOrDefault(p => p.PlayerId == caller) : null;
+
+        return new OccurrenceDetailDto
+        {
+            OccurrenceId = occurrence.Id,
+            SeriesId = occurrence.SeriesId,
+            TeamId = occurrence.TeamId,
+            Name = occurrence.Name,
+            Description = occurrence.Description,
+            ScheduledStartUtc = EventService.AsUtc(occurrence.ScheduledStartUtc),
+            ScheduledEndUtc = AsUtc(occurrence.ScheduledEndUtc),
+            Status = occurrence.Status,
+            AcceptsRosterChanges = RosterState.AcceptsNewRosterMutations(occurrence.Status),
+            Category = occurrence.Category,
+            Region = occurrence.Region,
+            VenueId = occurrence.VenueId,
+            Location = occurrence.Location,
+            HostPlayerId = occurrence.HostId,
+            HostUsername = occurrence.HostUsername,
+            HostDisplayName = occurrence.HostDisplayName,
+            RequiredCount = snapshot.TotalRequiredCount,
+            SupplyCount = snapshot.TotalSupplyCount,
+            OpenQuantity = snapshot.TotalOpenQuantity,
+            IsRosterReady = snapshot.IsRosterReady,
+            Requirements = requirements.Select(r => MapToDto(r, snapshot)).ToList(),
+            Participants = participants,
+            IsHost = callerPlayerId is not null && occurrence.HostId == callerPlayerId,
+            MyAssignmentId = mine?.AssignmentId,
+            MyAssignmentStatus = mine?.Status,
+            MyRequirementId = mine?.RequirementId
+        };
+    }
+
     /// <summary>
-    /// The shared host-only write on one assignment (lifecycle transitions, host removal).
-    /// Host authority and occurrence state are checked, and then re-validated at commit time:
-    /// the occurrence row gets a RowVersion-checked UPDATE in the same transaction as the
-    /// assignment change, so a host transfer or status change that commits first makes this
-    /// save fail instead of being ignored. The assignment's own RowVersion guards it against a
-    /// concurrent leave/remove/transition. On a concurrency loss nothing was saved; the whole
-    /// operation is re-run from fresh state (a bounded re-validation, never a blind overwrite),
-    /// which turns the loss into the real outcome: 403 for a former host, OccurrenceClosed,
-    /// AssignmentEnded, AssignmentTransitionInvalid, or success when only a sibling change on
-    /// the same occurrence moved its RowVersion.
+    /// The shared host-only write on one assignment (lifecycle transitions, host removal),
+    /// under <see cref="WithCommitTimeHostAuthorityAsync{T}"/>. The assignment's own RowVersion
+    /// guards it against a concurrent leave/remove/transition; a loss re-runs every check, which
+    /// turns it into AssignmentEnded, AssignmentTransitionInvalid, or success when only a
+    /// sibling change on the same occurrence moved its RowVersion.
     /// </summary>
-    private async Task<RosterAssignmentDto> HostUpdateAssignmentAsync(
+    private Task<RosterAssignmentDto> HostUpdateAssignmentAsync(
         Guid occurrenceId,
         Guid assignmentId,
         Guid hostPlayerId,
         Action<RosterAssignment, DateTime> apply,
+        CancellationToken cancellationToken) =>
+        WithCommitTimeHostAuthorityAsync(occurrenceId, hostPlayerId, async occurrence =>
+        {
+            var assignment = await _context.RosterAssignments
+                .FirstOrDefaultAsync(a => a.Id == assignmentId && a.OccurrenceId == occurrenceId, cancellationToken)
+                ?? throw new RosterAssignmentNotFoundException(assignmentId);
+
+            apply(assignment, _timeProvider.GetUtcNow().UtcDateTime);
+            TouchForCommitTimeAuthority(occurrence);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            var player = await LoadPublicPlayerAsync(assignment.PlayerId, cancellationToken);
+            return MapToDto(assignment, player?.Username ?? string.Empty, player?.DisplayName);
+        }, cancellationToken);
+
+    /// <summary>
+    /// Runs one host-only roster write with commit-time host authority. Host and occurrence
+    /// state are checked on a tracked read of the occurrence (404, 409 OccurrenceHasNoHost, 403,
+    /// 409 OccurrenceClosed); <paramref name="write"/> stages its change, calls
+    /// <see cref="TouchForCommitTimeAuthority"/> and saves, so the occurrence row gets a
+    /// RowVersion-checked UPDATE in the same transaction as the roster change. A host transfer,
+    /// cancellation or status change that commits first therefore makes the save fail instead
+    /// of being ignored. On a concurrency loss nothing was saved; the whole operation is re-run
+    /// from fresh state (a bounded re-validation, never a blind overwrite) at most
+    /// <see cref="MaxHostUpdateAttempts"/> times, after which it is the retryable 409 RosterChanged.
+    /// </summary>
+    private async Task<T> WithCommitTimeHostAuthorityAsync<T>(
+        Guid occurrenceId,
+        Guid hostPlayerId,
+        Func<EventOccurrence, Task<T>> write,
         CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
@@ -446,32 +588,25 @@ public class EventRosterService : IEventRosterService
             EnsureHost(occurrence, hostPlayerId);
             EnsureOpen(occurrence.Status);
 
-            var assignment = await _context.RosterAssignments
-                .FirstOrDefaultAsync(a => a.Id == assignmentId && a.OccurrenceId == occurrenceId, cancellationToken)
-                ?? throw new RosterAssignmentNotFoundException(assignmentId);
-
-            apply(assignment, _timeProvider.GetUtcNow().UtcDateTime);
-
-            // Commit-time host/status check: no value changes, but the UPDATE carries the
-            // occurrence RowVersion read above.
-            _context.Entry(occurrence).Property(e => e.HostId).IsModified = true;
-
             try
             {
-                await _context.SaveChangesAsync(cancellationToken);
+                return await write(occurrence);
             }
             catch (DbUpdateConcurrencyException ex)
             {
                 _context.ChangeTracker.Clear();
                 if (attempt >= MaxHostUpdateAttempts)
                     throw new RosterConflictException(RosterConflictCodes.RosterChanged, AssignmentChangedMessage, ex);
-                continue;
             }
-
-            var player = await LoadPublicPlayerAsync(assignment.PlayerId, cancellationToken);
-            return MapToDto(assignment, player?.Username ?? string.Empty, player?.DisplayName);
         }
     }
+
+    /// <summary>
+    /// Commit-time host/status check: no value changes, but the next save UPDATEs the
+    /// occurrence row with the RowVersion read when host authority was checked.
+    /// </summary>
+    private void TouchForCommitTimeAuthority(EventOccurrence occurrence) =>
+        _context.Entry(occurrence).Property(e => e.HostId).IsModified = true;
 
     private static void EnsureHost(EventOccurrence occurrence, Guid callerPlayerId)
     {
@@ -537,13 +672,58 @@ public class EventRosterService : IEventRosterService
     }
 
     /// <summary>
-    /// The single capacity-consuming write, shared by host assignment and player self-claim.
-    /// Callers have already validated the occurrence, player, requirement and replacement.
+    /// The self-claim write: <see cref="StageAllocationAsync"/> then save. A concurrency loss is
+    /// classified only (no retry): RequirementFull when the competing commit took the last open
+    /// quantity, otherwise the retryable RosterChanged.
     /// </summary>
     private async Task<RosterAssignment> AllocateAsync(
         Guid occurrenceId,
         Guid playerId,
-        RosterRequirement? requirement,
+        RosterRequirement requirement,
+        string? roleCode,
+        string? sourceRoleLabel,
+        RosterAssignmentStatus status,
+        RosterAssignmentSource source,
+        Guid? replacedAssignmentId,
+        CancellationToken cancellationToken)
+    {
+        var assignment = await StageAllocationAsync(
+            occurrenceId, playerId, requirement, roleCode, sourceRoleLabel, status, source, replacedAssignmentId, cancellationToken);
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _context.ChangeTracker.Clear();
+            if (await IsRequirementFullAsync(requirement.Id, cancellationToken))
+                throw new RosterConflictException(RosterConflictCodes.RequirementFull, RequirementFilledMessage, ex);
+
+            throw new RosterConflictException(RosterConflictCodes.RosterChanged, RequirementChangedMessage, ex);
+        }
+        catch (DbUpdateException ex) when (RosterConflictClassifier.IsDuplicateSupplyAssignment(ex))
+        {
+            throw AlreadyParticipating(ex);
+        }
+
+        return assignment;
+    }
+
+    /// <summary>
+    /// The single capacity-consuming roster invariant, shared by host assignment, player
+    /// self-claim and host participation at event creation: no second live assignment for the
+    /// player on the occurrence, and no supply above the requirement's RequiredCount. Stages the
+    /// new assignment without saving; the caller saves (and classifies a concurrency loss).
+    /// The supply count is read after the requirement (and its RowVersion), and an existing
+    /// requirement row is always UPDATEd with a RowVersion check in the same transaction as the
+    /// INSERT, so two concurrent fills of the last open quantity cannot both commit. A
+    /// requirement still being created in the same unit of work has no supply yet.
+    /// </summary>
+    internal async Task<RosterAssignment> StageAllocationAsync(
+        Guid occurrenceId,
+        Guid playerId,
+        RosterRequirement requirement,
         string? roleCode,
         string? sourceRoleLabel,
         RosterAssignmentStatus status,
@@ -559,27 +739,22 @@ public class EventRosterService : IEventRosterService
             throw AlreadyParticipating();
         }
 
-        if (requirement is not null)
-        {
-            // No overbooking: there is no existing rule allowing supply above RequiredCount.
-            // The count is read after the requirement (and its RowVersion), and the requirement
-            // row is always UPDATEd with a RowVersion check in the same transaction as the
-            // INSERT, so two concurrent fills of the last open quantity cannot both commit.
-            var supply = await _context.RosterAssignments.CountAsync(
-                a => a.RequirementId == requirement.Id && supplyStatuses.Contains(a.Status),
-                cancellationToken);
-            if (RosterState.OpenQuantity(requirement.RequiredCount, supply) == 0)
-                throw new RosterConflictException(RosterConflictCodes.RequirementFull, RequirementFilledMessage);
+        var supply = await _context.RosterAssignments.CountAsync(
+            a => a.RequirementId == requirement.Id && supplyStatuses.Contains(a.Status),
+            cancellationToken);
+        if (RosterState.OpenQuantity(requirement.RequiredCount, supply) == 0)
+            throw new RosterConflictException(RosterConflictCodes.RequirementFull, RequirementFilledMessage);
 
-            _context.Entry(requirement).Property(r => r.RequiredCount).IsModified = true;
-        }
+        var requirementEntry = _context.Entry(requirement);
+        if (requirementEntry.State != EntityState.Added)
+            requirementEntry.Property(r => r.RequiredCount).IsModified = true;
 
         var assignment = new RosterAssignment
         {
             Id = Guid.NewGuid(),
             OccurrenceId = occurrenceId,
             PlayerId = playerId,
-            RequirementId = requirement?.Id,
+            RequirementId = requirement.Id,
             RoleCode = roleCode,
             SourceRoleLabel = sourceRoleLabel,
             Status = status,
@@ -589,28 +764,24 @@ public class EventRosterService : IEventRosterService
         StampStatusTimestamp(assignment, _timeProvider.GetUtcNow().UtcDateTime);
 
         _context.RosterAssignments.Add(assignment);
-        try
-        {
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateConcurrencyException ex)
-        {
-            // Nothing was saved. Classify only (no retry): when the competing commit took the
-            // last open quantity this is a deterministic RequirementFull; otherwise capacity is
-            // still open and the caller may retry.
-            _context.ChangeTracker.Clear();
-            if (requirement is not null && await IsRequirementFullAsync(requirement.Id, cancellationToken))
-                throw new RosterConflictException(RosterConflictCodes.RequirementFull, RequirementFilledMessage, ex);
-
-            throw new RosterConflictException(RosterConflictCodes.RosterChanged, RequirementChangedMessage, ex);
-        }
-        catch (DbUpdateException ex) when (RosterConflictClassifier.IsDuplicateSupplyAssignment(ex))
-        {
-            throw AlreadyParticipating(ex);
-        }
-
         return assignment;
     }
+
+    /// <summary>A new requirement entity; role code already normalized and count already validated.</summary>
+    internal static RosterRequirement NewRequirement(
+        Guid occurrenceId,
+        string roleCode,
+        int requiredCount,
+        string? displayPosition,
+        string? sourceRoleLabel) => new()
+        {
+            Id = Guid.NewGuid(),
+            OccurrenceId = occurrenceId,
+            RoleCode = roleCode,
+            DisplayPosition = displayPosition,
+            SourceRoleLabel = sourceRoleLabel,
+            RequiredCount = requiredCount
+        };
 
     private async Task<bool> IsRequirementFullAsync(Guid requirementId, CancellationToken cancellationToken)
     {
@@ -825,7 +996,7 @@ public class EventRosterService : IEventRosterService
             });
     }
 
-    private static string? NormalizeRoleCode(string? roleCode)
+    internal static string? NormalizeRoleCode(string? roleCode)
     {
         if (roleCode is null)
             return null;
@@ -836,7 +1007,7 @@ public class EventRosterService : IEventRosterService
         return normalized;
     }
 
-    private static RosterRequirementDto MapToDto(RosterRequirement requirement, RosterSupplySnapshot snapshot)
+    internal static RosterRequirementDto MapToDto(RosterRequirement requirement, RosterSupplySnapshot snapshot)
     {
         var supply = snapshot.Requirements[requirement.Id];
         return new RosterRequirementDto

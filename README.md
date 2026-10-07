@@ -586,6 +586,7 @@ not verify their current ownership, availability, or operational status.
 | OIDC rollout plan | [docs/oidc-rollout.md](docs/oidc-rollout.md) |
 | Authentication plan | [docs/auth-plan.md](docs/auth-plan.md) |
 | API reference | [docs/api.md](docs/api.md) |
+| Private QA (basketball web client) | [docs/private-qa.md](docs/private-qa.md) |
 | Deployment guide | [docs/deployment.md](docs/deployment.md) |
 | Historical deployment recommendations | [docs/deployment-next-steps.md](docs/deployment-next-steps.md) |
 | Postman smoke-test guide | [docs/postman-smoke-test.md](docs/postman-smoke-test.md) |

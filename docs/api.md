@@ -320,8 +320,9 @@ The caller's own game schedule: "what games am I committed to, when and where,
 who hosts, am I confirmed, checked in or active, and is the roster ready?"
 This is **occurrence participation, not team membership**: an occurrence is
 listed when the caller holds a roster assignment on it, pickup games (`teamId`
-null) and team events alike. Hosting alone does not list an occurrence; a
-host who plays claims a spot like anyone else.
+null) and team events alike. By default hosting alone does not list an
+occurrence; a host who plays claims a spot like anyone else. With
+`includeHosted=true`, occurrences the caller hosts are listed too.
 
 | Query | Default | Meaning |
 |---|---|---|
@@ -330,6 +331,7 @@ host who plays claims a spot like anyone else.
 | `includeTerminal` | `false` | Also list occurrences where the caller's participation ended (left, removed, no-show). |
 | `pageSize` | `20` | 1 to 100; other values fall back to 20. |
 | `cursor` | none | The `nextCursor` of the previous page. An invalid cursor gives `400`. |
+| `includeHosted` | `false` | Also list occurrences where the caller is the host (`EventOccurrence.HostId`) without a qualifying assignment. An occurrence the caller both hosts and plays in is listed once. |
 
 Ordered nearest first by `scheduledStartUtc`, then occurrence id. Paging is
 keyset-based, so it stays deterministic while occurrences are added; the last
@@ -341,10 +343,15 @@ free-text location), `category`, `hostPlayerId`, `hostUsername`,
 `hostDisplayName`, `isHost`, `myAssignmentId`, `myAssignmentStatus`,
 `myRoleCode`, `myRequirementId`, and for the caller's requirement
 `requiredCount`, `supplyCount` and `openQuantity` (null when the assignment is
-linked to no requirement), plus the occurrence-level `isRosterReady`. When the
+linked to no requirement), plus the occurrence-level `isRosterReady`,
+`totalRequiredCount`, `totalSupplyCount` and `totalOpenQuantity`. When the
 caller has a live assignment it is the one shown; with `includeTerminal`, an
-occurrence they only have history on shows their most recent row. No email
-or external identity data is returned.
+occurrence they only have history on shows their most recent row. An
+organizer-only occurrence listed through `includeHosted` has `isHost: true`
+and null `myAssignmentId`, `myAssignmentStatus`, `myRoleCode`,
+`myRequirementId`, `requiredCount`, `supplyCount` and `openQuantity` (use the
+`total*` fields for its roster). No email or external identity data is
+returned.
 
 - **Response `200`:** `{ "items": [...], "nextCursor": "..." | null }`.
 - **Response `400`:** Invalid window or cursor.
@@ -869,6 +876,27 @@ Returns a single event by ID. Includes team name and host username.
 
 ---
 
+#### `GET api/v1/events/{id}/detail`
+
+Public game-page view of one occurrence, in three queries: details,
+`location` (venue name, else free-text), host (`hostPlayerId`,
+`hostUsername`, `hostDisplayName`), `status` and `acceptsRosterChanges`
+(false once Completed, Cancelled or Archived), the requirements with
+`requiredCount`/`supplyCount`/`openQuantity`, the occurrence totals and
+`isRosterReady`, and the **current participants only** (supply statuses, in
+join order: `assignmentId`, `playerId`, `username`, `displayName`,
+`requirementId`, `roleCode`, `status`, `isHost`). Ended rows are not listed;
+history stays on the paged `…/roster/assignments` route. The caller's
+relationship (`isHost`, `myAssignmentId`, `myAssignmentStatus`,
+`myRequirementId`) is filled from a valid linked token and is false/null for
+anonymous or unlinked callers. No email or external identity data is
+returned.
+
+**Response `200`:** `OccurrenceDetailDto`.
+**Response `404`:** Event not found.
+
+---
+
 #### `GET api/v1/events`
 
 Returns a paginated list of events, ordered by scheduled start (`eventDateUtc`) ascending.
@@ -918,8 +946,37 @@ that team, and the team's `lifecycleStatus` must be `Active`. Recruitment
 }
 ```
 
+**Optional initial roster (atomic).** The same request may also create the
+occurrence's roster requirements and the host's own spot. Everything is saved
+in one database transaction: if any part fails, nothing is created.
+
+```json
+{
+  "name": "Wednesday 8 PM pickup basketball",
+  "eventDateUtc": "2026-10-15T03:00:00Z",
+  "scheduledEndUtc": "2026-10-15T05:00:00Z",
+  "category": "basketball",
+  "location": "Rec center court 2",
+  "rosterRequirements": [ { "roleCode": "participant", "requiredCount": 10 } ],
+  "hostParticipates": true
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `scheduledEndUtc` | none | Optional scheduled end; must be after `eventDateUtc`. |
+| `rosterRequirements` | none | 0 to 50 requirements, each validated like `POST …/roster/requirements` (role code normalization, `requiredCount` 1–100000). Role codes must be distinct after normalization. Omitted or empty keeps the existing behavior: an event with no roster, never roster-ready. |
+| `hostParticipates` | `false` | `false`: the host organizes only and holds no spot (0/N). `true`: the host gets a normal Confirmed assignment (source `Player`) through the same capacity rules as a self-claim (1/N). |
+| `hostRoleCode` | none | With `hostParticipates` and several requirements, the role code the host fills. Optional with exactly one requirement. |
+
+Nothing is activity-specific: the API never assumes 10 players for
+basketball; the client sends the count.
+
 **Response `201`:** Created `EventDto`.  
-**Response `400`:** Validation failure.
+**Response `400`:** Validation failure. Roster errors carry a stable `code`:
+`HostParticipationRequiresRequirement` (`hostParticipates` with no
+requirement), `DuplicateRequirementRoleInRequest`, `HostRoleCodeInvalid`
+(missing with several requirements, or not one of them).
 **Response `401`:** No valid JWT provided.
 **Response `403`:** Caller has no linked player or does not own the supplied team.
 **Response `404`:** Supplied team not found.
@@ -1006,6 +1063,13 @@ not the host `403`, missing or empty `newHostPlayerId` `400`, unknown player
 `400`, player with no linked sign-in identity `409`
 `HostTransferTargetNotLinked`.
 
+Only a live occurrence changes host: `Planned`, `Open` and `InProgress` can
+be transferred; `Completed`, `Cancelled` and `Archived` give `409`
+`OccurrenceClosed` (checked right after the host check), so the stewardship
+of a finished occurrence is never rewritten. A status change racing the
+transfer makes it `409` `OccurrenceChanged`. Leaving a game never transfers
+hosting automatically.
+
 **Response `200`:** The updated `EventDto`.
 
 ---
@@ -1072,9 +1136,9 @@ requires team membership.
 `code`: `AlreadyParticipating`, `RequirementFull`, `RosterChanged`,
 `OccurrenceClosed`, `AssignmentEnded`, `AssignmentTransitionInvalid`,
 `OccurrenceHasNoHost`, `ReplacedAssignmentStillActive` or
-`DuplicateRequirementRole`. Database messages are never exposed. (Requirement
-creation and host assignment still return `409` for an orphaned or closed
-occurrence from their authorization check, with a `message` and no `code`.)
+`DuplicateRequirementRole`. Roster `400` responses for host assignment carry
+`RequirementIdRequired` or `RequirementNotOnOccurrence`. Database messages are
+never exposed.
 
 **Joinable statuses.** `Planned`, `Open` and `InProgress` occurrences accept
 roster changes, including self-claims, so a player who leaves mid-game can be
@@ -1084,13 +1148,16 @@ occurrences are closed.
 Host mutations (requirements, host assignment, host removal, lifecycle
 actions) are checked in this order: unlinked identity `403`, missing
 occurrence `404`, occurrence without a host `409`, caller not the host `403`,
-occurrence `Completed`/`Cancelled`/`Archived` `409`. For host removal and the
-lifecycle actions these checks run inside the service and are re-validated
-in the same commit as the change (the occurrence row is updated with a
-`RowVersion` check), so a concurrent host transfer or status change is never
-ignored; the occurrence's `updatedAtUtc` advances on each such action. A
-change that only lost to another host action on the same occurrence is
-re-run from fresh state a few times before `409` `RosterChanged` (retryable).
+occurrence `Completed`/`Cancelled`/`Archived` `409`. For every host mutation
+(requirement creation, host assignment, host removal and the lifecycle
+actions) these checks run inside the service and are re-validated in the same
+commit as the change (the occurrence row is updated with a `RowVersion`
+check), so a concurrent host transfer or status change is never ignored: a
+former host gets `403`, a closed occurrence `409` `OccurrenceClosed`, an
+orphaned one `409` `OccurrenceHasNoHost`. The occurrence's `updatedAtUtc`
+advances on each such action. A change that only lost to another change on
+the same occurrence or requirement is re-run from fresh state, at most five
+times, before `409` `RosterChanged` (retryable); there is no unbounded retry.
 
 #### `GET api/v1/events/{occurrenceId}/roster`
 
@@ -1127,8 +1194,10 @@ Public. Returns the occurrence's requirements (array, creation order) with
 ```
 
 `requiredCount` is required, 1–100000. **Response `201`:** the requirement.
-**`400`:** validation failure. **`409`:** duplicate role code for the
-occurrence, orphaned or closed occurrence.
+**`400`:** validation failure. **`403`:** not the host (including a host who
+was replaced while the request was in flight). **`409`:** `code`
+`DuplicateRequirementRole`, `OccurrenceHasNoHost`, `OccurrenceClosed` or
+`RosterChanged`.
 
 #### `GET api/v1/events/{occurrenceId}/roster/assignments`
 
@@ -1151,17 +1220,22 @@ allocation and capacity guard as player self-claim.
 
 - `status` defaults to Confirmed and must be a supply status; the matching
   timestamp (`reservedAtUtc`, `confirmedAtUtc`, …) is set to now.
-- `requirementId` must belong to this occurrence. `roleCode` defaults to the
+- `requirementId` is **required**: every public assignment fills a
+  requirement of this occurrence, so it always counts toward capacity and
+  readiness. Omitted: `400` `RequirementIdRequired` (checked with the body,
+  before the host checks). A requirement of another occurrence, or an unknown
+  one: `400` `RequirementNotOnOccurrence` (this endpoint has always answered
+  `400` for that; player self-claim answers `404`). `roleCode` defaults to the
   requirement's code and must match it when both are given.
 - `replacedAssignmentId` must name an assignment of this occurrence that no
   longer holds supply; that row is not modified.
 
-**Response `201`:** the assignment. **`400`:** validation failure, unknown
-player, requirement or replaced assignment of another occurrence, conflicting
-role code. **`409`:** the player already holds a supply assignment for this
-occurrence, the requirement is already filled or changed concurrently, the
-replaced assignment still holds supply, or the occurrence is orphaned or
-closed.
+**Response `201`:** the assignment. **`400`:** validation failure, missing
+requirement, unknown player, requirement or replaced assignment of another
+occurrence, conflicting role code. **`403`:** not the host (re-checked at
+commit). **`409`:** `AlreadyParticipating`, `RequirementFull`,
+`RosterChanged` (after bounded re-validation), `ReplacedAssignmentStillActive`,
+`OccurrenceHasNoHost` or `OccurrenceClosed`.
 
 #### `POST api/v1/events/{occurrenceId}/roster/claims`
 

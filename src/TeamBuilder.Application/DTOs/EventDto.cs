@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using TeamBuilder.Application.Validation;
+using TeamBuilder.Domain;
 using TeamBuilder.Domain.Enums;
 
 namespace TeamBuilder.Application.DTOs;
@@ -43,8 +44,11 @@ public class EventDto
     public DateTime? UpdatedAtUtc { get; set; }
 }
 
-public class CreateEventDto
+public class CreateEventDto : IValidatableObject
 {
+    /// <summary>Upper bound of <see cref="RosterRequirements"/> in one create request.</summary>
+    public const int MaxRosterRequirements = 50;
+
     [Required]
     [StringLength(200, MinimumLength = 1)]
     public string Name { get; set; } = string.Empty;
@@ -78,6 +82,44 @@ public class CreateEventDto
     /// </summary>
     [NonEmptyGuid]
     public Guid? TeamId { get; set; }
+
+    /// <summary>Optional scheduled end (UTC); must be after <see cref="EventDateUtc"/>.</summary>
+    public DateTime? ScheduledEndUtc { get; set; }
+
+    /// <summary>
+    /// Optional initial roster requirements, created atomically with the occurrence. Omitted or
+    /// empty keeps the event without a roster (never roster-ready). Each entry follows the
+    /// <c>POST …/roster/requirements</c> rules; role codes must be distinct after normalization.
+    /// Nothing here is activity-specific: a basketball client sends <c>participant</c> x 10.
+    /// </summary>
+    [MaxLength(MaxRosterRequirements)]
+    public List<CreateRosterRequirementDto>? RosterRequirements { get; set; }
+
+    /// <summary>
+    /// Whether the host also plays. False or omitted: the host is organizer only and holds no
+    /// spot (supply 0). True: the host gets a normal Confirmed assignment on a requirement in the
+    /// same commit, through the same capacity invariant as a self-claim.
+    /// </summary>
+    public bool? HostParticipates { get; set; }
+
+    /// <summary>
+    /// With <see cref="HostParticipates"/> and several requirements: the role code of the
+    /// requirement the host fills. Optional when there is exactly one requirement.
+    /// </summary>
+    [StringLength(RosterRoleCodes.MaxLength)]
+    public string? HostRoleCode { get; set; }
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (ScheduledEndUtc is { } end && EventDateUtc is { } start && end <= start)
+            yield return new ValidationResult("ScheduledEndUtc must be after EventDateUtc.", [nameof(ScheduledEndUtc)]);
+
+        if (RosterRequirements?.Any(r => r is null) == true)
+            yield return new ValidationResult("RosterRequirements must not contain null entries.", [nameof(RosterRequirements)]);
+
+        if (HostRoleCode is not null && !RosterRoleCodes.TryNormalize(HostRoleCode, out _, out var error))
+            yield return new ValidationResult(error, [nameof(HostRoleCode)]);
+    }
 }
 
 public class UpdateEventDto

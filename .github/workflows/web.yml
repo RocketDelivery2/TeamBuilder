@@ -1,0 +1,48 @@
+name: Web
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/TeamBuilder.Web/**"
+      - ".github/workflows/web.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/TeamBuilder.Web/**"
+      - ".github/workflows/web.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web client test and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/TeamBuilder.Web
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

@@ -216,8 +216,14 @@ public class PlayerOccurrenceDto
     /// <summary>Whether the caller is the occurrence's host (administrative only; it holds no spot).</summary>
     public bool IsHost { get; set; }
 
-    public Guid MyAssignmentId { get; set; }
-    public RosterAssignmentStatus MyAssignmentStatus { get; set; }
+    /// <summary>
+    /// The caller's assignment. Null only for an organizer-only hosted occurrence listed through
+    /// <c>includeHosted=true</c>; always set otherwise.
+    /// </summary>
+    public Guid? MyAssignmentId { get; set; }
+
+    /// <summary>Status of <see cref="MyAssignmentId"/>; null exactly when it is.</summary>
+    public RosterAssignmentStatus? MyAssignmentStatus { get; set; }
 
     /// <summary>The caller's role code: the assignment's, else its requirement's.</summary>
     public string? MyRoleCode { get; set; }
@@ -235,6 +241,15 @@ public class PlayerOccurrenceDto
 
     /// <summary>Readiness of the whole occurrence roster (every requirement filled).</summary>
     public bool IsRosterReady { get; set; }
+
+    /// <summary>Sum of RequiredCount over every requirement of the occurrence (0 when none).</summary>
+    public int TotalRequiredCount { get; set; }
+
+    /// <summary>Supply-status assignments on the whole occurrence.</summary>
+    public int TotalSupplyCount { get; set; }
+
+    /// <summary>Sum of per-requirement open quantities of the whole occurrence.</summary>
+    public int TotalOpenQuantity { get; set; }
 }
 
 /// <summary>
@@ -247,13 +262,17 @@ public class PlayerOccurrencePageDto
     public string? NextCursor { get; set; }
 }
 
-/// <summary>Filters of the caller's schedule query.</summary>
+/// <summary>
+/// Filters of the caller's schedule query. <see cref="IncludeHosted"/> also lists occurrences
+/// the caller hosts without holding a qualifying assignment (organizer-only).
+/// </summary>
 public sealed record PlayerOccurrenceQuery(
     DateTime? FromUtc,
     DateTime? ToUtc,
     bool IncludeTerminal,
     int PageSize,
-    string? Cursor);
+    string? Cursor,
+    bool IncludeHosted = false);
 
 /// <summary>Body of <c>POST /api/v1/events/{occurrenceId}/host/transfer</c>.</summary>
 public class TransferOccurrenceHostDto
@@ -262,4 +281,84 @@ public class TransferOccurrenceHostDto
     [Required]
     [NonEmptyGuid]
     public Guid? NewHostPlayerId { get; set; }
+}
+
+/// <summary>
+/// One occurrence as a game page needs it (<c>GET /api/v1/events/{id}/detail</c>): when and
+/// where, who hosts, lifecycle, the requirements with derived supply and readiness, the
+/// current (live) participants, and the caller's own relationship. Only public player fields
+/// appear (username, display name), never email or external identity data. Historical
+/// (ended) assignments are not listed here; the paged roster assignments route serves history.
+/// </summary>
+public class OccurrenceDetailDto
+{
+    public Guid OccurrenceId { get; set; }
+    public Guid? SeriesId { get; set; }
+
+    /// <summary>The optional team association; null for pickup games.</summary>
+    public Guid? TeamId { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public DateTime ScheduledStartUtc { get; set; }
+    public DateTime? ScheduledEndUtc { get; set; }
+    public EventStatus Status { get; set; }
+
+    /// <summary>
+    /// Whether the occurrence still accepts roster changes (claims, leaves, host actions,
+    /// host transfer). False once Completed, Cancelled or Archived.
+    /// </summary>
+    public bool AcceptsRosterChanges { get; set; }
+
+    public string? Category { get; set; }
+    public string? Region { get; set; }
+    public Guid? VenueId { get; set; }
+
+    /// <summary>The venue's name when a venue is attached, otherwise the free-text location.</summary>
+    public string? Location { get; set; }
+
+    public Guid? HostPlayerId { get; set; }
+    public string? HostUsername { get; set; }
+    public string? HostDisplayName { get; set; }
+
+    /// <summary>Sum of RequiredCount over all requirements (0 when there are none).</summary>
+    public int RequiredCount { get; set; }
+
+    /// <summary>Supply-status assignments on the occurrence.</summary>
+    public int SupplyCount { get; set; }
+
+    /// <summary>Sum of per-requirement open quantities.</summary>
+    public int OpenQuantity { get; set; }
+
+    /// <summary>True only when at least one requirement exists and every one is filled.</summary>
+    public bool IsRosterReady { get; set; }
+
+    public IReadOnlyList<RosterRequirementDto> Requirements { get; set; } = [];
+
+    /// <summary>Live (supply-status) participants in join order; bounded by the requirements' capacity.</summary>
+    public IReadOnlyList<OccurrenceParticipantDto> Participants { get; set; } = [];
+
+    /// <summary>Whether the caller is the host. False for an anonymous or unlinked caller.</summary>
+    public bool IsHost { get; set; }
+
+    /// <summary>The caller's live assignment, if any; null for an anonymous or unlinked caller.</summary>
+    public Guid? MyAssignmentId { get; set; }
+
+    public RosterAssignmentStatus? MyAssignmentStatus { get; set; }
+    public Guid? MyRequirementId { get; set; }
+}
+
+/// <summary>A current participant on an occurrence detail: public player fields only.</summary>
+public class OccurrenceParticipantDto
+{
+    public Guid AssignmentId { get; set; }
+    public Guid PlayerId { get; set; }
+    public string Username { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    public Guid? RequirementId { get; set; }
+    public string? RoleCode { get; set; }
+    public RosterAssignmentStatus Status { get; set; }
+
+    /// <summary>Whether this participant is also the occurrence's host.</summary>
+    public bool IsHost { get; set; }
 }

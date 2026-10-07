@@ -1,0 +1,60 @@
+# Private QA stack: SQL Server + TeamBuilder API + web client, for local or private testing
+# only. Secrets come from a git-ignored .env file next to this one (see docs/private-qa.md):
+#   TEAMBUILDER_QA_SQL_PASSWORD   SQL Server sa password (SQL Server complexity rules apply)
+#   TEAMBUILDER_JWT_SIGNING_KEY   symmetric key (32+ bytes) the API validates dev tokens with
+# Start with: docker compose -f docker-compose.qa.yml up --build
+name: teambuilder-qa
+
+services:
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${TEAMBUILDER_QA_SQL_PASSWORD:?Set TEAMBUILDER_QA_SQL_PASSWORD in .env}
+    volumes:
+      - sql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      sql:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: QA
+      ConnectionStrings__TeamBuilderSql: Server=sql;Database=TeamBuilderQA;User Id=sa;Password=${TEAMBUILDER_QA_SQL_PASSWORD};Encrypt=True;TrustServerCertificate=True
+      Database__ApplyMigrationsOnStartup: "true"
+      AllowedOrigins: http://localhost:8080
+      Jwt__Authority: ""
+      Jwt__SigningKey: ${TEAMBUILDER_JWT_SIGNING_KEY:?Set TEAMBUILDER_JWT_SIGNING_KEY in .env}
+      Jwt__Issuer: teambuilder-local-qa
+      Jwt__Audience: teambuilder-api
+      Jwt__RequireHttpsMetadata: "false"
+    ports:
+      - "5080:8080"
+
+  web:
+    build:
+      context: apps/TeamBuilder.Web
+      args:
+        # Private QA image: offers developer-token sign-in (with a visible banner). Set the
+        # OIDC args instead, and drop this, once an SPA client is registered at the IdP.
+        VITE_ALLOW_DEV_TOKEN: "true"
+        VITE_OIDC_AUTHORITY: ${TEAMBUILDER_QA_OIDC_AUTHORITY:-}
+        VITE_OIDC_CLIENT_ID: ${TEAMBUILDER_QA_OIDC_CLIENT_ID:-}
+    depends_on:
+      - api
+    environment:
+      API_UPSTREAM: http://api:8080
+    ports:
+      - "8080:80"
+
+volumes:
+  sql-data:

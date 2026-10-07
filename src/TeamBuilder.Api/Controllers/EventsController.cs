@@ -45,6 +45,31 @@ public class EventsController : ControllerBase
         return Ok(teamEvent);
     }
 
+    /// <summary>
+    /// The game-page view of one occurrence: details, location, host, lifecycle, requirements
+    /// with required/supply/open counts and readiness, the current participants (public fields
+    /// only; ended rows are not listed), and the caller's relationship (isHost, my assignment).
+    /// Public: anonymous or unlinked callers get the same view with no caller relationship.
+    /// </summary>
+    [HttpGet("{id}/detail")]
+    [ProducesResponseType(typeof(OccurrenceDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<OccurrenceDetailDto>> GetDetail(
+        Guid id,
+        [FromServices] IEventRosterService rosterService,
+        CancellationToken cancellationToken)
+    {
+        var callerPlayerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        var detail = await rosterService.GetOccurrenceDetailAsync(id, callerPlayerId, cancellationToken);
+        if (detail == null)
+        {
+            _logger.LogInformation("Event with ID {EventId} not found for detail", id);
+            return NotFound();
+        }
+
+        return Ok(detail);
+    }
+
     [HttpGet]
     [ProducesResponseType(typeof(PaginatedResult<EventDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
@@ -198,8 +223,9 @@ public class EventsController : ControllerBase
     /// requirements, capacity, TeamId and status are unchanged; the old host loses host-only
     /// authority at commit and the new host gains it. Order: unlinked 403, missing occurrence
     /// 404, no host 409, non-host 403, unknown target 400, unlinked target 409
-    /// HostTransferTargetNotLinked; a concurrent change that committed first gives 409
-    /// OccurrenceChanged.
+    /// HostTransferTargetNotLinked. Only a live occurrence (Planned, Open, InProgress) can change
+    /// host: Completed, Cancelled or Archived gives 409 OccurrenceClosed (checked after the host
+    /// check). A concurrent change that committed first gives 409 OccurrenceChanged.
     /// </summary>
     [HttpPost("{id}/host/transfer")]
     [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]

@@ -369,3 +369,6 @@ FodyWeavers.xsd
 .ai/todo.md
 .ai/ai-handoff-latest.txt
 .ai/*.bak
+
+# Local secrets for docker-compose.qa.yml (never commit)
+.env

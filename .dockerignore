@@ -10,3 +10,6 @@ ai-history/
 *.suo
 *.swp
 README.md
+apps/**/node_modules
+apps/**/dist
+.env
