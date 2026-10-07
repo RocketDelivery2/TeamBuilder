@@ -152,11 +152,12 @@ is not linked yet.
 | Method | Path | Notes |
 |---|---|---|
 | `GET`, `POST` | `/api/v1/players/me` | Authenticated full-profile lookup and canonical onboarding. |
+| `GET` | `/api/v1/players/me/occurrences` | The caller's own game schedule (occurrences where they hold a roster assignment). |
 | `PUT`, `DELETE` | `/api/v1/players/{id}` | Self-only; caller must resolve to `{id}`. |
 | `POST`, `PUT`, `DELETE` | `/api/v1/teams...` | Owner identity comes from `PlayerIdentity`; update/delete are owner-only. Leave is self-only; owners cannot remove another member through this route. |
 | `GET`, `POST`, `PUT` | `/api/v1/joinrequests...` | Reads are limited to the applicant or relevant team owner; creation is by the linked applicant; processing is team-owner-only. |
-| `POST`, `PUT`, `DELETE` | `/api/v1/events...` | Host identity comes from `PlayerIdentity`; updates/deletes are host-only. When an event names a team, only that team's owner may create it. |
-| `POST` | `/api/v1/events/{occurrenceId}/roster/...` | Requirement creation, host assignment and host removal are host-only. Any linked player may self-claim (`/claims`) and leave their own assignment (`/assignments/{id}/leave`). |
+| `POST`, `PUT`, `DELETE` | `/api/v1/events...` | Host identity comes from `PlayerIdentity`; updates, deletes and host transfer (`/{id}/host/transfer`) are host-only. When an event names a team, only that team's owner may create it. |
+| `POST` | `/api/v1/events/{occurrenceId}/roster/...` | Requirement creation, host assignment, host removal and the day-of-game lifecycle (`check-in`, `activate`, `no-show`) are host-only. Any linked player may self-claim (`/claims`) and leave their own assignment (`/assignments/{id}/leave`). |
 | `POST`, `DELETE` | `/api/v1/event-series...` | Host identity comes from `PlayerIdentity`; cancellation is host-only. When a series names a team, only that team's owner may create it. |
 | `GET`, `POST`, `PUT`, `DELETE` | `/api/v1/rosterimports...` | Reads and mutations are restricted to the linked original importer. |
 
@@ -310,6 +311,45 @@ opaque and compared exactly; the subject does not need to be a GUID.
 - **Response `200`:** `PlayerDto` of the linked player.
 - **Response `401`:** No valid JWT, or the token has no usable issuer or subject.
 - **Response `404`:** Authenticated, but no player is linked to this identity yet.
+
+---
+
+#### `GET api/v1/players/me/occurrences`
+
+The caller's own game schedule: "what games am I committed to, when and where,
+who hosts, am I confirmed, checked in or active, and is the roster ready?"
+This is **occurrence participation, not team membership**: an occurrence is
+listed when the caller holds a roster assignment on it, pickup games (`teamId`
+null) and team events alike. Hosting alone does not list an occurrence; a
+host who plays claims a spot like anyone else.
+
+| Query | Default | Meaning |
+|---|---|---|
+| `fromUtc` | now | Occurrences not over yet at this instant: end (or start, when no end is recorded) at or after it. An `InProgress` occurrence always counts. |
+| `toUtc` | none | Only occurrences starting before this instant. Earlier than `fromUtc` gives `400`. |
+| `includeTerminal` | `false` | Also list occurrences where the caller's participation ended (left, removed, no-show). |
+| `pageSize` | `20` | 1 to 100; other values fall back to 20. |
+| `cursor` | none | The `nextCursor` of the previous page. An invalid cursor gives `400`. |
+
+Ordered nearest first by `scheduledStartUtc`, then occurrence id. Paging is
+keyset-based, so it stays deterministic while occurrences are added; the last
+page has `nextCursor` null. A page costs four queries whatever its size.
+
+Each item: `occurrenceId`, `seriesId`, `teamId`, `name`, `scheduledStartUtc`,
+`scheduledEndUtc`, `status`, `venueId`, `location` (venue name, else the
+free-text location), `category`, `hostPlayerId`, `hostUsername`,
+`hostDisplayName`, `isHost`, `myAssignmentId`, `myAssignmentStatus`,
+`myRoleCode`, `myRequirementId`, and for the caller's requirement
+`requiredCount`, `supplyCount` and `openQuantity` (null when the assignment is
+linked to no requirement), plus the occurrence-level `isRosterReady`. When the
+caller has a live assignment it is the one shown; with `includeTerminal`, an
+occurrence they only have history on shows their most recent row. No email
+or external identity data is returned.
+
+- **Response `200`:** `{ "items": [...], "nextCursor": "..." | null }`.
+- **Response `400`:** Invalid window or cursor.
+- **Response `401`:** No valid JWT.
+- **Response `403`:** Authenticated, but no player is linked to this identity.
 
 ---
 
@@ -919,13 +959,54 @@ One-off events (`seriesId: null`) are never detached.
 
 #### `DELETE api/v1/events/{id}`
 
-Deletes an event.
+Deletes an event that has **no roster participation history**. An event with
+any roster assignment, live or historical (left, removed, no-show), cannot be
+deleted, so participation history never disappears: cancel it instead
+(`PUT` with `status` `Cancelled`). Its roster requirements and imported roster
+entries are deleted with it. The database enforces the same rule: the foreign
+key from `RosterAssignments` to `Events` is `NO ACTION`, so a claim that lands
+while the delete is running also turns it into `409`.
 
 **Response `204`:** Deleted.  
 **Response `401`:** No valid JWT provided.  
 **Response `403`:** Authenticated caller is not the event host.  
 **Response `404`:** Event not found.  
 **Response `409`:** Event has no host (orphaned); contact an administrator.
+Or `code` `OccurrenceHasParticipationHistory`: the event has roster
+assignments; cancel it instead. Or `code` `OccurrenceChanged`: the event
+changed concurrently; reload and retry.
+
+---
+
+#### `POST api/v1/events/{id}/host/transfer`
+
+Transfers stewardship of **this occurrence only** to another player. For an
+occurrence of a series, the series and its other occurrences keep their host
+(a separate series-level transfer may come later); the occurrence keeps its
+`seriesId` and is marked `isDetached`, like any other occurrence-level edit,
+so a later series cancellation leaves it to its new host.
+
+```json
+{ "newHostPlayerId": "<guid>" }
+```
+
+Only the host changes. Roster assignments, requirements, capacity, `teamId`
+and `status` are untouched, and the new host may or may not hold a roster
+spot. The old host loses host-only authority (event edits, roster management,
+lifecycle actions, transfer) the moment the transfer commits, and the new host
+gains it. Host-only roster actions re-check the host inside their own commit,
+so one that was in flight when the transfer committed is refused with `403`.
+Transfers are guarded by the event's `RowVersion`: of concurrent transfers
+exactly one wins, and the others get `409` `OccurrenceChanged` (on reload they
+are no longer the host). Transferring to yourself is a no-op `200`.
+
+Checked in this order: no valid JWT `401`, unlinked caller `403`, missing
+occurrence `404`, occurrence without a host `409` `OccurrenceHasNoHost`, caller
+not the host `403`, missing or empty `newHostPlayerId` `400`, unknown player
+`400`, player with no linked sign-in identity `409`
+`HostTransferTargetNotLinked`.
+
+**Response `200`:** The updated `EventDto`.
 
 ---
 
@@ -989,20 +1070,27 @@ requires team membership.
 
 **Conflict codes.** Roster `409` responses are ProblemDetails with a stable
 `code`: `AlreadyParticipating`, `RequirementFull`, `RosterChanged`,
-`OccurrenceClosed`, `AssignmentEnded`, `ReplacedAssignmentStillActive` or
-`DuplicateRequirementRole`. Database messages are never exposed. (The host
-authorization checks below return `409` for an orphaned or closed occurrence
-before reaching the roster rules, with a `message` and no `code`.)
+`OccurrenceClosed`, `AssignmentEnded`, `AssignmentTransitionInvalid`,
+`OccurrenceHasNoHost`, `ReplacedAssignmentStillActive` or
+`DuplicateRequirementRole`. Database messages are never exposed. (Requirement
+creation and host assignment still return `409` for an orphaned or closed
+occurrence from their authorization check, with a `message` and no `code`.)
 
 **Joinable statuses.** `Planned`, `Open` and `InProgress` occurrences accept
 roster changes, including self-claims, so a player who leaves mid-game can be
 replaced while the game is underway. `Completed`, `Cancelled` and `Archived`
 occurrences are closed.
 
-Host mutations (requirements, host assignment, host removal) are checked in
-this order: unlinked identity `403`, missing occurrence `404`, occurrence
-without a host `409`, caller not the host `403`, occurrence
-`Completed`/`Cancelled`/`Archived` `409`.
+Host mutations (requirements, host assignment, host removal, lifecycle
+actions) are checked in this order: unlinked identity `403`, missing
+occurrence `404`, occurrence without a host `409`, caller not the host `403`,
+occurrence `Completed`/`Cancelled`/`Archived` `409`. For host removal and the
+lifecycle actions these checks run inside the service and are re-validated
+in the same commit as the change (the occurrence row is updated with a
+`RowVersion` check), so a concurrent host transfer or status change is never
+ignored; the occurrence's `updatedAtUtc` advances on each such action. A
+change that only lost to another host action on the same occurrence is
+re-run from fresh state a few times before `409` `RosterChanged` (retryable).
 
 #### `GET api/v1/events/{occurrenceId}/roster`
 
@@ -1148,8 +1236,38 @@ a new player claims (10/10 ready again). The same works while the occurrence
 is `InProgress`.
 
 A player with any roster assignment cannot be deleted
-(`DELETE api/v1/players/{id}` returns `409`), so participation history is
-never erased.
+(`DELETE api/v1/players/{id}` returns `409`), and neither can an occurrence
+(`DELETE api/v1/events/{id}` returns `409` `OccurrenceHasParticipationHistory`),
+so participation history is never erased.
+
+#### Day-of-game lifecycle (host only)
+
+Narrow actions on one existing assignment, never arbitrary status writes:
+
+| Route (`POST …/roster/assignments/{assignmentId}/…`) | From | To | Holds a spot after |
+|---|---|---|---|
+| `check-in` | Confirmed | CheckedIn (`checkedInAtUtc`) | yes |
+| `activate` | CheckedIn | Active (`activatedAtUtc`) | yes |
+| `no-show` | Confirmed or CheckedIn | NoShow (`exitReason` NoShow, `departedAtUtc`) | no: the spot reopens at once |
+
+The row is updated in place and never deleted; a no-show's replacement is a
+new row (optionally with `replacesAssignmentId`). Ended rows (Departed,
+NoShow, Cancelled) are never resurrected: `409` `AssignmentEnded`. Any other
+step not in the table (for example activating a player who has not checked
+in, or a Reserved row) is `409` `AssignmentTransitionInvalid`. Leave and
+remove keep their behavior: Confirmed rows end as Cancelled, CheckedIn and
+Active rows as Departed.
+
+Order: no valid JWT `401`, unlinked `403`, missing occurrence `404`, no host
+`409` `OccurrenceHasNoHost`, caller not the host `403` (the participant
+themselves included), closed occurrence `409` `OccurrenceClosed`, assignment
+missing or of another occurrence `404`, then the state rules above.
+**Response `200`:** the updated assignment.
+
+The host may run these on their own assignment if they claimed one. Typical
+flow: players claim, the host checks them in as they arrive, sets the event
+`InProgress` and activates them at tip-off; a no-show or an early leaver
+reopens a spot that anyone can claim while the game is in progress.
 
 ---
 

@@ -45,6 +45,26 @@ public static class RosterState
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Only a supply status can end.")
     };
 
+    /// <summary>
+    /// The status a host lifecycle <paramref name="transition"/> moves an assignment in
+    /// <paramref name="current"/> to, or null when the transition is not allowed from it:
+    /// <list type="bullet">
+    /// <item>CheckIn: Confirmed to CheckedIn;</item>
+    /// <item>Activate: CheckedIn to Active;</item>
+    /// <item>NoShow: Confirmed or CheckedIn to NoShow.</item>
+    /// </list>
+    /// Reserved is not a source of any transition, and a non-supply (terminal) status never is,
+    /// so ended rows are never resurrected. CheckedIn and Active hold supply; NoShow does not.
+    /// </summary>
+    public static RosterAssignmentStatus? TargetStatusFor(RosterAssignmentStatus current, RosterAssignmentTransition transition) =>
+        (transition, current) switch
+        {
+            (RosterAssignmentTransition.CheckIn, RosterAssignmentStatus.Confirmed) => RosterAssignmentStatus.CheckedIn,
+            (RosterAssignmentTransition.Activate, RosterAssignmentStatus.CheckedIn) => RosterAssignmentStatus.Active,
+            (RosterAssignmentTransition.NoShow, RosterAssignmentStatus.Confirmed or RosterAssignmentStatus.CheckedIn) => RosterAssignmentStatus.NoShow,
+            _ => null
+        };
+
     public static int OpenQuantity(int requiredCount, int supplyCount) =>
         Math.Max(0, requiredCount - supplyCount);
 

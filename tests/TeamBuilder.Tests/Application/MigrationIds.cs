@@ -17,4 +17,5 @@ internal static class MigrationIds
     public const string AddRecurringEventSeries = "20261005030841_AddRecurringEventSeries";
     public const string AddEventSeriesMaterializationCheckpoint = "20261006003505_AddEventSeriesMaterializationCheckpoint";
     public const string AddEventRosterRequirementsAndAssignments = "20261006033337_AddEventRosterRequirementsAndAssignments";
+    public const string PreserveRosterHistoryOnOccurrenceDelete = "20261007054540_PreserveRosterHistoryOnOccurrenceDelete";
 }

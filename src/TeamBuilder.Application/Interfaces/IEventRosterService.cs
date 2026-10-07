@@ -67,11 +67,43 @@ public interface IEventRosterService
     Task<RosterAssignmentDto> LeaveAsync(Guid occurrenceId, Guid assignmentId, Guid callerPlayerId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Ends a live assignment on the host's behalf (exit reason HostRemoved). Host
-    /// authorization is the caller's responsibility.
+    /// Ends a live assignment on the host's behalf (exit reason HostRemoved). Host authority of
+    /// <paramref name="hostPlayerId"/> is enforced here and re-validated at commit time.
     /// </summary>
     /// <exception cref="Exceptions.EventOccurrenceNotFoundException">The occurrence does not exist.</exception>
+    /// <exception cref="Exceptions.OccurrenceHostForbiddenException">The caller is not the occurrence's host.</exception>
     /// <exception cref="Exceptions.RosterAssignmentNotFoundException">The assignment is not one of this occurrence.</exception>
-    /// <exception cref="Exceptions.RosterConflictException">Closed occurrence, assignment already ended, or concurrent change.</exception>
-    Task<RosterAssignmentDto> RemoveAsync(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken = default);
+    /// <exception cref="Exceptions.RosterConflictException">
+    /// No host, closed occurrence, assignment already ended, or repeated concurrent change.
+    /// </exception>
+    Task<RosterAssignmentDto> RemoveAsync(Guid occurrenceId, Guid assignmentId, Guid hostPlayerId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A host lifecycle step on a live assignment: check-in (Confirmed to CheckedIn), activate
+    /// (CheckedIn to Active) or no-show (Confirmed/CheckedIn to NoShow, which releases the
+    /// spot). The row is updated in place, never deleted. Same authority and ordering as
+    /// <see cref="RemoveAsync"/>.
+    /// </summary>
+    /// <exception cref="Exceptions.EventOccurrenceNotFoundException">The occurrence does not exist.</exception>
+    /// <exception cref="Exceptions.OccurrenceHostForbiddenException">The caller is not the occurrence's host.</exception>
+    /// <exception cref="Exceptions.RosterAssignmentNotFoundException">The assignment is not one of this occurrence.</exception>
+    /// <exception cref="Exceptions.RosterConflictException">
+    /// No host, closed occurrence, assignment already ended, a step not allowed from the current
+    /// status, or repeated concurrent change.
+    /// </exception>
+    Task<RosterAssignmentDto> TransitionAsync(
+        Guid occurrenceId,
+        Guid assignmentId,
+        Guid hostPlayerId,
+        RosterAssignmentTransition transition,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The occurrences on <paramref name="playerId"/>'s own schedule: those where the player has
+    /// a live assignment (or any assignment, with <see cref="PlayerOccurrenceQuery.IncludeTerminal"/>),
+    /// not over yet relative to FromUtc (default now), nearest first, keyset-paged. A constant
+    /// number of queries per page, whatever its size.
+    /// </summary>
+    /// <exception cref="ArgumentException">Invalid window or cursor.</exception>
+    Task<PlayerOccurrencePageDto> GetPlayerOccurrencesAsync(Guid playerId, PlayerOccurrenceQuery query, CancellationToken cancellationToken = default);
 }

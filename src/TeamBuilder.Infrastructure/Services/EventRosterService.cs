@@ -33,6 +33,14 @@ public class EventRosterService : IEventRosterService
         "This roster assignment has already ended.";
     public const string AssignmentChangedMessage =
         "The roster assignment changed while it was being updated. Please try again.";
+    public const string NoHostMessage =
+        "This event has no host, so host-only actions are not possible. Contact an administrator.";
+
+    /// <summary>
+    /// Attempts of one host-only assignment write. Each concurrency loss re-runs every check on
+    /// fresh state; only repeated losses to sibling changes surface as retryable RosterChanged.
+    /// </summary>
+    internal const int MaxHostUpdateAttempts = 5;
 
     private readonly TeamBuilderDbContext _context;
     private readonly TimeProvider _timeProvider;
@@ -246,8 +254,287 @@ public class EventRosterService : IEventRosterService
     public Task<RosterAssignmentDto> LeaveAsync(Guid occurrenceId, Guid assignmentId, Guid callerPlayerId, CancellationToken cancellationToken = default) =>
         EndAssignmentAsync(occurrenceId, assignmentId, RosterExitReason.PlayerLeft, callerPlayerId, cancellationToken);
 
-    public Task<RosterAssignmentDto> RemoveAsync(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken = default) =>
-        EndAssignmentAsync(occurrenceId, assignmentId, RosterExitReason.HostRemoved, requiredHolderId: null, cancellationToken);
+    public Task<RosterAssignmentDto> RemoveAsync(Guid occurrenceId, Guid assignmentId, Guid hostPlayerId, CancellationToken cancellationToken = default) =>
+        HostUpdateAssignmentAsync(
+            occurrenceId,
+            assignmentId,
+            hostPlayerId,
+            (assignment, nowUtc) => End(assignment, RosterExitReason.HostRemoved, nowUtc),
+            cancellationToken);
+
+    public Task<RosterAssignmentDto> TransitionAsync(
+        Guid occurrenceId,
+        Guid assignmentId,
+        Guid hostPlayerId,
+        RosterAssignmentTransition transition,
+        CancellationToken cancellationToken = default) =>
+        HostUpdateAssignmentAsync(
+            occurrenceId,
+            assignmentId,
+            hostPlayerId,
+            (assignment, nowUtc) => ApplyTransition(assignment, transition, nowUtc),
+            cancellationToken);
+
+    public async Task<PlayerOccurrencePageDto> GetPlayerOccurrencesAsync(
+        Guid playerId,
+        PlayerOccurrenceQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var fromUtc = query.FromUtc is { } from ? EventService.AsUtc(from) : _timeProvider.GetUtcNow().UtcDateTime;
+        DateTime? toUtc = query.ToUtc is { } to ? EventService.AsUtc(to) : null;
+        if (toUtc < fromUtc)
+            throw new ArgumentException("toUtc must not be earlier than fromUtc.");
+
+        PlayerOccurrenceCursor? cursor = query.Cursor is null ? null : PlayerOccurrenceCursor.Parse(query.Cursor);
+        var supplyStatuses = RosterState.SupplyStatuses;
+
+        var mine = _context.RosterAssignments.Where(a => a.PlayerId == playerId);
+        if (!query.IncludeTerminal)
+            mine = mine.Where(a => supplyStatuses.Contains(a.Status));
+
+        // Upcoming = not over yet: its end (or start, when no end was recorded) is at or after
+        // fromUtc. An in-progress occurrence is never over, whatever its schedule says.
+        var occurrences = _context.Events
+            .AsNoTracking()
+            .Where(e => mine.Any(a => a.OccurrenceId == e.Id))
+            .Where(e => (e.ScheduledEndUtc ?? e.ScheduledStartUtc) >= fromUtc || e.Status == EventStatus.InProgress);
+        if (toUtc is { } until)
+            occurrences = occurrences.Where(e => e.ScheduledStartUtc < until);
+        if (cursor is { } after)
+        {
+            occurrences = occurrences.Where(e =>
+                e.ScheduledStartUtc > after.ScheduledStartUtc ||
+                (e.ScheduledStartUtc == after.ScheduledStartUtc && e.Id.CompareTo(after.OccurrenceId) > 0));
+        }
+
+        // Query 1 of 4: the page of occurrences (one extra row tells whether another page exists).
+        var page = await occurrences
+            .OrderBy(e => e.ScheduledStartUtc)
+            .ThenBy(e => e.Id)
+            .Take(query.PageSize + 1)
+            .Select(e => new
+            {
+                e.Id,
+                e.SeriesId,
+                e.TeamId,
+                e.Name,
+                e.ScheduledStartUtc,
+                e.ScheduledEndUtc,
+                e.Status,
+                e.VenueId,
+                Location = e.Venue != null ? e.Venue.Name : e.LegacyLocation,
+                e.Category,
+                e.HostId,
+                HostUsername = e.Host != null ? e.Host.Username : null,
+                HostDisplayName = e.Host != null ? e.Host.DisplayName : null
+            })
+            .ToListAsync(cancellationToken);
+
+        var hasMore = page.Count > query.PageSize;
+        if (hasMore)
+            page.RemoveAt(page.Count - 1);
+        if (page.Count == 0)
+            return new PlayerOccurrencePageDto();
+
+        var occurrenceIds = page.Select(e => e.Id).ToList();
+
+        // Queries 2-4, each one round trip for the whole page: the caller's own assignments,
+        // the requirements, and the supply rows that RosterState.Compute needs.
+        var myAssignments = await mine
+            .AsNoTracking()
+            .Where(a => occurrenceIds.Contains(a.OccurrenceId))
+            .Select(a => new { a.Id, a.OccurrenceId, a.Status, a.RoleCode, a.RequirementId, a.CreatedAtUtc })
+            .ToListAsync(cancellationToken);
+
+        var requirements = await _context.RosterRequirements
+            .AsNoTracking()
+            .Where(r => occurrenceIds.Contains(r.OccurrenceId))
+            .Select(r => new { r.Id, r.OccurrenceId, r.RoleCode, r.RequiredCount })
+            .ToListAsync(cancellationToken);
+
+        var supplyRows = await _context.RosterAssignments
+            .AsNoTracking()
+            .Where(a => occurrenceIds.Contains(a.OccurrenceId) && supplyStatuses.Contains(a.Status))
+            .Select(a => new { a.OccurrenceId, a.RequirementId, a.Status })
+            .ToListAsync(cancellationToken);
+
+        var requirementsByOccurrence = requirements.ToLookup(r => r.OccurrenceId);
+        var supplyByOccurrence = supplyRows.ToLookup(a => a.OccurrenceId);
+
+        var items = new List<PlayerOccurrenceDto>(page.Count);
+        foreach (var occurrence in page)
+        {
+            // The live assignment when the caller holds one (at most one, by the filtered unique
+            // index); otherwise, with includeTerminal, the most recent historical row.
+            var mineHere = myAssignments
+                .Where(a => a.OccurrenceId == occurrence.Id)
+                .OrderByDescending(a => RosterState.IsSupply(a.Status))
+                .ThenByDescending(a => a.CreatedAtUtc)
+                .ThenByDescending(a => a.Id)
+                .First();
+
+            var occurrenceRequirements = requirementsByOccurrence[occurrence.Id].ToList();
+            var snapshot = RosterState.Compute(
+                occurrence.Id,
+                occurrenceRequirements.Select(r => (r.Id, r.RequiredCount)),
+                supplyByOccurrence[occurrence.Id].Select(a => (a.RequirementId, a.Status)));
+
+            var requirement = mineHere.RequirementId is { } requirementId
+                ? occurrenceRequirements.FirstOrDefault(r => r.Id == requirementId)
+                : null;
+            var requirementSupply = requirement is null ? null : snapshot.Requirements[requirement.Id];
+
+            items.Add(new PlayerOccurrenceDto
+            {
+                OccurrenceId = occurrence.Id,
+                SeriesId = occurrence.SeriesId,
+                TeamId = occurrence.TeamId,
+                Name = occurrence.Name,
+                ScheduledStartUtc = EventService.AsUtc(occurrence.ScheduledStartUtc),
+                ScheduledEndUtc = AsUtc(occurrence.ScheduledEndUtc),
+                Status = occurrence.Status,
+                VenueId = occurrence.VenueId,
+                Location = occurrence.Location,
+                Category = occurrence.Category,
+                HostPlayerId = occurrence.HostId,
+                HostUsername = occurrence.HostUsername,
+                HostDisplayName = occurrence.HostDisplayName,
+                IsHost = occurrence.HostId == playerId,
+                MyAssignmentId = mineHere.Id,
+                MyAssignmentStatus = mineHere.Status,
+                MyRoleCode = mineHere.RoleCode ?? requirement?.RoleCode,
+                MyRequirementId = mineHere.RequirementId,
+                RequiredCount = requirementSupply?.RequiredCount,
+                SupplyCount = requirementSupply?.SupplyCount,
+                OpenQuantity = requirementSupply?.OpenQuantity,
+                IsRosterReady = snapshot.IsRosterReady
+            });
+        }
+
+        var last = page[^1];
+        return new PlayerOccurrencePageDto
+        {
+            Items = items,
+            NextCursor = hasMore ? new PlayerOccurrenceCursor(EventService.AsUtc(last.ScheduledStartUtc), last.Id).Encode() : null
+        };
+    }
+
+    /// <summary>
+    /// The shared host-only write on one assignment (lifecycle transitions, host removal).
+    /// Host authority and occurrence state are checked, and then re-validated at commit time:
+    /// the occurrence row gets a RowVersion-checked UPDATE in the same transaction as the
+    /// assignment change, so a host transfer or status change that commits first makes this
+    /// save fail instead of being ignored. The assignment's own RowVersion guards it against a
+    /// concurrent leave/remove/transition. On a concurrency loss nothing was saved; the whole
+    /// operation is re-run from fresh state (a bounded re-validation, never a blind overwrite),
+    /// which turns the loss into the real outcome: 403 for a former host, OccurrenceClosed,
+    /// AssignmentEnded, AssignmentTransitionInvalid, or success when only a sibling change on
+    /// the same occurrence moved its RowVersion.
+    /// </summary>
+    private async Task<RosterAssignmentDto> HostUpdateAssignmentAsync(
+        Guid occurrenceId,
+        Guid assignmentId,
+        Guid hostPlayerId,
+        Action<RosterAssignment, DateTime> apply,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var occurrence = await _context.Events.FirstOrDefaultAsync(e => e.Id == occurrenceId, cancellationToken)
+                ?? throw new EventOccurrenceNotFoundException(occurrenceId);
+
+            EnsureHost(occurrence, hostPlayerId);
+            EnsureOpen(occurrence.Status);
+
+            var assignment = await _context.RosterAssignments
+                .FirstOrDefaultAsync(a => a.Id == assignmentId && a.OccurrenceId == occurrenceId, cancellationToken)
+                ?? throw new RosterAssignmentNotFoundException(assignmentId);
+
+            apply(assignment, _timeProvider.GetUtcNow().UtcDateTime);
+
+            // Commit-time host/status check: no value changes, but the UPDATE carries the
+            // occurrence RowVersion read above.
+            _context.Entry(occurrence).Property(e => e.HostId).IsModified = true;
+
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _context.ChangeTracker.Clear();
+                if (attempt >= MaxHostUpdateAttempts)
+                    throw new RosterConflictException(RosterConflictCodes.RosterChanged, AssignmentChangedMessage, ex);
+                continue;
+            }
+
+            var player = await LoadPublicPlayerAsync(assignment.PlayerId, cancellationToken);
+            return MapToDto(assignment, player?.Username ?? string.Empty, player?.DisplayName);
+        }
+    }
+
+    private static void EnsureHost(EventOccurrence occurrence, Guid callerPlayerId)
+    {
+        if (occurrence.HostId is null)
+            throw new RosterConflictException(RosterConflictCodes.OccurrenceHasNoHost, NoHostMessage);
+
+        if (occurrence.HostId != callerPlayerId)
+            throw new OccurrenceHostForbiddenException(occurrence.Id, callerPlayerId);
+    }
+
+    /// <summary>
+    /// Applies a host lifecycle step. Ended rows are never resurrected (AssignmentEnded); any
+    /// other step not allowed by <see cref="RosterState.TargetStatusFor"/> is
+    /// AssignmentTransitionInvalid. NoShow stops holding supply, so the spot reopens in the same
+    /// commit; the row is kept with exit reason NoShow.
+    /// </summary>
+    private static void ApplyTransition(RosterAssignment assignment, RosterAssignmentTransition transition, DateTime nowUtc)
+    {
+        if (!RosterState.IsSupply(assignment.Status))
+            throw new RosterConflictException(RosterConflictCodes.AssignmentEnded, AssignmentEndedMessage);
+
+        var target = RosterState.TargetStatusFor(assignment.Status, transition)
+            ?? throw new RosterConflictException(
+                RosterConflictCodes.AssignmentTransitionInvalid,
+                $"A roster assignment that is {assignment.Status} cannot be {TransitionVerb(transition)}.");
+
+        assignment.Status = target;
+        switch (target)
+        {
+            case RosterAssignmentStatus.CheckedIn:
+                assignment.CheckedInAtUtc = nowUtc;
+                break;
+            case RosterAssignmentStatus.Active:
+                assignment.ActivatedAtUtc = nowUtc;
+                break;
+            case RosterAssignmentStatus.NoShow:
+                assignment.ExitReason = RosterExitReason.NoShow;
+                assignment.DepartedAtUtc = nowUtc;
+                break;
+        }
+    }
+
+    private static string TransitionVerb(RosterAssignmentTransition transition) => transition switch
+    {
+        RosterAssignmentTransition.CheckIn => "checked in",
+        RosterAssignmentTransition.Activate => "activated",
+        RosterAssignmentTransition.NoShow => "marked as a no-show",
+        _ => transition.ToString()
+    };
+
+    /// <summary>
+    /// Ends a live assignment: Reserved/Confirmed become Cancelled (never participated),
+    /// CheckedIn/Active become Departed. <c>DepartedAtUtc</c> records the exit time in both cases.
+    /// </summary>
+    private static void End(RosterAssignment assignment, RosterExitReason exitReason, DateTime nowUtc)
+    {
+        if (!RosterState.IsSupply(assignment.Status))
+            throw new RosterConflictException(RosterConflictCodes.AssignmentEnded, AssignmentEndedMessage);
+
+        assignment.Status = RosterState.ExitStatusFor(assignment.Status);
+        assignment.ExitReason = exitReason;
+        assignment.DepartedAtUtc = nowUtc;
+    }
 
     /// <summary>
     /// The single capacity-consuming write, shared by host assignment and player self-claim.
@@ -341,16 +628,15 @@ public class EventRosterService : IEventRosterService
     }
 
     /// <summary>
-    /// Ends a live assignment without deleting it: Reserved/Confirmed become Cancelled (never
-    /// participated), CheckedIn/Active become Departed. <c>DepartedAtUtc</c> records the exit
-    /// time in both cases. Open quantity reopens in the same commit because supply is derived
-    /// from status. The assignment's RowVersion guards against a concurrent transition.
+    /// The holder ends their own live assignment without deleting it (see <see cref="End"/>).
+    /// Open quantity reopens in the same commit because supply is derived from status. The
+    /// assignment's RowVersion guards against a concurrent transition.
     /// </summary>
     private async Task<RosterAssignmentDto> EndAssignmentAsync(
         Guid occurrenceId,
         Guid assignmentId,
         RosterExitReason exitReason,
-        Guid? requiredHolderId,
+        Guid requiredHolderId,
         CancellationToken cancellationToken)
     {
         var occurrenceStatus = await LoadOccurrenceStatusAsync(occurrenceId, cancellationToken);
@@ -359,17 +645,12 @@ public class EventRosterService : IEventRosterService
             .FirstOrDefaultAsync(a => a.Id == assignmentId && a.OccurrenceId == occurrenceId, cancellationToken)
             ?? throw new RosterAssignmentNotFoundException(assignmentId);
 
-        if (requiredHolderId is { } holderId && assignment.PlayerId != holderId)
-            throw new RosterAssignmentForbiddenException(assignmentId, holderId);
+        if (assignment.PlayerId != requiredHolderId)
+            throw new RosterAssignmentForbiddenException(assignmentId, requiredHolderId);
 
         EnsureOpen(occurrenceStatus);
 
-        if (!RosterState.IsSupply(assignment.Status))
-            throw new RosterConflictException(RosterConflictCodes.AssignmentEnded, AssignmentEndedMessage);
-
-        assignment.Status = RosterState.ExitStatusFor(assignment.Status);
-        assignment.ExitReason = exitReason;
-        assignment.DepartedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        End(assignment, exitReason, _timeProvider.GetUtcNow().UtcDateTime);
 
         try
         {

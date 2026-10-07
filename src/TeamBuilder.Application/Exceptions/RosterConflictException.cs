@@ -43,4 +43,28 @@ public static class RosterConflictCodes
 
     /// <summary>The occurrence already has a requirement for this role code.</summary>
     public const string DuplicateRequirementRole = "DuplicateRequirementRole";
+
+    /// <summary>
+    /// The host lifecycle step is not allowed from the assignment's current status (for
+    /// example activating a player who has not checked in).
+    /// </summary>
+    public const string AssignmentTransitionInvalid = "AssignmentTransitionInvalid";
+
+    /// <summary>The occurrence has no host, so no host-only action can be taken on it.</summary>
+    public const string OccurrenceHasNoHost = "OccurrenceHasNoHost";
+
+    /// <summary>
+    /// The occurrence changed concurrently (for example a competing host transfer committed
+    /// first) and nothing was saved. Reload before retrying.
+    /// </summary>
+    public const string OccurrenceChanged = "OccurrenceChanged";
+
+    /// <summary>The host transfer target has no linked identity and could not sign in to manage the event.</summary>
+    public const string HostTransferTargetNotLinked = "HostTransferTargetNotLinked";
+
+    /// <summary>
+    /// The occurrence has roster participation history, so deleting it would erase that
+    /// history. Cancel it instead.
+    /// </summary>
+    public const string OccurrenceHasParticipationHistory = "OccurrenceHasParticipationHistory";
 }
