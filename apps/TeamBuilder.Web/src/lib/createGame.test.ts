@@ -59,6 +59,8 @@ describe('form defaults', () => {
 
   it('picks the next Wednesday', () => {
     expect(nextWednesday(new Date(2026, 9, 7))).toBe('2026-10-07'); // a Wednesday
+    expect(nextWednesday(new Date(2026, 9, 7, 19, 59))).toBe('2026-10-07');
+    expect(nextWednesday(new Date(2026, 9, 7, 20, 0))).toBe('2026-10-14'); // tonight's game has started
     expect(nextWednesday(new Date(2026, 9, 8))).toBe('2026-10-14');
   });
 });
