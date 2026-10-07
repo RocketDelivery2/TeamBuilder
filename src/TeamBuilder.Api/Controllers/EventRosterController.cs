@@ -12,9 +12,9 @@ namespace TeamBuilder.Api.Controllers;
 
 /// <summary>
 /// Roster requirements and live assignments of one event occurrence. Reads are public and
-/// expose no email or identity data. Requirement creation, host assignment and host removal are
-/// host-only: missing occurrence 404, orphaned (no host) 409, non-host 403, then
-/// completed/cancelled/archived occurrence 409. Any linked player may self-claim open quantity
+/// expose no email or identity data. Requirement creation, host assignment, host removal and the
+/// day-of-game lifecycle (check-in, activate, no-show) are host-only: missing occurrence 404,
+/// orphaned (no host) 409, non-host 403, then completed/cancelled/archived occurrence 409. Any linked player may self-claim open quantity
 /// and leave their own assignment. Event participation does not require team membership, and
 /// the host holds no roster spot unless they claim one.
 /// </summary>
@@ -252,8 +252,9 @@ public class EventRosterController : ControllerBase
 
     /// <summary>
     /// The host ends a participant's live assignment (exit reason HostRemoved), with the same
-    /// transitions and history retention as leave. Host checks first (see the class summary),
-    /// then missing assignment 404 and already ended 409.
+    /// transitions and history retention as leave. Order: unlinked 403, missing occurrence 404,
+    /// no host 409 OccurrenceHasNoHost, non-host 403, closed occurrence 409 OccurrenceClosed,
+    /// missing assignment 404, already ended 409 AssignmentEnded.
     /// </summary>
     [HttpPost("assignments/{assignmentId}/remove")]
     [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
@@ -262,16 +263,85 @@ public class EventRosterController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<ActionResult<RosterAssignmentDto>> Remove(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken)
+    public Task<ActionResult<RosterAssignmentDto>> Remove(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken) =>
+        HostAssignmentActionAsync(
+            occurrenceId,
+            assignmentId,
+            "removed",
+            hostId => _rosterService.RemoveAsync(occurrenceId, assignmentId, hostId, cancellationToken),
+            cancellationToken);
+
+    /// <summary>
+    /// Host check-in: Confirmed to CheckedIn (the player arrived; still holds the spot).
+    /// Ordering as for remove, then 409 AssignmentEnded for an ended row or
+    /// AssignmentTransitionInvalid from any other status.
+    /// </summary>
+    [HttpPost("assignments/{assignmentId}/check-in")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(RosterAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public Task<ActionResult<RosterAssignmentDto>> CheckIn(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken) =>
+        TransitionAsync(occurrenceId, assignmentId, RosterAssignmentTransition.CheckIn, cancellationToken);
+
+    /// <summary>Host activation: CheckedIn to Active (the player is in the game; still holds the spot).</summary>
+    [HttpPost("assignments/{assignmentId}/activate")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(RosterAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public Task<ActionResult<RosterAssignmentDto>> Activate(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken) =>
+        TransitionAsync(occurrenceId, assignmentId, RosterAssignmentTransition.Activate, cancellationToken);
+
+    /// <summary>
+    /// Host no-show: Confirmed or CheckedIn to NoShow (exit reason NoShow). The row is kept and
+    /// its spot reopens in the same commit.
+    /// </summary>
+    [HttpPost("assignments/{assignmentId}/no-show")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(RosterAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public Task<ActionResult<RosterAssignmentDto>> NoShow(Guid occurrenceId, Guid assignmentId, CancellationToken cancellationToken) =>
+        TransitionAsync(occurrenceId, assignmentId, RosterAssignmentTransition.NoShow, cancellationToken);
+
+    private Task<ActionResult<RosterAssignmentDto>> TransitionAsync(
+        Guid occurrenceId,
+        Guid assignmentId,
+        RosterAssignmentTransition transition,
+        CancellationToken cancellationToken) =>
+        HostAssignmentActionAsync(
+            occurrenceId,
+            assignmentId,
+            transition.ToString(),
+            hostId => _rosterService.TransitionAsync(occurrenceId, assignmentId, hostId, transition, cancellationToken),
+            cancellationToken);
+
+    /// <summary>
+    /// Host-only action on one assignment. Host authority is enforced by the service inside the
+    /// same commit as the change, so it holds even against a concurrent host transfer.
+    /// </summary>
+    private async Task<ActionResult<RosterAssignmentDto>> HostAssignmentActionAsync(
+        Guid occurrenceId,
+        Guid assignmentId,
+        string action,
+        Func<Guid, Task<RosterAssignmentDto>> run,
+        CancellationToken cancellationToken)
     {
-        var denied = await AuthorizeHostMutationAsync(occurrenceId, cancellationToken);
-        if (denied != null)
-            return denied;
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
 
         try
         {
-            var assignment = await _rosterService.RemoveAsync(occurrenceId, assignmentId, cancellationToken);
-            _logger.LogInformation("Host removed roster assignment {AssignmentId} of event {EventId}", assignmentId, occurrenceId);
+            var assignment = await run(playerId.Value);
+            _logger.LogInformation("Host {PlayerId} applied {Action} to roster assignment {AssignmentId} of event {EventId}", playerId.Value, action, assignmentId, occurrenceId);
             return Ok(assignment);
         }
         catch (EventOccurrenceNotFoundException)
@@ -281,6 +351,11 @@ public class EventRosterController : ControllerBase
         catch (RosterAssignmentNotFoundException)
         {
             return NotFound();
+        }
+        catch (OccurrenceHostForbiddenException)
+        {
+            _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, occurrenceId);
+            return Forbid();
         }
     }
 

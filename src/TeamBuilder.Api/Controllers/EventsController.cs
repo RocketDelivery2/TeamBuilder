@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Enums;
@@ -189,6 +190,52 @@ public class EventsController : ControllerBase
         await _eventService.DeleteAsync(id, cancellationToken);
         _logger.LogInformation("Deleted event {EventId}", id);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Transfers stewardship of this occurrence (only this one, never its whole series) to
+    /// another existing, identity-linked player. Current host only. Roster assignments,
+    /// requirements, capacity, TeamId and status are unchanged; the old host loses host-only
+    /// authority at commit and the new host gains it. Order: unlinked 403, missing occurrence
+    /// 404, no host 409, non-host 403, unknown target 400, unlinked target 409
+    /// HostTransferTargetNotLinked; a concurrent change that committed first gives 409
+    /// OccurrenceChanged.
+    /// </summary>
+    [HttpPost("{id}/host/transfer")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(EventDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<EventDto>> TransferHost(
+        Guid id,
+        [FromBody] TransferOccurrenceHostDto transferDto,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var playerId = await _currentPlayerResolver.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
+        try
+        {
+            var teamEvent = await _eventService.TransferHostAsync(id, playerId.Value, transferDto.NewHostPlayerId!.Value, cancellationToken);
+            _logger.LogInformation("Transferred host of event {EventId} from {OldHostId} to {NewHostId}", id, playerId.Value, teamEvent.HostId);
+            return Ok(teamEvent);
+        }
+        catch (EventOccurrenceNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (OccurrenceHostForbiddenException)
+        {
+            _logger.LogInformation("Player {PlayerId} is not the host of event {EventId}", playerId.Value, id);
+            return Forbid();
+        }
     }
 
     private static string SanitizeForLog(string? value)

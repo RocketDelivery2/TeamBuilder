@@ -1,15 +1,24 @@
 using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Application.DTOs;
+using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
 using TeamBuilder.Infrastructure.Data;
+using TeamBuilder.Infrastructure.Persistence;
 
 namespace TeamBuilder.Infrastructure.Services;
 
 public class EventService : IEventService
 {
+    public const string OccurrenceChangedMessage =
+        "The event changed while it was being saved. Reload it and try again.";
+    public const string ParticipationHistoryMessage =
+        "This event has roster participation history and cannot be deleted. Cancel it instead.";
+    public const string HostTransferTargetNotLinkedMessage =
+        "The new host has no linked sign-in identity, so they could not manage this event.";
+
     private readonly TeamBuilderDbContext _context;
 
     public EventService(TeamBuilderDbContext context)
@@ -137,20 +146,103 @@ public class EventService : IEventService
         if (teamEvent.SeriesId != null)
             teamEvent.IsDetached = true;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await SaveOccurrenceChangesAsync(cancellationToken);
 
         return MapToDto(teamEvent);
     }
 
+    /// <summary>
+    /// Hard-deletes an occurrence that has no roster participation history. One that has any
+    /// RosterAssignment row (live or historical) is refused with 409
+    /// OccurrenceHasParticipationHistory: cancel it instead. The NO ACTION foreign key from
+    /// RosterAssignments makes the same refusal race-safe. Requirements and imported
+    /// RosterEntries still go with the occurrence.
+    /// </summary>
     public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var teamEvent = await _context.Events.FindAsync([id], cancellationToken);
         if (teamEvent == null) return false;
 
+        if (await _context.RosterAssignments.AnyAsync(a => a.OccurrenceId == id, cancellationToken))
+            throw new RosterConflictException(RosterConflictCodes.OccurrenceHasParticipationHistory, ParticipationHistoryMessage);
+
         _context.Events.Remove(teamEvent);
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await SaveOccurrenceChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (RosterConflictClassifier.IsOccurrenceWithParticipationHistoryDelete(ex))
+        {
+            throw new RosterConflictException(RosterConflictCodes.OccurrenceHasParticipationHistory, ParticipationHistoryMessage, ex);
+        }
 
         return true;
+    }
+
+    public async Task<EventDto> TransferHostAsync(
+        Guid occurrenceId,
+        Guid callerPlayerId,
+        Guid newHostPlayerId,
+        CancellationToken cancellationToken = default)
+    {
+        var occurrence = await _context.Events
+            .Include(e => e.Team)
+            .Include(e => e.Venue)
+            .FirstOrDefaultAsync(e => e.Id == occurrenceId, cancellationToken)
+            ?? throw new EventOccurrenceNotFoundException(occurrenceId);
+
+        if (occurrence.HostId is null)
+            throw new RosterConflictException(RosterConflictCodes.OccurrenceHasNoHost, EventRosterService.NoHostMessage);
+
+        if (occurrence.HostId != callerPlayerId)
+            throw new OccurrenceHostForbiddenException(occurrenceId, callerPlayerId);
+
+        if (!await _context.Players.AnyAsync(p => p.Id == newHostPlayerId, cancellationToken))
+            throw new ArgumentException("NewHostPlayerId does not reference an existing player.");
+
+        // The event must never be handed to an account that cannot sign in to manage it.
+        if (!await _context.PlayerIdentities.AnyAsync(pi => pi.PlayerId == newHostPlayerId, cancellationToken))
+            throw new RosterConflictException(RosterConflictCodes.HostTransferTargetNotLinked, HostTransferTargetNotLinkedMessage);
+
+        if (newHostPlayerId != callerPlayerId)
+        {
+            // Only the host changes: roster assignments, requirements, capacity, TeamId and
+            // status are untouched, and the target may or may not hold a roster spot. A series
+            // occurrence keeps its series provenance but now carries an occurrence-specific host,
+            // so it is detached like any other occurrence-level edit; the series' own host is
+            // unchanged.
+            occurrence.HostId = newHostPlayerId;
+            if (occurrence.SeriesId != null)
+                occurrence.IsDetached = true;
+
+            // RowVersion-checked: of concurrent transfers exactly one commits; the others get
+            // 409 OccurrenceChanged and, on reload, are no longer the host.
+            await SaveOccurrenceChangesAsync(cancellationToken);
+        }
+
+        var dto = MapToDto(occurrence);
+        dto.HostUsername = await _context.Players
+            .Where(p => p.Id == newHostPlayerId)
+            .Select(p => p.Username)
+            .FirstOrDefaultAsync(cancellationToken);
+        return dto;
+    }
+
+    /// <summary>
+    /// Saves a change to a tracked occurrence. Its RowVersion makes a concurrent occurrence
+    /// change (host transfer, host roster action, status edit) a clean 409 OccurrenceChanged
+    /// instead of a silent last write wins or a 500.
+    /// </summary>
+    private async Task SaveOccurrenceChangesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new RosterConflictException(RosterConflictCodes.OccurrenceChanged, OccurrenceChangedMessage, ex);
+        }
     }
 
     internal static EventDto MapToDto(EventOccurrence teamEvent)

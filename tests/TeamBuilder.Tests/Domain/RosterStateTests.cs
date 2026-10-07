@@ -181,4 +181,36 @@ public class RosterStateTests
 
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
+
+    [Fact]
+    public void TargetStatusFor_AllowsExactlyTheHostLifecycleSteps()
+    {
+        var allowed = new Dictionary<(RosterAssignmentStatus, RosterAssignmentTransition), RosterAssignmentStatus>
+        {
+            [(RosterAssignmentStatus.Confirmed, RosterAssignmentTransition.CheckIn)] = RosterAssignmentStatus.CheckedIn,
+            [(RosterAssignmentStatus.CheckedIn, RosterAssignmentTransition.Activate)] = RosterAssignmentStatus.Active,
+            [(RosterAssignmentStatus.Confirmed, RosterAssignmentTransition.NoShow)] = RosterAssignmentStatus.NoShow,
+            [(RosterAssignmentStatus.CheckedIn, RosterAssignmentTransition.NoShow)] = RosterAssignmentStatus.NoShow
+        };
+
+        foreach (var status in Enum.GetValues<RosterAssignmentStatus>())
+        {
+            foreach (var transition in Enum.GetValues<RosterAssignmentTransition>())
+            {
+                var target = RosterState.TargetStatusFor(status, transition);
+                if (allowed.TryGetValue((status, transition), out var expected))
+                    target.Should().Be(expected, $"{transition} from {status}");
+                else
+                    target.Should().BeNull($"{transition} from {status} is not a lifecycle step");
+            }
+        }
+    }
+
+    [Fact]
+    public void LifecycleTargets_CheckedInAndActiveHoldSupply_NoShowDoesNot()
+    {
+        RosterState.IsSupply(RosterAssignmentStatus.CheckedIn).Should().BeTrue();
+        RosterState.IsSupply(RosterAssignmentStatus.Active).Should().BeTrue();
+        RosterState.IsSupply(RosterAssignmentStatus.NoShow).Should().BeFalse();
+    }
 }

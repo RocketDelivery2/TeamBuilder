@@ -64,6 +64,43 @@ public class PlayersController : ControllerBase
     }
 
     /// <summary>
+    /// The caller's own game schedule: occurrences where the caller holds a live roster
+    /// assignment (with <paramref name="includeTerminal"/>, also ones they left, were removed
+    /// from or no-showed), not over yet relative to <paramref name="fromUtc"/> (default now; an
+    /// in-progress occurrence always counts), starting before <paramref name="toUtc"/> when
+    /// given, nearest first. Keyset-paged: pass the returned <c>nextCursor</c> as
+    /// <paramref name="cursor"/>. Occurrence participation, not team membership; the caller
+    /// being host alone does not list an occurrence. Unlinked caller 403.
+    /// </summary>
+    [HttpGet("me/occurrences")]
+    [Authorize(AuthenticationSchemes = ExternalIdentityAuthentication.SchemeName)]
+    [ProducesResponseType(typeof(PlayerOccurrencePageDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PlayerOccurrencePageDto>> GetMyOccurrences(
+        [FromServices] IEventRosterService rosterService,
+        [FromQuery] DateTime? fromUtc = null,
+        [FromQuery] DateTime? toUtc = null,
+        [FromQuery] bool includeTerminal = false,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var playerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
+        if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+        var page = await rosterService.GetPlayerOccurrencesAsync(
+            playerId.Value,
+            new PlayerOccurrenceQuery(fromUtc, toUtc, includeTerminal, pageSize, cursor),
+            cancellationToken);
+        return Ok(page);
+    }
+
+    /// <summary>
     /// Creates a new player for the caller and links the caller's external identity to it.
     /// 409 when the identity is already linked or the username is taken.
     /// </summary>

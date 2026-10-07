@@ -15,6 +15,7 @@ namespace TeamBuilder.Infrastructure.Data.Configurations;
 /// <item>a replaced assignment belongs to the same occurrence (composite FK) and is never the
 /// row itself (CHECK). Longer cycles are not detected.</item>
 /// </list>
+/// <item>an occurrence with assignments cannot be deleted (NO ACTION), so history survives.</item>
 /// There is deliberately no relationship to TeamMember.
 /// </summary>
 public class RosterAssignmentConfiguration : IEntityTypeConfiguration<RosterAssignment>
@@ -24,6 +25,7 @@ public class RosterAssignmentConfiguration : IEntityTypeConfiguration<RosterAssi
     public const string RequirementForeignKeyName = "FK_RosterAssignments_RosterRequirements_RequirementId_OccurrenceId";
     public const string ReplacedAssignmentForeignKeyName = "FK_RosterAssignments_RosterAssignments_ReplacedAssignmentId_OccurrenceId";
     public const string PlayerForeignKeyName = "FK_RosterAssignments_Players_PlayerId";
+    public const string OccurrenceForeignKeyName = "FK_RosterAssignments_Events_OccurrenceId";
     public const string NotSelfReplacementCheckName = "CK_RosterAssignments_ReplacedAssignmentId_NotSelf";
     public const string StatusRangeCheckName = "CK_RosterAssignments_Status_Range";
     public const string SourceRangeCheckName = "CK_RosterAssignments_Source_Range";
@@ -75,11 +77,14 @@ public class RosterAssignmentConfiguration : IEntityTypeConfiguration<RosterAssi
         builder.Property(a => a.RowVersion)
             .IsRowVersion();
 
-        // Participation history goes with its occurrence (the only cascade path into this table).
+        // Participation history is never silently erased by deleting its occurrence (NO ACTION):
+        // EventService.DeleteAsync returns 409 OccurrenceHasParticipationHistory first, and this
+        // FK is the race-safe final guard. Cancel an occurrence instead of deleting it.
         builder.HasOne(a => a.EventOccurrence)
             .WithMany(e => e.RosterAssignments)
             .HasForeignKey(a => a.OccurrenceId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict)
+            .HasConstraintName(OccurrenceForeignKeyName);
 
         // Participation history is never silently erased by deleting a player (NO ACTION).
         builder.HasOne(a => a.Player)
