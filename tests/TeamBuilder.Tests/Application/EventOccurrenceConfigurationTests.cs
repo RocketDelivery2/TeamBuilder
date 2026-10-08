@@ -103,11 +103,11 @@ public class EventOccurrenceConfigurationTests
     }
 
     [Fact]
-    public void Venue_DeclaresCoordinateChecks_AndSeriesDeclaresDurationAndParticipantChecks()
+    public void Venue_DeclaresCoordinateAndPrivacyChecks_AndSeriesDeclaresDurationAndParticipantChecks()
     {
         var model = Model();
         model.FindEntityType(typeof(Venue))!.GetCheckConstraints().Select(c => c.Name)
-            .Should().BeEquivalentTo("CK_Venues_Latitude_Range", "CK_Venues_Longitude_Range");
+            .Should().BeEquivalentTo("CK_Venues_Latitude_Range", "CK_Venues_Longitude_Range", "CK_Venues_PrivacyLevel_Range");
         model.FindEntityType(typeof(EventSeries))!.GetCheckConstraints().ToDictionary(c => c.Name!, c => c.Sql)
             .Should().BeEquivalentTo(new Dictionary<string, string>
             {

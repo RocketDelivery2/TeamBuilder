@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCreateEventRequest, defaultRequiredPlayersFor, initialCreateGameForm, nextWednesday, type CreateGameForm } from './createGame';
+import { buildCreateEventRequest, buildCreateVenueRequest, defaultRequiredPlayersFor, initialCreateGameForm, nextWednesday, type CreateGameForm } from './createGame';
 
 const form = (overrides: Partial<CreateGameForm> = {}): CreateGameForm => ({
   activity: 'basketball',
@@ -10,6 +10,15 @@ const form = (overrides: Partial<CreateGameForm> = {}): CreateGameForm => ({
   location: ' Rec Center ',
   requiredPlayers: 10,
   hostIsPlaying: true,
+  useVenue: false,
+  venueName: '',
+  venueAddress: '',
+  venueCity: '',
+  venueState: '',
+  venueType: 'outdoor',
+  venuePrivacy: 'public',
+  venueLat: '',
+  venueLon: '',
   ...overrides,
 });
 
@@ -62,5 +71,46 @@ describe('form defaults', () => {
     expect(nextWednesday(new Date(2026, 9, 7, 19, 59))).toBe('2026-10-07');
     expect(nextWednesday(new Date(2026, 9, 7, 20, 0))).toBe('2026-10-14'); // tonight's game has started
     expect(nextWednesday(new Date(2026, 9, 8))).toBe('2026-10-14');
+  });
+});
+
+describe('buildCreateVenueRequest', () => {
+  const withVenue = (overrides: Partial<CreateGameForm> = {}) =>
+    form({ useVenue: true, venueName: ' Union Park ', venueAddress: '1501 W Randolph St', venueCity: 'Chicago', venueState: 'IL', venueLat: '41.8849', venueLon: '-87.6661', ...overrides });
+
+  it('is null when no venue is attached, and the game keeps its free-text location', () => {
+    expect(buildCreateVenueRequest(form(), 'America/Chicago')).toBeNull();
+    expect(buildCreateEventRequest(form()).venueId).toBeUndefined();
+    expect(buildCreateEventRequest(form()).location).toBe('Rec Center');
+  });
+
+  it('creates a public physical venue with the browser time zone and typed coordinates', () => {
+    expect(buildCreateVenueRequest(withVenue(), 'America/Chicago')).toEqual({
+      name: 'Union Park',
+      addressLine1: '1501 W Randolph St',
+      city: 'Chicago',
+      stateOrProvince: 'IL',
+      latitude: 41.8849,
+      longitude: -87.6661,
+      timeZoneId: 'America/Chicago',
+      venueType: 2,
+      privacyLevel: 1,
+    });
+  });
+
+  it('marks a private indoor venue', () => {
+    const request = buildCreateVenueRequest(withVenue({ venuePrivacy: 'private', venueType: 'indoor' }), 'America/Chicago')!;
+    expect([request.privacyLevel, request.venueType]).toEqual([2, 1]);
+  });
+
+  it('refuses a venue without a name or with impossible coordinates (nothing is geocoded)', () => {
+    expect(() => buildCreateVenueRequest(withVenue({ venueName: ' ' }), 'UTC')).toThrow(/name/);
+    expect(() => buildCreateVenueRequest(withVenue({ venueLat: '' }), 'UTC')).toThrow(/Latitude/);
+    expect(() => buildCreateVenueRequest(withVenue({ venueLat: '91' }), 'UTC')).toThrow(/Latitude/);
+    expect(() => buildCreateVenueRequest(withVenue({ venueLon: '-180.5' }), 'UTC')).toThrow(/Longitude/);
+  });
+
+  it('attaches the created venue to the game request', () => {
+    expect(buildCreateEventRequest(form(), 'venue-1').venueId).toBe('venue-1');
   });
 });

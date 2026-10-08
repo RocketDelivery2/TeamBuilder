@@ -44,6 +44,13 @@ describe('interpretError', () => {
     expect(result.message).toBe('RequirementId is required.');
   });
 
+  it('429 asks the searcher to slow down and is not auto-retried', () => {
+    const result = interpretError(new ApiError(429));
+    expect(result.reaction).toBe('slow-down');
+    expect(result.message).toMatch(/Too many searches/);
+    expect(result.autoRetryable).toBe(false);
+  });
+
   it('network failures are generic errors', () => {
     expect(interpretError(new TypeError('Failed to fetch')).reaction).toBe('error');
   });

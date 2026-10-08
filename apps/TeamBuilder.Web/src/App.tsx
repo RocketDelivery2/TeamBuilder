@@ -12,6 +12,7 @@ import { Onboard } from './pages/Onboard';
 import { MyGames } from './pages/MyGames';
 import { CreateGame } from './pages/CreateGame';
 import { GameDetail } from './pages/GameDetail';
+import { Discover } from './pages/Discover';
 
 type Phase =
   | { name: 'starting' }
@@ -109,6 +110,7 @@ export function App() {
     case 'ready':
       body =
         route.name === 'create' ? <CreateGame /> :
+        route.name === 'discover' ? <Discover /> :
         route.name === 'game' ? <GameDetail occurrenceId={route.id} /> :
         route.name === 'not-found' ? <p className="notice">Page not found.</p> :
         <MyGames />;
@@ -122,7 +124,8 @@ export function App() {
         <a href="/" className="brand" onClick={(e) => { e.preventDefault(); navigate('/'); }}>TeamBuilder</a>
         {session && (
           <div className="header-actions">
-            <span className="muted small">{session.me.displayName || session.me.username}</span>
+            <a href="/discover" className="nav-link" onClick={(e) => { e.preventDefault(); navigate('/discover'); }}>Discover</a>
+            <span className="muted small header-name">{session.me.displayName || session.me.username}</span>
             <button className="link" onClick={signOut}>Sign out</button>
           </div>
         )}

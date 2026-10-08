@@ -122,6 +122,13 @@ public class RosterAssignmentConfiguration : IEntityTypeConfiguration<RosterAssi
 
         builder.HasIndex(a => a.PlayerId);
         builder.HasIndex(a => new { a.OccurrenceId, a.Status });
+
+        // The requirement FK index, made covering for discovery's openOnly predicate ("some
+        // requirement has fewer current assignments than it requires"), which counts supply
+        // rows per requirement for every candidate game; without Status every counted row cost
+        // a clustered key lookup.
+        builder.HasIndex(a => new { a.RequirementId, a.OccurrenceId })
+            .IncludeProperties(a => a.Status);
     }
 
     private static string RangeCheck(string column, IEnumerable<int> values)

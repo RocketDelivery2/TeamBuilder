@@ -116,12 +116,15 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TeamId");
 
-                    b.HasIndex("VenueId");
-
                     b.HasIndex("SeriesId", "ScheduledStartUtc")
                         .IsUnique()
                         .HasDatabaseName("UX_Events_SeriesId_ScheduledStartUtc")
                         .HasFilter("[SeriesId] IS NOT NULL");
+
+                    b.HasIndex("VenueId", "Status", "ScheduledStartUtc")
+                        .HasDatabaseName("IX_Events_VenueId_Status_ScheduledStartUtc");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("VenueId", "Status", "ScheduledStartUtc"), new[] { "Category" });
 
                     b.ToTable("Events", (string)null);
                 });
@@ -462,6 +465,8 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("RequirementId", "OccurrenceId");
 
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("RequirementId", "OccurrenceId"), new[] { "Status" });
+
                     b.ToTable("RosterAssignments", null, t =>
                         {
                             t.HasCheckConstraint("CK_RosterAssignments_ExitReason_Range", "[ExitReason] IS NULL OR ([ExitReason] >= 1 AND [ExitReason] <= 5)");
@@ -774,6 +779,9 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<Guid?>("CreatedByPlayerId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<decimal?>("Latitude")
                         .HasPrecision(9, 6)
                         .HasColumnType("decimal(9,6)");
@@ -790,6 +798,9 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                     b.Property<string>("PostalCode")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
+
+                    b.Property<int>("PrivacyLevel")
+                        .HasColumnType("int");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
@@ -813,11 +824,15 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedByPlayerId");
+
                     b.ToTable("Venues", t =>
                         {
                             t.HasCheckConstraint("CK_Venues_Latitude_Range", "[Latitude] >= -90 AND [Latitude] <= 90");
 
                             t.HasCheckConstraint("CK_Venues_Longitude_Range", "[Longitude] >= -180 AND [Longitude] <= 180");
+
+                            t.HasCheckConstraint("CK_Venues_PrivacyLevel_Range", "[PrivacyLevel] >= 1 AND [PrivacyLevel] <= 2");
                         });
                 });
 
@@ -1002,6 +1017,16 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                     b.Navigation("Player");
 
                     b.Navigation("Team");
+                });
+
+            modelBuilder.Entity("TeamBuilder.Domain.Entities.Venue", b =>
+                {
+                    b.HasOne("TeamBuilder.Domain.Entities.Player", "CreatedByPlayer")
+                        .WithMany()
+                        .HasForeignKey("CreatedByPlayerId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CreatedByPlayer");
                 });
 
             modelBuilder.Entity("TeamBuilder.Domain.Entities.EventOccurrence", b =>

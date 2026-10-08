@@ -83,6 +83,14 @@ public class CreateEventDto : IValidatableObject
     [NonEmptyGuid]
     public Guid? TeamId { get; set; }
 
+    /// <summary>
+    /// Optional venue (from <c>POST /api/v1/venues</c>). Any Public or Virtual venue may be used;
+    /// a Private venue only by the player who created it. Only occurrences with a physical venue
+    /// that has coordinates appear in radius discovery; <see cref="Location"/> stays free text.
+    /// </summary>
+    [NonEmptyGuid]
+    public Guid? VenueId { get; set; }
+
     /// <summary>Optional scheduled end (UTC); must be after <see cref="EventDateUtc"/>.</summary>
     public DateTime? ScheduledEndUtc { get; set; }
 

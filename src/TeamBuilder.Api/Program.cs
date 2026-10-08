@@ -1,9 +1,12 @@
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
 using TeamBuilder.Api.Middleware;
+using TeamBuilder.Api.RateLimiting;
 using TeamBuilder.Api.Workers;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
@@ -25,6 +28,8 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IEventSeriesService, EventSeriesService>();
 builder.Services.AddScoped<IEventRosterService, EventRosterService>();
 builder.Services.AddScoped<IEventSeriesMaterializer, EventSeriesMaterializer>();
+builder.Services.AddScoped<IVenueService, VenueService>();
+builder.Services.AddScoped<IOccurrenceDiscoveryService, OccurrenceDiscoveryService>();
 builder.Services.AddSingleton(TimeProvider.System);
 
 // Keeps active recurring series materialized 21 local days ahead (hourly; first pass at startup).
@@ -79,6 +84,42 @@ builder.Services.AddOptions<JwtBearerOptions>(ExternalIdentityAuthentication.Sch
             }
         };
     });
+
+// Public discovery is the first high-frequency anonymous route: a conservative in-memory
+// fixed window per client IP (RateLimiting:Discovery). Only the discovery endpoint opts in; it
+// is never an authority for roster claims, which the database guards.
+builder.Services.AddOptions<DiscoveryRateLimitOptions>()
+    .BindConfiguration(DiscoveryRateLimitOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            context.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await context.HttpContext.Response.WriteAsJsonAsync(new ProblemDetails
+        {
+            Status = StatusCodes.Status429TooManyRequests,
+            Title = "Too Many Requests",
+            Detail = "Too many searches. Wait a moment and try again."
+        }, cancellationToken);
+    };
+    options.AddPolicy(DiscoveryRateLimitOptions.PolicyName, httpContext =>
+    {
+        var limits = httpContext.RequestServices.GetRequiredService<IOptions<DiscoveryRateLimitOptions>>().Value;
+        return RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = limits.PermitLimit,
+                Window = TimeSpan.FromSeconds(limits.WindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
+});
 
 // Add ProblemDetails support
 builder.Services.AddProblemDetails();
@@ -157,6 +198,7 @@ if (!app.Environment.IsEnvironment("QA"))
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapGet("/", () => Results.Ok("TeamBuilder API Running"));
 app.MapControllers();

@@ -130,7 +130,22 @@ public class EventsController : ControllerBase
             }
         }
 
-        var teamEvent = await _eventService.CreateAsync(createEventDto, playerId.Value, cancellationToken);
+        EventDto teamEvent;
+        try
+        {
+            teamEvent = await _eventService.CreateAsync(createEventDto, playerId.Value, cancellationToken);
+        }
+        catch (VenueNotFoundException ex)
+        {
+            _logger.LogInformation("Venue with ID {VenueId} not found for event creation", ex.VenueId);
+            return NotFound();
+        }
+        catch (VenueAttachForbiddenException ex)
+        {
+            _logger.LogInformation("Player {PlayerId} may not use private venue {VenueId}", playerId.Value, ex.VenueId);
+            return Forbid();
+        }
+
         var safeEventName = SanitizeForLog(teamEvent.Name);
         _logger.LogInformation("Created event {EventId} with name {EventName}", teamEvent.Id, safeEventName);
         return CreatedAtAction(nameof(GetById), new { id = teamEvent.Id }, teamEvent);

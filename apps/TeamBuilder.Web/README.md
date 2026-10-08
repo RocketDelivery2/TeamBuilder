@@ -4,8 +4,10 @@ A thin, mobile-first React + TypeScript + Vite client for the TeamBuilder
 API. It renders what the API returns and holds no roster rules of its own:
 capacity, readiness and permissions are decided by the server.
 
-Screens: **My games**, **New game** (pickup game form), **Game** (roster,
-join/leave, host controls) and a **Share** link on each game.
+Screens: **My games**, **Find a game** (nearby games by distance, date and
+time, closest first), **New game** (pickup game form with an optional venue),
+**Game** (roster, join/leave, host controls, venue address or the private
+venue note) and a **Share** link on each game.
 
 For running it against an API and SQL Server, and for the full basketball QA
 walk-through, see [docs/private-qa.md](../../docs/private-qa.md).
@@ -60,6 +62,17 @@ app uses. Two adapters implement it:
 | `OccurrenceClosed` | Disables roster controls. |
 | `401` | Sign in again. |
 | `403` | Explains the action is not allowed; no retry is suggested. |
+
+## Location
+
+**Find a game** and the venue form read the browser position once
+(`navigator.geolocation.getCurrentPosition`) only when the person presses the
+location button; there is no tracking or background location. Manual
+coordinates are the fallback. The search point lives in page state and the
+request URL only: it is never written to `localStorage`, `sessionStorage` or
+the profile. Search times are computed in the browser's time zone
+(`src/lib/discover.ts`) and sent to the API as UTC; each result is shown in
+its venue's time zone. There is no address geocoding.
 
 ## Docker
 

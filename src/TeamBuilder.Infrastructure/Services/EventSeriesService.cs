@@ -78,17 +78,14 @@ public class EventSeriesService : IEventSeriesService
         string? venueTimeZoneId = null;
         if (createDto.VenueId is { } venueId)
         {
-            var venue = await _context.Venues
-                .AsNoTracking()
-                .Where(v => v.Id == venueId)
-                .Select(v => new { v.TimeZoneId })
-                .FirstOrDefaultAsync(cancellationToken)
-                ?? throw new VenueNotFoundException(venueId);
+            // 404 for an unknown venue; 403 for someone else's Private venue, whose address
+            // hosting it would reveal.
+            var venueZone = (await VenueService.EnsureAttachableAsync(_context, venueId, hostId, cancellationToken)).TimeZoneId;
 
             // A venue time zone that does not resolve is treated as absent ("no usable venue
             // time zone"), so the request must then supply one.
-            if (venue.TimeZoneId is not null && IanaTimeZone.TryResolve(venue.TimeZoneId, out _, out _))
-                venueTimeZoneId = venue.TimeZoneId;
+            if (venueZone is not null && IanaTimeZone.TryResolve(venueZone, out _, out _))
+                venueTimeZoneId = venueZone;
         }
 
         string timeZoneId;

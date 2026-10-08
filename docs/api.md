@@ -160,6 +160,7 @@ is not linked yet.
 | `POST` | `/api/v1/events/{occurrenceId}/roster/...` | Requirement creation, host assignment, host removal and the day-of-game lifecycle (`check-in`, `activate`, `no-show`) are host-only. Any linked player may self-claim (`/claims`) and leave their own assignment (`/assignments/{id}/leave`). |
 | `POST`, `DELETE` | `/api/v1/event-series...` | Host identity comes from `PlayerIdentity`; cancellation is host-only. When a series names a team, only that team's owner may create it. |
 | `GET`, `POST`, `PUT`, `DELETE` | `/api/v1/rosterimports...` | Reads and mutations are restricted to the linked original importer. |
+| `POST` | `/api/v1/venues` | Any linked player; the creator is recorded. |
 
 ### Anonymous endpoints (no token required)
 
@@ -168,7 +169,9 @@ is not linked yet.
 | `GET` | `/health` |
 | `GET` | `/health/ready` |
 | `GET` | `/api/v1/teams`, `/api/v1/teams/{id}` |
-| `GET` | `/api/v1/events`, `/api/v1/events/{id}` |
+| `GET` | `/api/v1/events`, `/api/v1/events/{id}`, `/api/v1/events/{id}/detail` |
+| `GET` | `/api/v1/venues/{id}` (a Private venue is masked unless the caller created it) |
+| `GET` | `/api/v1/discover/occurrences` (rate limited; a linked token adds the caller's relationship) |
 | `GET` | `/api/v1/events/{occurrenceId}/roster`, `/api/v1/events/{occurrenceId}/roster/requirements`, `/api/v1/events/{occurrenceId}/roster/assignments` |
 | `GET` | `/api/v1/event-series/{id}`, `/api/v1/event-series/{id}/occurrences` |
 | `GET` | `/api/v1/players`, `/api/v1/players/{id}` |
@@ -833,8 +836,9 @@ table). The API is unchanged for existing clients:
 
 Occurrences generated from a recurring series (see
 [Event Series](#event-series--apiv1event-series)) are served by these routes
-too, with `seriesId` set. Venues exist as a persistence foundation only; they
-have no public API yet.
+too, with `seriesId` set. An occurrence can be held at a venue from
+[Venues](#venues--apiv1venues); games at a physical venue with coordinates are
+found by [Discovery](#discovery--apiv1discover).
 
 All scheduled instants (`eventDateUtc`, `scheduledStartUtc`,
 `scheduledEndUtc`) are UTC and serialized with a `Z` suffix.
@@ -891,6 +895,12 @@ relationship (`isHost`, `myAssignmentId`, `myAssignmentStatus`,
 `myRequirementId`) is filled from a valid linked token and is false/null for
 anonymous or unlinked callers. No email or external identity data is
 returned.
+
+`venue` (null without a venue) is the attached venue after privacy masking:
+for a **Private** venue the street address, postal code and coordinates are
+returned only to the host and to callers with a current (supply-status)
+assignment; everyone else gets `isAddressMasked: true` with the name, city,
+state/province and country only. A participant who leaves loses the address.
 
 **Response `200`:** `OccurrenceDetailDto`.
 **Response `404`:** Event not found.
@@ -968,6 +978,7 @@ in one database transaction: if any part fails, nothing is created.
 | `rosterRequirements` | none | 0 to 50 requirements, each validated like `POST …/roster/requirements` (role code normalization, `requiredCount` 1–100000). Role codes must be distinct after normalization. Omitted or empty keeps the existing behavior: an event with no roster, never roster-ready. |
 | `hostParticipates` | `false` | `false`: the host organizes only and holds no spot (0/N). `true`: the host gets a normal Confirmed assignment (source `Player`) through the same capacity rules as a self-claim (1/N). |
 | `hostRoleCode` | none | With `hostParticipates` and several requirements, the role code the host fills. Optional with exactly one requirement. |
+| `venueId` | none | A venue from `POST /api/v1/venues`. Any Public (or Virtual) venue may be used; a **Private** venue only by the player who created it (hosting it would reveal its address). Only games at a physical venue with coordinates appear in discovery. `location` stays optional free text. |
 
 Nothing is activity-specific: the API never assumes 10 players for
 basketball; the client sends the count.
@@ -978,8 +989,8 @@ basketball; the client sends the count.
 requirement), `DuplicateRequirementRoleInRequest`, `HostRoleCodeInvalid`
 (missing with several requirements, or not one of them).
 **Response `401`:** No valid JWT provided.
-**Response `403`:** Caller has no linked player or does not own the supplied team.
-**Response `404`:** Supplied team not found.
+**Response `403`:** Caller has no linked player, does not own the supplied team, or used someone else's Private venue.
+**Response `404`:** Supplied team or venue not found.
 **Response `409`:** Supplied team is inactive or disbanded.
 
 ---
@@ -1344,6 +1355,177 @@ flow: players claim, the host checks them in as they arrive, sets the event
 reopens a spot that anyone can claim while the game is in progress.
 
 ---
+
+### Venues — `api/v1/venues`
+
+A venue is where games happen. It has ownership and a privacy level:
+
+- `createdByPlayerId` is the player who created it through the API. Venues that
+  existed before the Venue API have none (system, imported or shared venues).
+- `privacyLevel` `Public` (1): a community gym, park, public court or arena; the
+  address may be shown to anyone. `Private` (2): a residential driveway,
+  backyard court, private club or invite-only place. "Private" never hides the
+  game: it is still discoverable, but its exact street address and coordinates
+  are shown only to the game's host and current participants (and to the
+  venue's creator on `GET /venues/{id}`).
+
+There is no update or delete. A venue may be shared by other hosts' games, so
+moving it would move their games; a host who needs another place creates a new
+venue. Nothing is geocoded: the client supplies coordinates (browser location
+or manual entry).
+
+#### `POST api/v1/venues`
+
+Linked caller required (401 without a token, 403 when unlinked).
+
+```json
+{
+  "name": "Union Park courts",
+  "addressLine1": "1501 W Randolph St",
+  "city": "Chicago",
+  "stateOrProvince": "IL",
+  "postalCode": "60607",
+  "countryCode": "US",
+  "latitude": 41.8849,
+  "longitude": -87.6661,
+  "timeZoneId": "America/Chicago",
+  "venueType": 2,
+  "privacyLevel": 1
+}
+```
+
+| Field | Rule |
+|---|---|
+| `name` | Required, 1–200, not blank. For a Private venue, don't put the street address in the name: the name is shown to everyone. |
+| `venueType` | Required: `Indoor` (1), `Outdoor` (2) or `Virtual` (3). |
+| `privacyLevel` | Required: `Public` (1) or `Private` (2). |
+| `latitude`, `longitude` | Physical venues: both required, latitude −90..90, longitude −180..180 (stored as `decimal(9,6)`). Virtual venues: must be omitted. |
+| `timeZoneId` | Physical venues: required IANA id (for example `America/Chicago`; Windows ids are refused). Optional for Virtual. |
+| `countryCode` | Optional ISO 3166-1 alpha-2 letters; stored upper-case. |
+
+**Response `201`:** `VenueDto` (`isMine: true`).
+**Response `400`:** Validation failure.
+
+#### `GET api/v1/venues/{id}`
+
+Public. A Private venue returns `isAddressMasked: true` with null
+`addressLine1`, `addressLine2`, `postalCode`, `latitude` and `longitude` unless
+the caller created it. **Response `404`:** not found.
+
+### Discovery — `api/v1/discover`
+
+#### `GET api/v1/discover/occurrences`
+
+"Basketball near me, Wednesday around 8 PM." Live occurrences (Planned, Open,
+InProgress) at **physical venues with coordinates** within a radius, closest
+first. Anonymous callers are welcome; a valid linked token adds `viewer` and
+unmasks Private venues of games the caller hosts or plays in.
+
+| Parameter | Default | Rule |
+|---|---|---|
+| `lat` | required | −90..90 |
+| `lon` | required | −180..180 |
+| `radiusMiles` | 15 | > 0 and ≤ 100. Clients offer the presets 15, 25 and 50. |
+| `activity` | all | The occurrence `category` code (for example `basketball`), trimmed and compared case-insensitively. Never matched against event names. |
+| `fromUtc` | now | Start of the window (games whose start is ≥ `fromUtc`). |
+| `toUtc` | `fromUtc` + 7 days | End of the window (start < `toUtc`); at most 30 days after `fromUtc`. |
+| `openOnly` | false | Only games with `totalOpenQuantity > 0`. |
+| `pageSize` | 20 | 1–50. |
+| `cursor` | none | The previous page's `nextCursor`. |
+
+**Time.** The API takes UTC boundaries only. The client turns human intent
+into UTC in the searcher's zone and the API never reinterprets a game's stored
+instant. Examples for a searcher in Chicago (CDT, UTC−5) on Wednesday
+2026-10-14:
+
+| Intent | `fromUtc` | `toUtc` |
+|---|---|---|
+| That day | `2026-10-14T05:00:00Z` | `2026-10-15T05:00:00Z` |
+| That evening (5–11 PM) | `2026-10-14T22:00:00Z` | `2026-10-15T04:00:00Z` |
+| Around 8 PM (7–9 PM) | `2026-10-15T00:00:00Z` | `2026-10-15T02:00:00Z` |
+
+Each result carries `timeZoneId` (the venue's) so clients show the start in
+the game's local time. There is no natural-language parsing.
+
+**Order and paging.** Distance ascending, then `scheduledStartUtc`, then
+`occurrenceId`. Keyset-paged: `nextCursor` carries the exact distance SQL
+Server computed (its IEEE-754 bits, not the rounded display value), the start,
+the id and the search window, so equal distances and identical starts continue
+deterministically, and a search whose window defaulted to "from now" keeps the
+same window on later pages. A cursor is bound to its search (point, radius,
+activity, window, openOnly): reusing it with different parameters is a 400.
+Games added after a page was read appear on later pages only if they sort after
+the cursor.
+
+**Response `200`:**
+
+```json
+{
+  "items": [
+    {
+      "occurrenceId": "…",
+      "seriesId": null,
+      "name": "Wednesday Basketball 8 PM",
+      "category": "basketball",
+      "status": 1,
+      "scheduledStartUtc": "2026-10-15T01:00:00Z",
+      "scheduledEndUtc": "2026-10-15T03:00:00Z",
+      "timeZoneId": "America/Chicago",
+      "venue": {
+        "venueId": "…", "name": "Union Park courts", "city": "Chicago", "stateOrProvince": "IL",
+        "countryCode": "US", "addressLine1": "1501 W Randolph St", "addressLine2": null,
+        "postalCode": "60607", "latitude": 41.8849, "longitude": -87.6661,
+        "timeZoneId": "America/Chicago", "venueType": 2, "privacyLevel": 1,
+        "distanceMiles": 2.04, "isAddressMasked": false
+      },
+      "roster": { "totalRequiredCount": 10, "totalSupplyCount": 9, "totalOpenQuantity": 1, "isRosterReady": false, "isFull": false },
+      "viewer": { "isHost": false, "isParticipating": false, "participationStatus": null }
+    }
+  ],
+  "nextCursor": "…"
+}
+```
+
+- **Roster totals span every requirement** (for example tank 2 / healer 4 /
+  dps 14): `totalRequiredCount` = Σ required; `totalSupplyCount` = current
+  supply-status assignments attached to a requirement; `totalOpenQuantity` =
+  Σ max(0, required − supply) per requirement; `isRosterReady` = at least one
+  requirement and all satisfied; `isFull` = no requirement has an open spot.
+- `viewer` is null for anonymous or unlinked callers.
+- **Private venues** are masked as on the detail (no street, postal code or
+  coordinates; `isAddressMasked: true`) unless the caller hosts or currently
+  plays in that game. Their search point is snapped to a 0.01° grid (about
+  1 km), so `distanceMiles` is approximate (to 0.1 mi) and repeated searches or
+  radius probing cannot pinpoint the address.
+- Never returned: email, issuer, subject, provider, tenant, other identity
+  metadata, or participant lists.
+- Excluded: virtual venues, venues without both coordinates (nothing is
+  invented, no 0,0), games without a venue (free-text `location` only), and
+  Completed, Cancelled or Archived games.
+
+**Search location privacy.** `lat`/`lon` are a transient query: they are not
+written to any table (players, identities, profiles, audit or tracking), and
+the API's request log records the path without the query string. Validation
+errors name the parameter without echoing its value.
+
+**Rate limit.** Discovery is the first high-frequency public route: a fixed
+window per client IP, `RateLimiting:Discovery:PermitLimit` requests (default
+60) per `RateLimiting:Discovery:WindowSeconds` (default 60), in memory per API
+instance. Over the limit: `429` with `Retry-After`. Behind a reverse proxy
+every client shares the proxy's address unless forwarded headers are
+configured. The limiter never decides roster claims, which the database
+guards.
+
+**Response `400`:** invalid parameters (`errors` names the field: `lat`,
+`lon`, `radiusMiles`, `activity`, `toUtc`, `pageSize` or `cursor`).
+**Response `429`:** too many searches.
+
+**Storage.** SQL Server `geography` (SRID 4326) from a persisted computed column
+`Venues.SearchLocation = geography::Point(Latitude, Longitude, 4326)` (NULL for
+virtual venues or missing coordinates; snapped for Private venues) with the
+spatial index `SIX_Venues_SearchLocation`. The domain keeps plain decimal
+coordinates. There is no H3, no worldwide search service and no address
+geocoder.
 
 ### Event Series — `api/v1/event-series`
 

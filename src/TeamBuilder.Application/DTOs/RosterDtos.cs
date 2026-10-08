@@ -317,6 +317,12 @@ public class OccurrenceDetailDto
     /// <summary>The venue's name when a venue is attached, otherwise the free-text location.</summary>
     public string? Location { get; set; }
 
+    /// <summary>
+    /// The attached venue, if any, masked for this caller: a Private venue's street address and
+    /// coordinates are shown only to the host and to current participants.
+    /// </summary>
+    public OccurrenceVenueDto? Venue { get; set; }
+
     public Guid? HostPlayerId { get; set; }
     public string? HostUsername { get; set; }
     public string? HostDisplayName { get; set; }

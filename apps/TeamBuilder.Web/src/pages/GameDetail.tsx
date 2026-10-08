@@ -5,7 +5,8 @@ import { interpretError } from '../api/conflicts';
 import { AssignmentStatus, EventStatus, assignmentStatusLabel, eventStatusLabel, type OccurrenceDetail, type OccurrenceParticipant } from '../api/types';
 import { RosterBadge } from '../components/RosterBadge';
 import { ShareLink } from '../components/ShareLink';
-import { displayName, formatWhen } from '../lib/format';
+import { displayName } from '../lib/format';
+import { formatWhenInZone } from '../lib/discover';
 import { useSession } from '../session';
 
 type Notice = { tone: 'info' | 'error'; text: string };
@@ -83,8 +84,18 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
           <h1>{detail.name}</h1>
           <RosterBadge isRosterReady={detail.isRosterReady} supply={detail.supplyCount} required={detail.requiredCount} />
         </div>
-        <div>{formatWhen(detail.scheduledStartUtc, detail.scheduledEndUtc)}</div>
+        <div>{formatWhenInZone(detail.scheduledStartUtc, detail.scheduledEndUtc, detail.venue?.timeZoneId)}</div>
         {detail.location && <div>{detail.location}</div>}
+        {detail.venue && !detail.venue.isAddressMasked && (detail.venue.addressLine1 || detail.venue.city) && (
+          <div className="muted small" data-testid="venue-address">
+            {[detail.venue.addressLine1, detail.venue.addressLine2, detail.venue.city, detail.venue.stateOrProvince, detail.venue.postalCode].filter(Boolean).join(', ')}
+          </div>
+        )}
+        {detail.venue?.isAddressMasked && (
+          <div className="muted small" data-testid="venue-masked">
+            {[detail.venue.city, detail.venue.stateOrProvince].filter(Boolean).join(', ')} · Private location: the address is shared with players in this game.
+          </div>
+        )}
         <div className="muted small">
           Hosted by {detail.hostPlayerId ? displayName({ displayName: detail.hostDisplayName, username: detail.hostUsername }) : 'nobody'}
           {detail.isHost && ' (you)'} · {eventStatusLabel[detail.status]}

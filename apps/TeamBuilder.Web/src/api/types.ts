@@ -100,6 +100,8 @@ export interface OccurrenceDetail {
   region?: string | null;
   venueId?: string | null;
   location?: string | null;
+  /** The attached venue, masked unless the caller hosts or plays in the game (Private venues). */
+  venue?: OccurrenceVenue | null;
   hostPlayerId?: string | null;
   hostUsername?: string | null;
   hostDisplayName?: string | null;
@@ -156,12 +158,105 @@ export interface CreateEventRequest {
   location?: string;
   rosterRequirements?: CreateRosterRequirementRequest[];
   hostParticipates?: boolean;
+  /** A venue from POST /api/v1/venues; games with a physical venue appear in Discover. */
+  venueId?: string;
 }
 
 export interface EventSummary {
   id: string;
   name: string;
   hostId?: string | null;
+}
+
+export const VenueType = { Indoor: 1, Outdoor: 2, Virtual: 3 } as const;
+export type VenueType = (typeof VenueType)[keyof typeof VenueType];
+
+/** Public: the address may be shown. Private: only players in the game see the exact address. */
+export const VenuePrivacyLevel = { Public: 1, Private: 2 } as const;
+export type VenuePrivacyLevel = (typeof VenuePrivacyLevel)[keyof typeof VenuePrivacyLevel];
+
+/** POST /api/v1/venues */
+export interface CreateVenueRequest {
+  name: string;
+  addressLine1?: string;
+  city?: string;
+  stateOrProvince?: string;
+  postalCode?: string;
+  countryCode?: string;
+  latitude: number;
+  longitude: number;
+  timeZoneId: string;
+  venueType: VenueType;
+  privacyLevel: VenuePrivacyLevel;
+}
+
+export interface Venue {
+  id: string;
+  name: string;
+  city?: string | null;
+  stateOrProvince?: string | null;
+  isAddressMasked: boolean;
+}
+
+/** A venue on a discovery result or game detail, after privacy masking. */
+export interface OccurrenceVenue {
+  venueId: string;
+  name: string;
+  city?: string | null;
+  stateOrProvince?: string | null;
+  countryCode?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  postalCode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  timeZoneId?: string | null;
+  privacyLevel: VenuePrivacyLevel;
+  distanceMiles?: number | null;
+  isAddressMasked: boolean;
+}
+
+/** One item of GET /api/v1/discover/occurrences */
+export interface DiscoveredOccurrence {
+  occurrenceId: string;
+  seriesId?: string | null;
+  name: string;
+  category?: string | null;
+  status: EventStatus;
+  scheduledStartUtc: string;
+  scheduledEndUtc?: string | null;
+  timeZoneId?: string | null;
+  venue: OccurrenceVenue;
+  roster: {
+    totalRequiredCount: number;
+    totalSupplyCount: number;
+    totalOpenQuantity: number;
+    isRosterReady: boolean;
+    isFull: boolean;
+  };
+  viewer?: {
+    isHost: boolean;
+    isParticipating: boolean;
+    participationStatus?: AssignmentStatus | null;
+  } | null;
+}
+
+export interface DiscoveredOccurrencePage {
+  items: DiscoveredOccurrence[];
+  nextCursor?: string | null;
+}
+
+/** Query of GET /api/v1/discover/occurrences. The point is sent for this search only. */
+export interface DiscoverQuery {
+  lat: number;
+  lon: number;
+  radiusMiles: number;
+  activity?: string;
+  fromUtc: string;
+  toUtc: string;
+  openOnly: boolean;
+  pageSize?: number;
+  cursor?: string;
 }
 
 /** RFC 7807 problem details as the API returns them, with the stable roster `code`. */

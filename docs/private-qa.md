@@ -3,7 +3,8 @@
 This guide runs the TeamBuilder API, SQL Server and the web client
 (`apps/TeamBuilder.Web`) for private dogfooding of one flow: a host creates a
 Wednesday 8 PM pickup basketball game, shares the link, other players join,
-someone leaves and the open spot is refilled.
+someone leaves and the open spot is refilled, and a nearby player finds the
+game with **Find a game**.
 
 It is a QA path, not a production deployment. Nothing here changes how the
 API authenticates: every write still needs a valid bearer token for a linked
@@ -156,6 +157,61 @@ still needed](#outside-identity-provider-configuration-still-needed).
    **Finish game** and **Transfer host** (pick a participant or type a
    username). After the game is finished the page disables roster controls.
 
+## Finding games nearby
+
+Discovery is searched by coordinates. Nothing is geocoded, so a game is found
+only when its host added a venue with coordinates.
+
+1. **Host adds a venue.** On **New game**, check **Add the venue so nearby
+   players can find this game**. Enter a venue name, choose Outdoor or
+   Indoor, and pick who sees the address:
+   - **Everyone**: a public court, park or gym.
+   - **Only players in the game**: a driveway, backyard or private club. Keep
+     the street address out of the name, which everyone sees.
+
+   Press **I'm at the venue: use my location** or type the latitude and
+   longitude (for QA, Chicago's Union Park is `41.8849`, `-87.6661`).
+   **Create game** first sends `POST /api/v1/venues`, then the game with its
+   `venueId`. If the game step fails, retrying reuses the same venue.
+
+2. **A player searches.** Sign in as another subject and open **Find a game**
+   (also on **My games**). The defaults are Basketball, today, any time and
+   **15 mi**. Press **Use my location** (the browser
+   asks once; refusing is fine) or open **Enter coordinates instead** and
+   type a point near the venue, for example `41.8781`, `-87.6298`. Press
+   **Search**.
+
+   Results are sorted closest first. Each card shows distance, the start in
+   the game's own time zone, the roster (for example **9/10 · 1 spot open**
+   or **READY 10/10**), and **You're hosting** or **You're playing** where it applies.
+   **Load more** fetches the next page.
+
+3. **Change the search.** Switch **Distance** to **25 mi** or **50 mi** to see
+   games further out. Choose **Evening (5–11 PM)** or **Around…** with a time
+   for "Wednesday around 8 PM" (a two-hour window). Check **Open spots
+   only** to hide full games.
+
+4. **Check private address masking.** For a game at an "Only players in the
+   game" venue, the searching player sees the venue name, city and an
+   approximate distance, and the game page says the address is shared with
+   players in the game. After **Join game** the page shows the street address.
+   After **Leave game** it is hidden again. The host always sees it.
+
+What to expect:
+
+- The search point is sent with each request and is not saved to the
+  player's profile or any table, and the API's request log omits the query
+  string.
+- Discovery allows 60 searches per minute per client address
+  (`RateLimiting:Discovery`). In the Docker stack every browser reaches the API
+  through the web proxy, so all QA testers share that budget. Raise
+  `RateLimiting__Discovery__PermitLimit` on the API service if a group QA
+  session hits **Too many searches**.
+- Games without a venue (only the free-text location), virtual venues, and
+  finished or cancelled games never appear.
+- Searches cover at most 30 days ahead and 100 miles. Results come from one
+  SQL Server, not from a worldwide search service.
+
 ## Outside identity provider configuration still needed
 
 Real sign-in needs settings that live outside this repository. None of them
@@ -181,5 +237,8 @@ later with the real provider becomes a different player.
 |---|---|
 | "Please sign in to continue" (`401`) | The token's issuer, audience or signing key does not match the API settings, or it expired. Mint a new one. |
 | The page asks to onboard again | A different subject or issuer was used; each pair is a separate player. |
+| **Find a game** shows nothing | No game with a venue within the radius and window. Widen the distance, clear **Open spots only**, or check that the game has a venue with coordinates (a free-text location is not searchable). |
+| **Use my location** fails | The browser blocked location, or the page is not served over HTTPS or `localhost`. Enter coordinates instead. |
+| "Too many searches" (`429`) | The discovery rate limit; wait a minute, or raise the limit for a group QA session. |
 | "The roster changed while saving" | Several people changed the roster at once. On a join the client already retried twice with a short random delay, then refreshed; press **Join game** again if a spot is still open. |
 | API exits on startup in Docker | SQL Server was not ready or the password does not meet complexity rules; check `docker compose -f docker-compose.qa.yml logs sql`. |
