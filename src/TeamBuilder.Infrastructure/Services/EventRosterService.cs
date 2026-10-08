@@ -466,6 +466,20 @@ public class EventRosterService : IEventRosterService
                 e.Region,
                 e.VenueId,
                 Location = e.Venue != null ? e.Venue.Name : e.LegacyLocation,
+                Venue = e.Venue == null ? null : new VenuePrivacy.VenueRow(
+                    e.Venue.Id,
+                    e.Venue.Name,
+                    e.Venue.AddressLine1,
+                    e.Venue.AddressLine2,
+                    e.Venue.City,
+                    e.Venue.StateOrProvince,
+                    e.Venue.PostalCode,
+                    e.Venue.CountryCode,
+                    e.Venue.Latitude,
+                    e.Venue.Longitude,
+                    e.Venue.TimeZoneId,
+                    e.Venue.VenueType,
+                    e.Venue.PrivacyLevel),
                 e.HostId,
                 HostUsername = e.Host != null ? e.Host.Username : null,
                 HostDisplayName = e.Host != null ? e.Host.DisplayName : null
@@ -504,6 +518,13 @@ public class EventRosterService : IEventRosterService
             participant.IsHost = participant.PlayerId == occurrence.HostId;
 
         var mine = callerPlayerId is { } caller ? participants.FirstOrDefault(p => p.PlayerId == caller) : null;
+        var isHost = callerPlayerId is not null && occurrence.HostId == callerPlayerId;
+
+        // A Private venue's exact address is for the people actually going: the host and
+        // current participants. Everyone else gets the masked venue.
+        var venue = occurrence.Venue is null
+            ? null
+            : VenuePrivacy.ToOccurrenceVenue(occurrence.Venue, callerIsEntitled: isHost || mine is not null, distanceMeters: null);
 
         return new OccurrenceDetailDto
         {
@@ -520,6 +541,7 @@ public class EventRosterService : IEventRosterService
             Region = occurrence.Region,
             VenueId = occurrence.VenueId,
             Location = occurrence.Location,
+            Venue = venue,
             HostPlayerId = occurrence.HostId,
             HostUsername = occurrence.HostUsername,
             HostDisplayName = occurrence.HostDisplayName,
@@ -529,7 +551,7 @@ public class EventRosterService : IEventRosterService
             IsRosterReady = snapshot.IsRosterReady,
             Requirements = requirements.Select(r => MapToDto(r, snapshot)).ToList(),
             Participants = participants,
-            IsHost = callerPlayerId is not null && occurrence.HostId == callerPlayerId,
+            IsHost = isHost,
             MyAssignmentId = mine?.AssignmentId,
             MyAssignmentStatus = mine?.Status,
             MyRequirementId = mine?.RequirementId

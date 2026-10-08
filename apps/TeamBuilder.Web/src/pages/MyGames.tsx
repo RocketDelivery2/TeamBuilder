@@ -33,9 +33,12 @@ export function MyGames() {
     <section className="stack">
       <div className="row spread">
         <h1>My games</h1>
-        <button className="primary" onClick={() => navigate('/new')}>
-          New game
-        </button>
+        <div className="row gap">
+          <button onClick={() => navigate('/discover')}>Find a game</button>
+          <button className="primary" onClick={() => navigate('/new')}>
+            New game
+          </button>
+        </div>
       </div>
       {error && <p className="notice error">{error}</p>}
       {games === undefined && !error && <p className="muted">Loading…</p>}

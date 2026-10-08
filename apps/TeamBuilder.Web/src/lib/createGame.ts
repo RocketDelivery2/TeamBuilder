@@ -1,4 +1,5 @@
-import type { CreateEventRequest } from '../api/types';
+import { VenuePrivacyLevel, VenueType, type CreateEventRequest, type CreateVenueRequest } from '../api/types';
+import { parseManualPoint } from './discover';
 
 /** Form state of the Create Pickup Game screen. */
 export interface CreateGameForm {
@@ -12,6 +13,17 @@ export interface CreateGameForm {
   location: string;
   requiredPlayers: number;
   hostIsPlaying: boolean;
+  /** Attach a real venue (with coordinates) so the game shows up in Discover. */
+  useVenue: boolean;
+  venueName: string;
+  venueAddress: string;
+  venueCity: string;
+  venueState: string;
+  venueType: 'outdoor' | 'indoor';
+  venuePrivacy: 'public' | 'private';
+  /** As typed, or filled from one "Use current location" tap. */
+  venueLat: string;
+  venueLon: string;
 }
 
 export interface ActivityPreset {
@@ -54,6 +66,15 @@ export function initialCreateGameForm(now: Date = new Date()): CreateGameForm {
     location: '',
     requiredPlayers: defaultRequiredPlayersFor('basketball'),
     hostIsPlaying: true,
+    useVenue: false,
+    venueName: '',
+    venueAddress: '',
+    venueCity: '',
+    venueState: '',
+    venueType: 'outdoor',
+    venuePrivacy: 'public',
+    venueLat: '',
+    venueLon: '',
   };
 }
 
@@ -62,7 +83,7 @@ export function initialCreateGameForm(now: Date = new Date()): CreateGameForm {
  * requirement of `requiredPlayers`, and whether the host takes a spot. The local date and
  * time are interpreted in the browser's time zone and sent as UTC instants.
  */
-export function buildCreateEventRequest(form: CreateGameForm): CreateEventRequest {
+export function buildCreateEventRequest(form: CreateGameForm, venueId?: string): CreateEventRequest {
   const start = new Date(`${form.date}T${form.startTime}:00`);
   if (Number.isNaN(start.getTime())) throw new Error('Choose a valid date and start time.');
   if (!Number.isInteger(form.requiredPlayers) || form.requiredPlayers < 1) {
@@ -83,5 +104,30 @@ export function buildCreateEventRequest(form: CreateGameForm): CreateEventReques
     ...(location ? { location } : {}),
     rosterRequirements: [{ roleCode: 'participant', requiredCount: form.requiredPlayers }],
     hostParticipates: form.hostIsPlaying,
+    ...(venueId ? { venueId } : {}),
+  };
+}
+
+/**
+ * The venue to create first when the host attached one, else null. Coordinates come from the
+ * device or are typed: nothing is geocoded from the address. The time zone is the browser's,
+ * since the host is normally creating the game where it is played.
+ */
+export function buildCreateVenueRequest(form: CreateGameForm, timeZoneId: string): CreateVenueRequest | null {
+  if (!form.useVenue) return null;
+  const name = form.venueName.trim();
+  if (!name) throw new Error('Give the venue a name.');
+  const { lat, lon } = parseManualPoint(form.venueLat, form.venueLon);
+  const optional = (key: 'addressLine1' | 'city' | 'stateOrProvince', value: string) => (value.trim() ? { [key]: value.trim() } : {});
+  return {
+    name,
+    ...optional('addressLine1', form.venueAddress),
+    ...optional('city', form.venueCity),
+    ...optional('stateOrProvince', form.venueState),
+    latitude: lat,
+    longitude: lon,
+    timeZoneId,
+    venueType: form.venueType === 'indoor' ? VenueType.Indoor : VenueType.Outdoor,
+    privacyLevel: form.venuePrivacy === 'private' ? VenuePrivacyLevel.Private : VenuePrivacyLevel.Public,
   };
 }

@@ -97,6 +97,12 @@ public class EventService : IEventService
 
         var plannedRequirements = PlanRequirements(createEventDto);
 
+        // 404 for an unknown venue, 403 for someone else's Private venue (hosting it would
+        // reveal its address). Nothing is written before these checks pass.
+        var venue = createEventDto.VenueId is { } venueId
+            ? await VenueService.EnsureAttachableAsync(_context, venueId, hostId, cancellationToken)
+            : null;
+
         var teamEvent = new EventOccurrence
         {
             Id = Guid.NewGuid(),
@@ -112,6 +118,7 @@ public class EventService : IEventService
             CurrentParticipantCount = 0,
             Status = EventStatus.Planned,
             TeamId = createEventDto.TeamId,
+            VenueId = createEventDto.VenueId,
             HostId = hostId
         };
 
@@ -139,7 +146,10 @@ public class EventService : IEventService
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        return MapToDto(teamEvent);
+        var dto = MapToDto(teamEvent);
+        if (venue is not null)
+            dto.Location = venue.Name;
+        return dto;
     }
 
     private sealed record PlannedRequirement(string RoleCode, int RequiredCount, string? DisplayPosition, string? SourceRoleLabel);

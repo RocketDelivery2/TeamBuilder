@@ -94,6 +94,9 @@ public class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
                 // Tests that exercise the rolling-horizon worker drive it explicitly; the hosted
                 // pass would otherwise race with seeding in shared fixtures.
                 ["EventSeriesMaterialization:Enabled"] = "false",
+                // Discovery suites issue many searches from one test client; the limiter itself
+                // is covered with a low limit in its own test.
+                ["RateLimiting:Discovery:PermitLimit"] = "100000",
             });
         });
 

@@ -39,10 +39,13 @@ h2 { font-size: 1.05rem; margin: 0; }
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top));
+  gap: 12px;
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
-.brand { font-weight: 700; color: var(--accent); text-decoration: none; }
-.header-actions { display: flex; gap: 12px; align-items: center; }
+.brand { font-weight: 700; color: var(--accent); text-decoration: none; flex-shrink: 0; }
+.header-actions { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.header-actions > * { flex-shrink: 0; white-space: nowrap; }
+.header-actions > .header-name { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .app-main { max-width: 640px; margin: 0 auto; padding: 16px; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
 .dev-banner { background: var(--open); color: #111; text-align: center; font-size: 0.85rem; padding: 6px 16px; }
 
@@ -94,3 +97,14 @@ button.primary { background: var(--accent); color: var(--accent-text); border-co
 button.link { border: none; background: none; color: var(--accent); min-height: auto; padding: 0; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .share { display: flex; flex-direction: column; gap: 8px; }
+
+.nav-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+.segmented { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.segmented button { border: none; border-radius: 0; background: var(--surface); }
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button.selected { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.distance { font-weight: 600; white-space: nowrap; }
+.location details summary { cursor: pointer; color: var(--accent); }
+.location details .grid-2 { margin-top: 8px; }
+.venue { border-style: dashed; }
+.venue legend { padding: 0 4px; color: var(--muted); }

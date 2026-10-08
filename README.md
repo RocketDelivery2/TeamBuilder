@@ -173,6 +173,22 @@ does not represent 50M simultaneous HTTP clients.
 - `POST /api/v1/events` - Create new event
 - `PUT /api/v1/events/{id}` - Update event
 - `DELETE /api/v1/events/{id}` - Delete/cancel event
+- `GET /api/v1/events/{id}/detail` - Game page view (roster, caller relationship, venue after privacy masking)
+
+### Venues and local discovery
+- `POST /api/v1/venues` - Create a venue (linked player; Public or Private; coordinates supplied by the client)
+- `GET /api/v1/venues/{id}` - Get a venue (a Private venue's address is masked unless you created it)
+- `GET /api/v1/discover/occurrences?lat=&lon=&radiusMiles=15&activity=basketball&fromUtc=&toUtc=&openOnly=true&pageSize=20&cursor=` - Live games near a point, closest first (anonymous allowed, rate limited)
+
+Discovery searches physical venues with coordinates within a radius (default
+15 miles; the web client offers 15, 25 and 50; max 100) using SQL Server
+`geography` (SRID 4326) and a spatial index. Times are UTC boundaries the
+client computes from the searcher's local intent. The search point is never
+stored or logged. A Private venue (a driveway or backyard court) is still
+discoverable, but its street address and coordinates are shown only to the
+game's host and current participants, and its distance is approximate (about
+1 km). There is no address geocoding, no H3 index and no worldwide search
+service; see [the API reference](docs/api.md#discovery--apiv1discover).
 
 ### Players
 - `GET /api/v1/players/{id}` - Get player by ID

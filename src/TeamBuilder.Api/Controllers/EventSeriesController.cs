@@ -123,6 +123,11 @@ public class EventSeriesController : ControllerBase
             _logger.LogInformation("Venue with ID {VenueId} not found for event series creation", ex.VenueId);
             return NotFound();
         }
+        catch (VenueAttachForbiddenException ex)
+        {
+            _logger.LogInformation("Player {PlayerId} may not use private venue {VenueId}", playerId.Value, ex.VenueId);
+            return Forbid();
+        }
 
         _logger.LogInformation("Created event series {SeriesId}", series.Id);
         return CreatedAtAction(nameof(GetById), new { id = series.Id }, series);

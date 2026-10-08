@@ -13,6 +13,7 @@ public class EventOccurrenceConfiguration : IEntityTypeConfiguration<EventOccurr
 {
     public const string TableName = "Events";
     public const string SeriesStartUniqueIndexName = "UX_Events_SeriesId_ScheduledStartUtc";
+    public const string VenueStatusStartIndexName = "IX_Events_VenueId_Status_ScheduledStartUtc";
 
     public void Configure(EntityTypeBuilder<EventOccurrence> builder)
     {
@@ -87,7 +88,14 @@ public class EventOccurrenceConfiguration : IEntityTypeConfiguration<EventOccurr
             .IsUnique()
             .HasDatabaseName(SeriesStartUniqueIndexName)
             .HasFilter("[SeriesId] IS NOT NULL");
-        builder.HasIndex(e => e.VenueId);
+
+        // Discovery: for each venue the spatial index finds, seek that venue's live occurrences
+        // (Status IN Planned/Open/InProgress) in the requested start window; Category is
+        // included so the activity filter needs no lookup. Leading VenueId, it also serves the
+        // venue foreign key, so it replaces the former single-column IX_Events_VenueId.
+        builder.HasIndex(e => new { e.VenueId, e.Status, e.ScheduledStartUtc })
+            .HasDatabaseName(VenueStatusStartIndexName)
+            .IncludeProperties(e => e.Category);
         builder.HasIndex(e => e.Status);
         builder.HasIndex(e => e.Category);
         builder.HasIndex(e => e.Region);

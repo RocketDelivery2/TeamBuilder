@@ -1,6 +1,10 @@
 import { HttpClient, type ApiResponse } from './http';
 import type {
   CreateEventRequest,
+  CreateVenueRequest,
+  DiscoveredOccurrencePage,
+  DiscoverQuery,
+  Venue,
   EventStatus,
   EventSummary,
   OccurrenceDetail,
@@ -38,6 +42,15 @@ export class TeamBuilderApi {
     return (await this.http.request<EventSummary>('POST', '/api/v1/events', request)).data;
   }
 
+  async createVenue(request: CreateVenueRequest): Promise<Venue> {
+    return (await this.http.request<Venue>('POST', '/api/v1/venues', request)).data;
+  }
+
+  /** Nearby games, closest first. The search point goes in this one request and nowhere else. */
+  async discover(query: DiscoverQuery): Promise<DiscoveredOccurrencePage> {
+    return (await this.http.request<DiscoveredOccurrencePage>('GET', `/api/v1/discover/occurrences?${discoverSearchParams(query)}`)).data;
+  }
+
   async getDetail(occurrenceId: string): Promise<OccurrenceDetail> {
     return (await this.http.request<OccurrenceDetail>('GET', `/api/v1/events/${occurrenceId}/detail`)).data;
   }
@@ -63,4 +76,19 @@ export class TeamBuilderApi {
   async transferHost(occurrenceId: string, newHostPlayerId: string): Promise<EventSummary> {
     return (await this.http.request<EventSummary>('POST', `/api/v1/events/${occurrenceId}/host/transfer`, { newHostPlayerId })).data;
   }
+}
+
+export function discoverSearchParams(query: DiscoverQuery): URLSearchParams {
+  const params = new URLSearchParams({
+    lat: String(query.lat),
+    lon: String(query.lon),
+    radiusMiles: String(query.radiusMiles),
+    fromUtc: query.fromUtc,
+    toUtc: query.toUtc,
+    openOnly: String(query.openOnly),
+  });
+  if (query.activity) params.set('activity', query.activity);
+  if (query.pageSize) params.set('pageSize', String(query.pageSize));
+  if (query.cursor) params.set('cursor', query.cursor);
+  return params;
 }

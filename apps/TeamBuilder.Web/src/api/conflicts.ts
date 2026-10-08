@@ -27,6 +27,7 @@ export type ErrorReaction =
   | 'refresh-retry' // RosterChanged / OccurrenceChanged: refresh, user may retry safely
   | 'refresh' // AssignmentEnded and similar: refresh to show the final state
   | 'invalid' // 400 or a disallowed transition
+  | 'slow-down' // 429: rate limited (discovery); wait before retrying
   | 'error'; // anything unexpected (network, 5xx)
 
 export interface InterpretedError {
@@ -62,6 +63,9 @@ export function interpretError(error: unknown): InterpretedError {
   }
   if (error.status === 400) {
     return { ...base, reaction: 'invalid', message: error.message };
+  }
+  if (error.status === 429) {
+    return { ...base, reaction: 'slow-down', message: 'Too many searches. Wait a minute and try again.' };
   }
   if (error.status === 409) {
     switch (error.code) {
