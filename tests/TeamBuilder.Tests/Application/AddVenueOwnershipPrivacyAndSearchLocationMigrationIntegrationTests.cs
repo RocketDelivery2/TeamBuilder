@@ -97,16 +97,34 @@ public class AddVenueOwnershipPrivacyAndSearchLocationMigrationIntegrationTests 
     }
 
     [Fact]
+    public async Task SearchLocationDefinition_MatchesTheConfigurationConstant()
+    {
+        await _db.MigrateToAsync();
+
+        // The migration carries its SQL literally; SQL Server normalizes both definitions the
+        // same way, so a drift between the migration and VenueConfiguration shows up here.
+        var migrated = await ScalarAsync<string>("SELECT [definition] FROM sys.computed_columns WHERE [object_id] = OBJECT_ID(N'Venues') AND [name] = N'SearchLocation'");
+        await ExecuteAsync($"""
+            CREATE TABLE [SearchLocationProbe] ([Latitude] decimal(9,6) NULL, [Longitude] decimal(9,6) NULL, [VenueType] int NOT NULL, [PrivacyLevel] int NOT NULL,
+                [SearchLocation] AS ({VenueConfiguration.SearchLocationColumnSql}) PERSISTED);
+            """);
+        var expected = await ScalarAsync<string>("SELECT [definition] FROM sys.computed_columns WHERE [object_id] = OBJECT_ID(N'SearchLocationProbe') AND [name] = N'SearchLocation'");
+        await ExecuteAsync("DROP TABLE [SearchLocationProbe];");
+
+        migrated.Should().Be(expected);
+    }
+
+    [Fact]
     public async Task DatabaseRangeChecks_RefuseImpossibleCoordinatesAndPrivacy()
     {
         await _db.MigrateToAsync();
 
-        // A physical row: the geography expression itself refuses an impossible latitude
-        // (6522) or the CHECK does (547), whichever SQL Server evaluates first.
+        // A physical row: the computed column's range guard leaves an impossible coordinate
+        // to the CHECK constraints (547) rather than failing inside geography::Point (6522).
         foreach (var (lat, lon) in new[] { ("90.000001", "0"), ("-90.5", "0"), ("0", "180.000001"), ("0", "-181") })
         {
             var act = () => InsertVenueAsync(lat, lon, venueType: 1, privacy: 1);
-            (await act.Should().ThrowAsync<SqlException>()).Which.Number.Should().BeOneOf([547, 6522], $"{lat},{lon}");
+            (await act.Should().ThrowAsync<SqlException>()).Which.Number.Should().Be(547, $"{lat},{lon}");
         }
 
         // A virtual row has no geography, so only the CHECK constraints stand in the way.

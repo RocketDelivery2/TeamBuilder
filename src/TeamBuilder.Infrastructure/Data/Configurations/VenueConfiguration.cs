@@ -19,14 +19,16 @@ public class VenueConfiguration : IEntityTypeConfiguration<Venue>
     /// snapped to a 0.01 degree grid (about 1 km), so distances, ordering and radius probing
     /// never reveal its exact position. Because the column depends on Latitude, Longitude,
     /// VenueType and PrivacyLevel, a future migration that alters one of those columns must
-    /// drop and recreate it (and the spatial index) around the change.
+    /// drop and recreate it (and the spatial index) around the change. The range guard (which
+    /// also excludes NULLs) leaves an out-of-range coordinate to the CHECK constraints (547)
+    /// instead of failing inside geography::Point (6522).
     /// </summary>
     public const string SearchLocationColumnName = "SearchLocation";
     public const string SearchLocationIndexName = "SIX_Venues_SearchLocation";
 
     /// <summary><c>geography::Point</c> takes (latitude, longitude, SRID) in that order.</summary>
     public const string SearchLocationColumnSql =
-        "CASE WHEN [VenueType] <> 3 AND [Latitude] IS NOT NULL AND [Longitude] IS NOT NULL THEN " +
+        "CASE WHEN [VenueType] <> 3 AND [Latitude] BETWEEN -90 AND 90 AND [Longitude] BETWEEN -180 AND 180 THEN " +
         "CASE WHEN [PrivacyLevel] = 2 THEN geography::Point(ROUND([Latitude], 2), ROUND([Longitude], 2), 4326) " +
         "ELSE geography::Point([Latitude], [Longitude], 4326) END END";
 

@@ -1,6 +1,5 @@
 ﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
-using TeamBuilder.Infrastructure.Data.Configurations;
 
 #nullable disable
 
@@ -58,10 +57,15 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
             // VenueConfiguration.SearchLocationColumnSql). Persisted and computed from the
             // existing decimals: no coordinates are fabricated, rows without both coordinates
             // and virtual venues get NULL, and every later insert keeps it in step atomically.
+            // The SQL is literal so this migration replays the same way even if the
+            // configuration constants change later.
             migrationBuilder.Sql(
-                $"ALTER TABLE [Venues] ADD [{VenueConfiguration.SearchLocationColumnName}] AS ({VenueConfiguration.SearchLocationColumnSql}) PERSISTED;");
+                "ALTER TABLE [Venues] ADD [SearchLocation] AS (" +
+                "CASE WHEN [VenueType] <> 3 AND [Latitude] BETWEEN -90 AND 90 AND [Longitude] BETWEEN -180 AND 180 THEN " +
+                "CASE WHEN [PrivacyLevel] = 2 THEN geography::Point(ROUND([Latitude], 2), ROUND([Longitude], 2), 4326) " +
+                "ELSE geography::Point([Latitude], [Longitude], 4326) END END) PERSISTED;");
             migrationBuilder.Sql(
-                $"CREATE SPATIAL INDEX [{VenueConfiguration.SearchLocationIndexName}] ON [Venues] ([{VenueConfiguration.SearchLocationColumnName}]) USING GEOGRAPHY_AUTO_GRID;");
+                "CREATE SPATIAL INDEX [SIX_Venues_SearchLocation] ON [Venues] ([SearchLocation]) USING GEOGRAPHY_AUTO_GRID;");
 
             // Covering for discovery's openOnly supply count per requirement.
             migrationBuilder.DropIndex(
@@ -88,9 +92,9 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                 columns: new[] { "RequirementId", "OccurrenceId" });
 
             migrationBuilder.Sql(
-                $"DROP INDEX [{VenueConfiguration.SearchLocationIndexName}] ON [Venues];");
+                "DROP INDEX [SIX_Venues_SearchLocation] ON [Venues];");
             migrationBuilder.Sql(
-                $"ALTER TABLE [Venues] DROP COLUMN [{VenueConfiguration.SearchLocationColumnName}];");
+                "ALTER TABLE [Venues] DROP COLUMN [SearchLocation];");
 
             migrationBuilder.DropForeignKey(
                 name: "FK_Venues_Players_CreatedByPlayerId",
