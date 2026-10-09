@@ -240,9 +240,15 @@ public sealed class WebPushSqlServerIntegrationTests : IAsyncLifetime
 
         _gateway.Latency = TimeSpan.FromMilliseconds(20);
         var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Dispatcher(configure: o => o.BatchSize = 3).ProcessBatchAsync()));
-        while ((await Dispatcher().ProcessBatchAsync()).Claimed > 0) { }
+        var drained = 0;
+        PushBatchResult next;
+        while ((next = await Dispatcher().ProcessBatchAsync()).Claimed > 0)
+            drained += next.Claimed;
 
-        results.Sum(r => r.Claimed).Should().Be(12, "four dispatchers took disjoint batches");
+        // READPAST lets a dispatcher skip rows another is claiming, so a batch can come back
+        // short; what must hold is that no delivery is claimed twice and none is lost.
+        results.Sum(r => r.Claimed).Should().BeInRange(1, 12);
+        (results.Sum(r => r.Claimed) + drained).Should().Be(12, "the concurrent batches were disjoint");
         _gateway.Requests.Should().HaveCount(12);
         _gateway.Requests.GroupBy(r => r.Endpoint).Should().OnlyContain(g => g.Count() == 1);
         (await DeliveriesAsync()).Should().OnlyContain(d => d.Status == PushDeliveryStatus.Accepted && d.AttemptCount == 1);
