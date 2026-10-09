@@ -1,3 +1,4 @@
+using TeamBuilder.Api.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TeamBuilder.Application.Interfaces;
@@ -19,17 +20,20 @@ public sealed class EventSeriesMaterializationWorker : BackgroundService
     private readonly TimeProvider _timeProvider;
     private readonly EventSeriesMaterializationOptions _options;
     private readonly ILogger<EventSeriesMaterializationWorker> _logger;
+    private readonly IWorkerStartGate _startGate;
 
     public EventSeriesMaterializationWorker(
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
         IOptions<EventSeriesMaterializationOptions> options,
-        ILogger<EventSeriesMaterializationWorker> logger)
+        ILogger<EventSeriesMaterializationWorker> logger,
+        IWorkerStartGate? startGate = null)
     {
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _options = options.Value;
         _logger = logger;
+        _startGate = startGate ?? OpenWorkerStartGate.Instance;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -39,6 +43,9 @@ public sealed class EventSeriesMaterializationWorker : BackgroundService
             _logger.LogInformation("Event series materialization worker is disabled.");
             return;
         }
+
+        // Never touch another environment's database (see DatabaseEnvironmentGuard).
+        await _startGate.WaitAsync(stoppingToken);
 
         while (true)
         {

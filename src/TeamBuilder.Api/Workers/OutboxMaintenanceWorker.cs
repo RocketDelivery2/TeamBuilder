@@ -1,3 +1,4 @@
+using TeamBuilder.Api.Hosting;
 using Microsoft.Extensions.Options;
 using TeamBuilder.Infrastructure.Outbox;
 
@@ -14,13 +15,15 @@ public sealed class OutboxMaintenanceWorker : BackgroundService
     private readonly TimeProvider _timeProvider;
     private readonly OutboxMaintenanceOptions _options;
     private readonly ILogger<OutboxMaintenanceWorker> _logger;
+    private readonly IWorkerStartGate _startGate;
 
-    public OutboxMaintenanceWorker(OutboxMaintenance maintenance, TimeProvider timeProvider, IOptions<OutboxMaintenanceOptions> options, ILogger<OutboxMaintenanceWorker> logger)
+    public OutboxMaintenanceWorker(OutboxMaintenance maintenance, TimeProvider timeProvider, IOptions<OutboxMaintenanceOptions> options, ILogger<OutboxMaintenanceWorker> logger, IWorkerStartGate? startGate = null)
     {
         _maintenance = maintenance;
         _timeProvider = timeProvider;
         _options = options.Value;
         _logger = logger;
+        _startGate = startGate ?? OpenWorkerStartGate.Instance;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -30,6 +33,9 @@ public sealed class OutboxMaintenanceWorker : BackgroundService
             _logger.LogInformation("Outbox retention is disabled; completed rows are kept.");
             return;
         }
+
+        // Never touch another environment's database (see DatabaseEnvironmentGuard).
+        await _startGate.WaitAsync(stoppingToken);
 
         while (true)
         {

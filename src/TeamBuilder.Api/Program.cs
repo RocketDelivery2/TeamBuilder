@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
+using TeamBuilder.Api.Hosting;
 using TeamBuilder.Api.Middleware;
 using TeamBuilder.Api.Networking;
 using TeamBuilder.Api.Operations;
@@ -16,15 +17,36 @@ using TeamBuilder.Infrastructure.Outbox;
 using TeamBuilder.Infrastructure.Services;
 using TeamBuilder.Infrastructure.WebPush;
 
+// Container health probe (`dotnet TeamBuilder.Api.dll healthcheck [live|ready]`): the runtime
+// image has no shell or curl, so HEALTHCHECK calls the API over loopback with this.
+if (args.Length > 0 && args[0] == HealthProbeCommand.Name)
+{
+    Environment.ExitCode = await HealthProbeCommand.RunAsync(args[1..], Console.Out);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Operator maintenance (`dotnet TeamBuilder.Api.dll outbox ...`): runs one command against the
-// configured database and exits without starting the web host.
+// Operator maintenance (`dotnet TeamBuilder.Api.dll outbox ...` / `database ...`): runs one
+// command against the configured database and exits without starting the web host.
 if (args.Length > 0 && args[0] == OutboxCommand.Name)
 {
     Environment.ExitCode = await OutboxCommand.RunAsync(args[1..], Console.Out, builder.Configuration);
     return;
 }
+if (args.Length > 0 && args[0] == DatabaseCommand.Name)
+{
+    Environment.ExitCode = await DatabaseCommand.RunAsync(args[1..], Console.Out, builder.Configuration);
+    return;
+}
+
+// Deployment safety: graceful shutdown on SIGTERM, and the database environment stamp that
+// keeps background workers (and readiness) off another environment's database.
+builder.Services.AddOptions<DeploymentOptions>().BindConfiguration(DeploymentOptions.SectionName);
+builder.Services.AddOptions<HostOptions>()
+    .Configure<IOptions<DeploymentOptions>>((host, deployment) => host.ShutdownTimeout = deployment.Value.ShutdownTimeout);
+builder.Services.AddSingleton<DatabaseEnvironmentGuard>();
+builder.Services.AddSingleton<IWorkerStartGate>(sp => sp.GetRequiredService<DatabaseEnvironmentGuard>());
 
 // Add DbContext
 builder.Services.AddDbContext<TeamBuilderDbContext>(options =>
@@ -232,44 +254,47 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Add CORS
+// CORS: exact origins from AllowedOrigins (comma-separated). The API authenticates with bearer
+// tokens, never cookies, so credentials are not allowed. '*' (anonymous, any origin) is only
+// accepted in Development; deployed environments require exact https origins (validated below).
+const string CorsPolicyName = "WebClients";
+var allowedOrigins = DeploymentConfigurationValidator.ParseOrigins(builder.Configuration["AllowedOrigins"]);
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
+    options.AddPolicy(CorsPolicyName, policy =>
     {
-        var allowedOrigins = builder.Configuration.GetValue<string>("AllowedOrigins")?.Split(',') ?? ["*"];
-
         if (allowedOrigins.Contains("*"))
-        {
-            policy.AllowAnyOrigin()
-                  .AllowAnyMethod()
-                  .AllowAnyHeader();
-        }
+            policy.AllowAnyOrigin();
         else
-        {
-            policy.WithOrigins(allowedOrigins)
-                  .AllowAnyMethod()
-                  .AllowAnyHeader()
-                  .AllowCredentials();
-        }
+            policy.WithOrigins(allowedOrigins);
+        policy.AllowAnyMethod()
+              .WithHeaders("Authorization", "Content-Type", "Accept", "X-Request-Id")
+              .WithExposedHeaders("X-Request-Id", "Retry-After", "Location");
     });
 });
 
-// Add health checks
-// /health  � liveness: fast process-level check, no external dependencies
-// /health/ready � readiness: verifies external dependencies (database) are reachable
-builder.Services.AddHealthChecks()
-    .AddSqlServer(
-        builder.Configuration.GetConnectionString("TeamBuilderSql") ?? "",
-        name: "TeamBuilderDb",
-        tags: ["ready"]);
+// Health: /healthz/live (process only) and /healthz/ready (database schema, environment stamp,
+// configuration). Web Push is never part of readiness. See HealthEndpoints.
+builder.Services.AddTeamBuilderHealthChecks();
+
+builder.Services.AddHsts(options => options.MaxAge = TimeSpan.FromDays(180));
 
 var app = builder.Build();
 
-// Opt-in only (default off): the private-QA docker-compose stack sets
-// Database__ApplyMigrationsOnStartup=true so a fresh SQL Server container gets the schema.
-// Deployed environments keep applying migrations through their own release process.
-if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+// Fail closed before serving anything: deployed environments (QA, Production, any unknown
+// name) need real OIDC, exact https CORS origins, an injected connection string and no
+// startup migration. See DeploymentConfigurationValidator and docs/qa/private-qa-deployment.md.
+var deploymentErrors = DeploymentConfigurationValidator.Validate(app.Configuration, app.Environment);
+if (deploymentErrors.Count > 0)
+{
+    throw new InvalidOperationException(
+        $"Refusing to start in {app.Environment.EnvironmentName}: " + string.Join(" ", deploymentErrors));
+}
+
+// Opt-in for Development and LocalQA only (the validator above rejects it anywhere else).
+// Deployed environments apply the EF Core migration bundle before the API rolls out, so
+// application replicas never race each other on the schema.
+if (app.Configuration.GetValue<bool>(DeploymentConfigurationValidator.ApplyMigrationsOnStartupKey))
 {
     using var scope = app.Services.CreateScope();
     scope.ServiceProvider.GetRequiredService<TeamBuilderDbContext>().Database.Migrate();
@@ -283,7 +308,8 @@ app.UseExceptionHandler();
 // Correlation ID and structured request logging � runs early so every request is covered.
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-if (app.Environment.IsDevelopment())
+// Swagger is a Development convenience; elsewhere only with an explicit Swagger:Enabled=true.
+if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment()))
 {
     app.UseSwagger();
     app.UseSwaggerUI(options =>
@@ -292,29 +318,32 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-if (!app.Environment.IsEnvironment("QA"))
+// HTTPS: deployed environments sit behind a TLS-terminating proxy or ingress. Redirecting is
+// only safe when the proxy's X-Forwarded-Proto is trusted (ForwardedHeaders), or every proxied
+// request would look like plain HTTP and loop; without it the ingress owns the redirect.
+// Health probes arrive over plain HTTP from the orchestrator and are never redirected.
+var isDeployed = DeploymentEnvironments.IsDeployed(app.Environment);
+var httpsRedirection = app.Configuration.GetValue(
+    "Security:HttpsRedirection",
+    app.Environment.IsDevelopment() || (isDeployed && forwardedHeaders.Enabled));
+if (isDeployed)
+    app.UseHsts();
+if (httpsRedirection)
 {
-    app.UseHttpsRedirection();
+    app.UseWhen(
+        context => !context.Request.Path.StartsWithSegments("/healthz") && !context.Request.Path.StartsWithSegments("/health"),
+        branch => branch.UseHttpsRedirection());
 }
+app.UseMiddleware<SecurityHeadersMiddleware>();
 
-app.UseCors("AllowAll");
+app.UseCors(CorsPolicyName);
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapGet("/", () => Results.Ok("TeamBuilder API Running"));
 app.MapControllers();
-// Liveness: always returns Healthy as long as the process is running
-app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-{
-    Predicate = _ => false
-}).AllowAnonymous();
-
-// Readiness: returns Healthy only when all external dependencies are reachable
-app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-{
-    Predicate = check => check.Tags.Contains("ready")
-}).AllowAnonymous();
+app.MapTeamBuilderHealthEndpoints();
 
 app.Run();
 

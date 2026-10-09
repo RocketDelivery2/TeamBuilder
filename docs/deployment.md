@@ -2,223 +2,73 @@
 
 ## Overview
 
-This document explains how to deploy TeamBuilder to different environments using Octopus Deploy and Azure SQL Server.
+TeamBuilder deploys as an API container, a migration bundle, a static web client and one SQL
+Server database per environment, behind an HTTPS reverse proxy or ingress. The private-QA
+runbook, [qa/private-qa-deployment.md](qa/private-qa-deployment.md), is the source of truth for
+deploying QA and Production: topology, environment separation, OIDC registration, VAPID keys,
+the migration release model, health checks, backup/restore and rollback. The deployment
+contract and reference stacks are in [`deploy/`](../deploy/README.md), and the release
+checklist is [qa/release-checklist.md](qa/release-checklist.md).
+
+This page keeps the reference material that applies to every deployment.
 
 ---
 
 ## Environment Strategy
 
-TeamBuilder supports three environments:
-
-1. **Development** - Local developer machines
-2. **QA** - Quality assurance/testing environment
-3. **Production** - Live production environment
-
-Each environment has its own configuration file that is selected based on the `ASPNETCORE_ENVIRONMENT` variable.
-
----
-
-## Configuration Files
-
-### Development (`appsettings.Development.json`)
-
-Used for local development. Contains safe connection strings for LocalDB or local SQL Server.
-
-```json
-{
-  "ConnectionStrings": {
-    "TeamBuilderSql": "Server=(localdb)\\mssqllocaldb;Database=TeamBuilderDev;Trusted_Connection=True;MultipleActiveResultSets=true"
-  },
-  "AllowedOrigins": "http://localhost:3000,http://localhost:4200"
-}
-```
-
-### QA (`appsettings.QA.json`)
-
-Uses Octopus Deploy variable substitution. Variables are replaced during deployment.
-
-```json
-{
-  "ConnectionStrings": {
-    "TeamBuilderSql": "Server=#{AzureSql.ServerName};Database=#{AzureSql.DatabaseName};User Id=#{AzureSql.UserName};Password=#{AzureSql.Password};..."
-  },
-  "AllowedOrigins": "#{AllowedOrigins}"
-}
-```
-
-### Production (`appsettings.Production.json`)
-
-Uses Octopus Deploy variable substitution. Variables are replaced during deployment.
-
-```json
-{
-  "ConnectionStrings": {
-    "TeamBuilderSql": "Server=#{AzureSql.ServerName};Database=#{AzureSql.DatabaseName};User Id=#{AzureSql.UserName};Password=#{AzureSql.Password};..."
-  },
-  "AllowedOrigins": "#{AllowedOrigins}",
-  "ApplicationInsights": {
-    "ConnectionString": "#{ApplicationInsights.ConnectionString}"
-  }
-}
-```
-
----
-
-## Render QA Hosting
-
-This section records a possible QA hosting configuration only. Repository
-contents do not verify that a Render service, URL, Entra application, or live
-environment variables currently exist or are configured as shown. Confirm
-provider-side state before relying on these values.
-
-In the application, `GET /health` is a liveness check that does not contact
-external dependencies. `GET /health/ready` checks SQL Server connectivity via
-the configured `ConnectionStrings:TeamBuilderSql`. Swagger is enabled only in
-Development. HTTPS redirection is disabled in the `QA` environment.
-
-| Setting | Value |
-|---|---|
-| **Suggested service name** | `teambuilder-api-qa` (unverified) |
-| **Recorded Render URL** | `https://teambuilder-api-qa.onrender.com` (unverified) |
-| **Example runtime** | Docker (unverified) |
-| **Example environment** | QA (unverified) |
-| **Recorded production URL** | `https://teambuilder.info` (unverified) |
-
-### Example Render environment variables
-
-| Variable | Value | Notes |
+| Environment | `ASPNETCORE_ENVIRONMENT` | Purpose |
 |---|---|---|
-| `ASPNETCORE_ENVIRONMENT` | `QA` | Keep the app in QA mode. |
-| `ASPNETCORE_URLS` | `http://0.0.0.0:${PORT}` | Bind to Render's assigned port. |
-| `AllowedOrigins` | `https://teambuilder.info,https://teambuilder-api-qa.onrender.com` | Illustrative only; replace with confirmed origins. |
-| `Jwt__Authority` | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Set to the confirmed OIDC authority. |
-| `Jwt__Audience` | `<api-audience>` | Set to the audience expected by the API registration. |
-| `Jwt__Issuer` | *(optional)* | Expected issuer on the symmetric-key validation path; OIDC uses authority metadata. |
-| `Jwt__ExternalIdentity__SubjectClaim` | `sub` by default; `oid` for Entra when present in the API token | Configured opaque external subject claim; not an internal player ID. |
-| `Jwt__ExternalIdentity__TenantIdClaim` | `tid` | Optional tenant metadata claim. |
-| `Jwt__ExternalIdentity__Provider` | `oidc` by default | Descriptive provider metadata label. |
-| `Jwt__RequireHttpsMetadata` | `true` | Keep metadata retrieval secure. |
-| `Jwt__SigningKey` | *(do not set)* | Do not set for Entra/OIDC JWT validation. |
-| `ConnectionStrings__TeamBuilderSql` | *(set when SQL is provisioned)* | The API reads this exact connection-string key. |
+| Development | `Development` | Local developer machines (developer tokens, Swagger, opt-in startup migration). |
+| LocalQA | `LocalQA` | The local docker-compose stack (`docker-compose.qa.yml`, developer tokens). |
+| QA | `QA` | Deployed private QA with real OIDC and HTTPS. |
+| Production | `Production` | Live environment. |
 
----
+QA and Production (and any other name) are *deployed* environments: the API refuses to start
+with a developer signing key, startup migrations, a wildcard or non-https CORS origin, a missing
+or non-https OIDC authority, or an unreplaced `#{…}` placeholder.
 
-## Octopus Deploy Variables
+## Configuration
 
-The checked-in environment appsettings files use these variable names. Their
-presence does not verify that an Octopus project, environment, or variable is
-currently configured. Example values below are illustrative and must be
-confirmed with the deployment operators.
+All environment-specific values are injected as environment variables or from a secret store
+at deployment time. `appsettings.QA.json` and `appsettings.Production.json` contain only
+non-secret defaults (JSON console logging, empty OIDC values, the database-stamp check), so a
+deployment that forgets a value fails at startup instead of running with a placeholder. The
+full variable list is in the runbook's "Configuration reference". Platforms that route to a
+container port must target `8080`, or set `ASPNETCORE_HTTP_PORTS` (the image has no shell, so a
+`${PORT}`-style substitution in the entrypoint is not available).
 
-### Azure SQL Variables
+### JWT / OIDC
 
-| Variable | Scope | Description | Example |
-|----------|-------|-------------|---------|
-| `AzureSql.ServerName` | QA, Production | Azure SQL Server hostname | `teambuilder-qa.database.windows.net` |
-| `AzureSql.DatabaseName` | QA, Production | Database name | `TeamBuilderQA` |
-| `AzureSql.UserName` | QA, Production | SQL authentication username | `teambuilder-api` |
-| `AzureSql.Password` | QA, Production | SQL authentication password (sensitive) | `********` |
+| Variable | Purpose |
+|---|---|
+| `Jwt__Authority` | OIDC issuer/authority (https). Required outside Development and LocalQA. |
+| `Jwt__Audience` | Audience the provider puts in API access tokens. Required outside Development and LocalQA. |
+| `Jwt__RequireHttpsMetadata` | Must stay `true` outside local environments. |
+| `Jwt__SigningKey` | Developer tokens; Development and LocalQA only. Rejected elsewhere. |
+| `Jwt__Issuer` | Expected issuer on the developer-token path only. |
+| `Jwt__ExternalIdentity__SubjectClaim` | Stable subject claim: `sub` by default, `oid` for Entra ID. |
+| `Jwt__ExternalIdentity__TenantIdClaim` | Optional tenant metadata claim (`tid`). |
+| `Jwt__ExternalIdentity__Provider` | Descriptive provider label stored on new identity links. |
 
-### CORS Variables
+A validated token's exact issuer and configured subject claim resolve through `PlayerIdentity`
+to the internal `Player.Id`; no JWT claim is parsed as a player ID. See
+[oidc-rollout.md](oidc-rollout.md) for provider-specific notes.
 
-| Variable | Scope | Description | Example |
-|----------|-------|-------------|---------|
-| `AllowedOrigins` | QA, Production | Comma-separated list of allowed origins | `https://qa.teambuilder.info` (QA) / `https://teambuilder.info` (Production) |
+### Azure SQL
 
-### Application Insights (Optional)
-
-| Variable | Scope | Description | Example |
-|----------|-------|-------------|---------|
-| `ApplicationInsights.ConnectionString` | QA, Production | Azure Application Insights connection string | `InstrumentationKey=...` |
-
-The connection-string placeholder is present in the environment appsettings
-files, but the API project does not currently register the Application
-Insights SDK. The placeholder alone does not enable telemetry.
-
-### Environment Variable
-
-| Variable | Scope | Description | Example |
-|----------|-------|-------------|---------|
-| `ASPNETCORE_ENVIRONMENT` | QA, Production | ASP.NET Core environment name | `QA` or `Production` |
-
-### JWT / OIDC Variables
-
-| Variable | Scope | Description | Example |
-|----------|-------|-------------|---------|
-| `Jwt__Authority` | QA, Production | Entra/OIDC authority URL | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
-| `Jwt__Audience` | QA, Production | API audience | `api://teambuilder-api` |
-| `Jwt__Issuer` | QA, Production | Expected issuer for symmetric-key validation; OIDC uses authority metadata | *(provider-specific)* |
-| `Jwt__RequireHttpsMetadata` | QA, Production | Require HTTPS for metadata discovery | `true` |
-| `Jwt__SigningKey` | Local development / tests | If non-empty, selects symmetric-key validation instead of OIDC | Keep secrets outside source control |
-| `Jwt__ExternalIdentity__SubjectClaim` | Per provider | Configured opaque external subject claim | `sub` by default; `oid` for Entra when issued |
-| `Jwt__ExternalIdentity__TenantIdClaim` | Per provider | Optional tenant metadata claim | `tid` by default |
-| `Jwt__ExternalIdentity__Provider` | Per provider | Descriptive identity-provider metadata | `oidc` by default |
-
-The API supports symmetric-key and OIDC-authority JWT validation, selected by
-configuration. The `ExternalIdentity` scheme is the default. A validated
-token's exact issuer and configured subject claim resolve through
-`PlayerIdentity` to the internal `Player.Id`; no JWT claim is parsed as a
-player ID. The repository does not establish which identity provider or
-credentials are currently deployed; validate the authority, issuer, audience,
-and subject claim with the provider actually in use.
-
----
-
-## Azure SQL Server Setup
-
-### 1. Create Azure SQL Server
-
-```bash
-az sql server create \
-  --name teambuilder-sql-server \
-  --resource-group teambuilder-rg \
-  --location eastus \
-  --admin-user sqladmin \
-  --admin-password <SecurePassword>
-```
-
-### 2. Create Database
-
-```bash
-az sql db create \
-  --resource-group teambuilder-rg \
-  --server teambuilder-sql-server \
-  --name TeamBuilderQA \
-  --service-objective S1
-```
-
-### 3. Configure Firewall Rules
-
-```bash
-# Allow Azure services
-az sql server firewall-rule create \
-  --resource-group teambuilder-rg \
-  --server teambuilder-sql-server \
-  --name AllowAzureServices \
-  --start-ip-address 0.0.0.0 \
-  --end-ip-address 0.0.0.0
-
-# Allow specific IP (for management)
-az sql server firewall-rule create \
-  --resource-group teambuilder-rg \
-  --server teambuilder-sql-server \
-  --name AllowMyIP \
-  --start-ip-address <Your-IP> \
-  --end-ip-address <Your-IP>
-```
-
-### 4. Create SQL User for API
-
-The names and commands below are examples, not evidence that these Azure SQL
-resources or credentials exist in any environment.
-
-Connect to the database and run:
+Provision one database per environment (the Azure reference template in `deploy/azure` does
+this). Create a contained application user for the API rather than using the server
+administrator:
 
 ```sql
-CREATE LOGIN [teambuilder-api] WITH PASSWORD = '<SecurePassword>';
-CREATE USER [teambuilder-api] FOR LOGIN [teambuilder-api];
-EXEC sp_addrolemember 'db_owner', 'teambuilder-api';
+CREATE USER [teambuilder-api] WITH PASSWORD = '<from your secret store>';
+ALTER ROLE db_datareader ADD MEMBER [teambuilder-api];
+ALTER ROLE db_datawriter ADD MEMBER [teambuilder-api];
+GRANT VIEW DEFINITION TO [teambuilder-api];  -- lets the API read the environment stamp
 ```
+
+The migration bundle and the one-time `database stamp-environment` need a user with DDL
+rights (`db_owner`, or the administrator during the release step).
 
 ---
 
@@ -227,84 +77,34 @@ EXEC sp_addrolemember 'db_owner', 'teambuilder-api';
 ### Local Development
 
 ```bash
+dotnet tool restore
 dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api
 ```
 
 The initial and subsequent migrations are already committed under
 `src/TeamBuilder.Infrastructure/Persistence/Migrations/`. Do not recreate an
 `InitialCreate` migration. Add a new named migration only when changing the
-EF Core model, then review and commit it.
+EF Core model, then review and commit it. The EF tools use
+`TeamBuilderDesignTimeDbContextFactory`, so they never start the API host.
 
 ### QA/Production
 
-**Option 1: Apply migrations during deployment (Octopus Deploy step)**
-
-Add a deployment step that runs:
-
-```bash
-dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api --configuration Release
-```
-
-**Option 2: Generate SQL scripts and review before applying**
+Schema changes ship as an EF Core migration bundle, applied once per release before the API
+rolls out; application replicas never migrate. The Release workflow builds and validates
+`efbundle-linux-x64` and an idempotent SQL script, and `docker build --target migrator .` builds
+the migrator image. Steps: [qa/private-qa-deployment.md](qa/private-qa-deployment.md#migrations-the-release-model).
 
 ```bash
-dotnet ef migrations script --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api --idempotent --output migration.sql
+dotnet tool restore
+dotnet ef migrations bundle --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api \
+  --configuration Release --self-contained --target-runtime linux-x64 --output efbundle
+./efbundle --connection "<QA connection string>"
+dotnet src/TeamBuilder.Api/bin/Release/net10.0/TeamBuilder.Api.dll database status   # or: docker run <api image> database status
 ```
 
-Review the `migration.sql` file and apply it manually or through a deployment pipeline.
-
----
-
-## Octopus Deploy Setup
-
-### 1. Create Octopus Project
-
-- Project Name: **TeamBuilder**
-- Lifecycle: Standard (Dev → QA → Production)
-
-### 2. Define Variables
-
-Add all variables listed in the "Octopus Deploy Variables" section above.
-
-Mark sensitive variables (passwords, connection strings) as **Sensitive**.
-
-### 3. Deployment Process
-
-#### Step 1: Deploy Package
-
-- Step Type: **Deploy a Package**
-- Package ID: `TeamBuilder.Api`
-- Target Role: `web-server`
-
-#### Step 2: Configure IIS (if using IIS)
-
-- Step Type: **Deploy to IIS**
-- Website Name: `TeamBuilder`
-- App Pool: `.NET v10.0`
-- Binding: `https://*:443`
-
-#### Step 3: Apply Migrations (optional)
-
-- Step Type: **Run a Script**
-- Script:
-  ```bash
-  dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api --configuration Release --no-build
-  ```
-
-#### Step 4: Health Check
-
-- Step Type: **HTTP - Test URL**
-- URL: `https://#{DeploymentUrl}/health`
-- Expected Status: `200 OK`
-
-#### Step 5: Production host and CORS guidance
-
-- The URLs and support address below are recorded examples only; confirm
-  provider-side configuration before using them.
-- **Recorded production public URL**: `https://teambuilder.info` (unverified)
-- **Example Production AllowedOrigins**: `https://teambuilder.info` (unverified)
-- **Recorded support email**: `support@teambuilder.info` (unverified)
-- **Example QA host**: `https://qa.teambuilder.info` (unverified)
+If a reviewed SQL script is required instead, generate it with
+`dotnet ef migrations script --idempotent --output migration.sql` and apply it with your DBA
+process; the API's readiness reports Unhealthy until every migration in the build is applied.
 
 ---
 
@@ -437,118 +237,62 @@ or keys, addresses, coordinates, tokens or email.
 
 ## Deployment Checklist
 
-### Before Deployment
-
-- [ ] All Octopus variables are defined for the target environment
-- [ ] Azure SQL Server is created and firewall rules are configured
-- [ ] Database user has appropriate permissions
-- [ ] SSL certificate is installed (for HTTPS)
-- [ ] Application Insights resource is created (if using monitoring)
-
-### After Deployment
-
-- [ ] API is accessible at the deployment URL
-- [ ] Health check endpoint (`/health`) returns 200 OK
-- [ ] Swagger UI is accessible in Development (disabled outside Development)
-- [ ] Database connection is successful
-- [ ] CORS configuration allows expected frontend origins
-- [ ] Logging is working in the configured hosting environment (Application Insights is not currently wired into the API)
+Use [qa/release-checklist.md](qa/release-checklist.md). In short: Release workflow green;
+backup taken; migration bundle applied and `database status` clean; database stamped (first
+deployment); API rolled out and `/healthz/ready` healthy; release smoke run; device checks done.
 
 ---
 
 ## Security Considerations
 
-### Secrets Management
-
-- **Never commit secrets** to source control
-- Store secrets in Octopus Deploy as sensitive variables
-- Use Azure Key Vault for production secrets (optional enhancement)
-- Rotate passwords and connection strings regularly
-
-### Connection String Security
-
-- Use SQL authentication with strong passwords
-- Consider using Azure Managed Identity instead of SQL authentication
-- Enable Azure SQL Advanced Threat Protection
-- Use SSL/TLS for all connections (default with Azure SQL)
-
-### API Security
-
-- HTTPS redirection is configured except in the `QA` environment.
-- Configure CORS to allow only known frontend origins
-- JWT bearer validation uses the default `ExternalIdentity` scheme and
-  endpoint-specific PlayerIdentity-based authorization. Player onboarding and
-  self-profile mutations require authentication; public player discovery
-  omits Email. Join-request reads are applicant/team-owner restricted, and
-  roster-import reads are importer-only.
+- Never commit secrets. The connection string and the VAPID private key live only in the
+  environment's secret store; images and web builds contain no secrets.
+- Use a dedicated database user for the API, TLS for all connections (`Encrypt=True`), and a
+  separate database, OIDC client, VAPID key pair and host name per environment.
+- The API sends `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and a
+  `default-src 'none'` CSP; HSTS outside Development over HTTPS. CORS allows exact origins only
+  and never credentials.
+- HTTPS redirection runs in the API only when the proxy's forwarded headers are trusted; the
+  ingress or proxy owns the HTTP→HTTPS redirect otherwise.
 - Rate limits are in memory per API instance (discovery per IP; claims,
   subscriptions and push registration per token issuer and subject). Configure
   `ForwardedHeaders` for your proxy before relying on per-IP limits.
+- Swagger is off outside Development unless `Swagger:Enabled=true`.
 
 ---
 
 ## Monitoring
 
-### Application Insights (Not currently wired)
-
-An Application Insights connection-string placeholder exists in the environment
-configuration, but Application Insights telemetry is not currently wired into
-the API. Do not treat this setting as proof that telemetry is being collected.
-
-```json
-{
-  "ApplicationInsights": {
-    "ConnectionString": "#{ApplicationInsights.ConnectionString}"
-  }
-}
-```
-
-### Health Check Monitoring
-
-Poll `/health` for process liveness and `/health/ready` to verify the configured
-SQL Server dependency. The liveness endpoint intentionally does not check SQL.
-
-- Azure Monitor
-- Datadog
-- New Relic
-- Custom monitoring scripts
+- `GET /healthz/live` (process only) and `GET /healthz/ready` (database reachable and fully
+  migrated, environment stamp, configuration) return JSON with per-check status, the build
+  version and commit. `/health` and `/health/ready` are kept as plain-text aliases.
+- QA and Production log JSON to the console with `TraceId`, `SpanId` and `CorrelationId`
+  (`X-Request-Id`) scopes; collect stdout with your platform (Log Analytics in the Azure
+  reference). Application Insights is not wired into the API.
+- Refill metrics: see "Refill metrics" above.
 
 ---
 
 ## Troubleshooting
 
-### Migration Fails
+See the runbook's troubleshooting table. The most common deployment failures:
 
-**Error**: "Cannot connect to database"
-
-**Solution**: Verify connection string, firewall rules, and SQL user permissions.
-
-### CORS Errors
-
-**Error**: "Access to fetch at '...' has been blocked by CORS policy"
-
-**Solution**: Add the frontend origin to the `AllowedOrigins` variable in Octopus Deploy.
-
-### API Returns 500 Error
-
-**Client response**: `An unexpected error occurred.`
-
-**Solution**: Inspect the server-side logs available in the hosting environment
-for the original exception. Application Insights is not currently wired into
-the API. The API does not return internal exception messages in unexpected 500
-responses.
+| Symptom | Cause |
+|---|---|
+| `Refusing to start in QA: …` | Unsafe or missing configuration; the message lists every item. |
+| `/healthz/ready` 503, `database` Unhealthy | Database unreachable or the migration bundle has not run. |
+| `/healthz/ready` 503, `environment` Unhealthy | Database not stamped for this environment. |
+| CORS errors in the browser | The web origin is missing from `AllowedOrigins` (exact `https://` origin, no path). |
+| `500` responses | Check the API's console logs by `CorrelationId`; clients only see a generic message. |
 
 ---
 
 ## Rollback Strategy
 
-If a deployment fails:
-
-1. **Rollback Code**: Use Octopus Deploy's "Redeploy previous release" feature
-2. **Rollback Database**: If migrations were applied, manually revert using migration rollback:
-   ```bash
-   dotnet ef database update <PreviousMigrationName> --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api
-   ```
+Redeploy the previous API image (the database may be one additive migration ahead; readiness
+stays healthy) and the previous web artifact. Do not roll the schema back in place on QA or
+Production data: fix forward, or restore the pre-release backup to a separate database and
+switch to it. Details: [qa/private-qa-deployment.md](qa/private-qa-deployment.md#rollback).
 
 ---
 

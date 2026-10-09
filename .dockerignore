@@ -1,15 +1,11 @@
-.git
-.gitignore
-.vs
+# The API and migrator images build from src/ (plus the dotnet tool manifest) only.
+**
+!src/
+!.config/dotnet-tools.json
 **/bin/
 **/obj/
 **/TestResults/
-.ai/
-ai-history/
-*.user
-*.suo
-*.swp
-README.md
-apps/**/node_modules
-apps/**/dist
-.env
+**/*.user
+**/appsettings.*.local.json
+**/secrets.json
+**/.env

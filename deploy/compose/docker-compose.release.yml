@@ -1,0 +1,162 @@
+# Deployed private-QA (or Production) topology on one Docker host, vendor neutral:
+#
+#   internet -> proxy (Caddy: HTTPS, HSTS) -> /api/*  -> api (TeamBuilder.Api, port 8080)
+#                                          -> other   -> web (static SPA/PWA, nginx)
+#               api -> SQL Server (managed, or the optional local-sql profile)
+#
+# Only the proxy publishes ports. It is also the only address the API trusts for
+# X-Forwarded-For/-Proto; a header sent by anyone else is ignored. /healthz is not routed
+# publicly; probe it from the host (docker compose ps shows each service's health).
+#
+# Settings and secrets come from a git-ignored env file (copy qa.env.example to qa.env):
+#   docker compose -f deploy/compose/docker-compose.release.yml --env-file deploy/compose/qa.env build
+#   docker compose ... --profile release run --rm migrate                         # 1. schema
+#   docker compose ... --profile release run --rm stamp                           # 2. once per database
+#   docker compose ... up -d                                                      # 3. API, web, proxy
+# See docs/qa/private-qa-deployment.md for the full runbook, OIDC and VAPID setup and rollback.
+name: teambuilder-${TEAMBUILDER_ENVIRONMENT_SLUG:-qa}
+
+x-database: &database
+  ConnectionStrings__TeamBuilderSql: ${TEAMBUILDER_SQL_CONNECTION_STRING:?Set TEAMBUILDER_SQL_CONNECTION_STRING}
+
+services:
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    environment:
+      TEAMBUILDER_SITE_ADDRESS: ${TEAMBUILDER_SITE_ADDRESS:?Set TEAMBUILDER_SITE_ADDRESS to the QA host name}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      edge:
+        ipv4_address: 172.29.81.10
+
+  api:
+    image: ${TEAMBUILDER_API_IMAGE:-teambuilder-api:local}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: api
+      args:
+        VERSION: ${TEAMBUILDER_VERSION:-0.0.0-local}
+        SOURCE_REVISION: ${TEAMBUILDER_SOURCE_REVISION:-unknown}
+    restart: unless-stopped
+    environment:
+      <<: *database
+      ASPNETCORE_ENVIRONMENT: ${TEAMBUILDER_ASPNETCORE_ENVIRONMENT:-QA}
+      # Same origin behind the proxy, so no CORS origin is needed. List exact https origins
+      # here only if the web client is hosted on another origin.
+      AllowedOrigins: ${TEAMBUILDER_ALLOWED_ORIGINS:-}
+      Jwt__Authority: ${TEAMBUILDER_OIDC_AUTHORITY:?Set TEAMBUILDER_OIDC_AUTHORITY}
+      Jwt__Audience: ${TEAMBUILDER_OIDC_API_AUDIENCE:?Set TEAMBUILDER_OIDC_API_AUDIENCE}
+      Jwt__ExternalIdentity__SubjectClaim: ${TEAMBUILDER_OIDC_SUBJECT_CLAIM:-sub}
+      Jwt__ExternalIdentity__Provider: ${TEAMBUILDER_OIDC_PROVIDER_LABEL:-oidc}
+      ForwardedHeaders__Enabled: "true"
+      ForwardedHeaders__KnownProxies__0: 172.29.81.10
+      WebPush__Enabled: ${TEAMBUILDER_WEBPUSH_ENABLED:-false}
+      WebPush__Subject: ${TEAMBUILDER_WEBPUSH_SUBJECT:-}
+      WebPush__VapidPublicKey: ${TEAMBUILDER_VAPID_PUBLIC_KEY:-}
+      WebPush__VapidPrivateKey: ${TEAMBUILDER_VAPID_PRIVATE_KEY:-}
+    healthcheck:
+      test: ["CMD", "dotnet", "TeamBuilder.Api.dll", "healthcheck", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    stop_grace_period: 40s
+    networks:
+      - edge
+      - data
+
+  web:
+    image: ${TEAMBUILDER_WEB_IMAGE:-teambuilder-web:local}
+    build:
+      context: ../../apps/TeamBuilder.Web
+      args:
+        VERSION: ${TEAMBUILDER_VERSION:-0.0.0-local}
+        SOURCE_REVISION: ${TEAMBUILDER_SOURCE_REVISION:-unknown}
+    restart: unless-stopped
+    environment:
+      TEAMBUILDER_ENVIRONMENT: ${TEAMBUILDER_WEB_ENVIRONMENT:-qa}
+      TEAMBUILDER_OIDC_AUTHORITY: ${TEAMBUILDER_OIDC_AUTHORITY}
+      TEAMBUILDER_OIDC_CLIENT_ID: ${TEAMBUILDER_OIDC_SPA_CLIENT_ID:?Set TEAMBUILDER_OIDC_SPA_CLIENT_ID}
+      TEAMBUILDER_OIDC_SCOPE: ${TEAMBUILDER_OIDC_SCOPE:-openid profile}
+      TEAMBUILDER_CSP_CONNECT_EXTRA: ${TEAMBUILDER_CSP_CONNECT_EXTRA:-}
+      # Unused here (the proxy routes /api), but the template needs a value.
+      API_UPSTREAM: http://api:8080
+    networks:
+      - edge
+
+  # Release tools (profile "release"): run explicitly, in this order, never on `up`.
+  migrate:
+    profiles: ["release"]
+    image: ${TEAMBUILDER_MIGRATOR_IMAGE:-teambuilder-migrator:local}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: migrator
+      args:
+        VERSION: ${TEAMBUILDER_VERSION:-0.0.0-local}
+        SOURCE_REVISION: ${TEAMBUILDER_SOURCE_REVISION:-unknown}
+    environment:
+      <<: *database
+    # edge for an external (managed) database, data for the optional local one.
+    networks:
+      - edge
+      - data
+    restart: "no"
+
+  stamp:
+    profiles: ["release"]
+    image: ${TEAMBUILDER_API_IMAGE:-teambuilder-api:local}
+    command: ["database", "stamp-environment", "${TEAMBUILDER_ASPNETCORE_ENVIRONMENT:-QA}"]
+    environment:
+      <<: *database
+    # edge for an external (managed) database, data for the optional local one.
+    networks:
+      - edge
+      - data
+    restart: "no"
+
+  # Optional SQL Server on the same host (profile "local-sql"), for a single-VM QA. Point
+  # TEAMBUILDER_SQL_CONNECTION_STRING at Server=sql;... to use it; prefer a managed database.
+  sql:
+    profiles: ["local-sql"]
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${TEAMBUILDER_SQL_SA_PASSWORD:-}
+    volumes:
+      - sql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - data
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.29.81.0/24
+  data:
+    internal: true
+
+volumes:
+  caddy-data:
+  caddy-config:
+  sql-data:

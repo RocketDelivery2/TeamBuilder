@@ -5,7 +5,11 @@
 export interface AuthAdapter {
   readonly kind: 'oidc' | 'dev-token';
   getAccessToken(): Promise<string | null>;
-  signOut(): Promise<void>;
+  /**
+   * Forgets the local session. With `endProviderSession` (the user pressed Sign out) an OIDC
+   * adapter also ends the provider session when the provider supports it.
+   */
+  signOut(endProviderSession?: boolean): Promise<void>;
 }
 
 const DEV_TOKEN_KEY = 'teambuilder.devToken';

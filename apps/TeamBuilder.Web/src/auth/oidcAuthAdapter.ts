@@ -41,7 +41,19 @@ export class OidcAuthAdapter implements AuthAdapter {
     return user && !user.expired ? user.access_token : null;
   }
 
-  async signOut(): Promise<void> {
+  async signOut(endProviderSession = false): Promise<void> {
+    if (endProviderSession) {
+      try {
+        // Providers that publish end_session_endpoint get RP-initiated logout and return the
+        // browser to post_logout_redirect_uri; signoutRedirect also clears the stored user.
+        if (await this.manager.metadataService.getEndSessionEndpoint()) {
+          await this.manager.signoutRedirect();
+          return;
+        }
+      } catch {
+        // Metadata unavailable: fall back to forgetting the local session only.
+      }
+    }
     await this.manager.removeUser();
   }
 }

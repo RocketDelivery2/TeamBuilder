@@ -1,9 +1,18 @@
+# Access log without query strings: discovery searches carry the searcher's coordinates in the
+# query, and those must never be persisted. $uri is the path only.
+log_format teambuilder_noquery '$remote_addr - [$time_local] "$request_method $uri $server_protocol" '
+                               '$status $body_bytes_sent $request_time "$http_user_agent"';
+
 server {
     listen 80;
+    access_log /var/log/nginx/access.log teambuilder_noquery;
     server_name _;
     root /usr/share/nginx/html;
+    server_tokens off;
 
     # API calls stay same-origin for the browser and are forwarded to the TeamBuilder API.
+    # (The local compose stack uses this. In the release topology the TLS proxy routes /api
+    # straight to the API and this block is never reached.)
     location /api/ {
         proxy_pass ${API_UPSTREAM};
         proxy_set_header Host $host;
@@ -14,24 +23,35 @@ server {
     # The service worker and manifest must never be cached long, or a fixed worker would not
     # reach browsers until the cache expired. Browsers also revalidate sw.js on their own.
     location = /sw.js {
+        include /etc/nginx/conf.d/security-headers.inc;
         add_header Cache-Control "no-cache";
         add_header Service-Worker-Allowed "/";
         try_files $uri =404;
     }
 
     location = /manifest.webmanifest {
+        include /etc/nginx/conf.d/security-headers.inc;
         add_header Cache-Control "no-cache";
         default_type application/manifest+json;
         try_files $uri =404;
     }
 
+    # Per-environment public settings, written at container start (15-teambuilder-config.envsh).
+    location = /config.js {
+        include /etc/nginx/conf.d/security-headers.inc;
+        add_header Cache-Control "no-cache";
+        try_files $uri =404;
+    }
+
     location /assets/ {
+        include /etc/nginx/conf.d/security-headers.inc;
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files $uri =404;
     }
 
     # Client-side routes (/new, /games/{id}, /auth/callback) all serve the app shell.
     location / {
+        include /etc/nginx/conf.d/security-headers.inc;
         add_header Cache-Control "no-cache";
         try_files $uri /index.html;
     }

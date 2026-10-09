@@ -372,3 +372,6 @@ FodyWeavers.xsd
 
 # Local secrets for docker-compose.qa.yml (never commit)
 .env
+
+# Release environment files (secrets); only the *.env.example templates are committed.
+deploy/compose/*.env

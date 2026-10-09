@@ -1,0 +1,191 @@
+name: Release
+
+# Release artifacts and release gates for private QA (docs/qa/private-qa-deployment.md):
+#   migrations       EF model check, Linux migration bundle + idempotent SQL script, validated on SQL Server
+#   web              production web build artifact (one build for every environment)
+#   container-smoke  API, migrator and web images exercised as a release uses them
+#   reference-iac    Azure reference deployment compiles (no cloud access, no credentials)
+#   publish-images   version tags only: push the three images to GHCR
+# Nothing here deploys to a cloud account.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  metadata:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Compute version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version **$version** at \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+  migrations:
+    name: Migration bundle
+    needs: metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: |
+          dotnet tool restore
+          dotnet restore TeamBuilder.slnx
+
+      - name: Model matches the committed migrations
+        run: dotnet ef migrations has-pending-model-changes --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api
+
+      - name: Build migration bundle and idempotent script
+        run: |
+          mkdir -p artifacts/migrations
+          dotnet ef migrations bundle --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api \
+            --configuration Release --self-contained --target-runtime linux-x64 --output artifacts/migrations/efbundle-linux-x64
+          dotnet ef migrations script --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api \
+            --idempotent --output artifacts/migrations/migrations-idempotent.sql
+          printf '{"version":"%s","commit":"%s"}\n' "${{ needs.metadata.outputs.version }}" "$GITHUB_SHA" > artifacts/migrations/version.json
+
+      - name: Validate the bundle on SQL Server (clean, idempotent, prior schema)
+        run: |
+          password="Ci_$(openssl rand -hex 12)!Aa1"
+          docker run -d --name release-sql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$password" -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+          for _ in $(seq 1 60); do
+            docker exec release-sql /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$password" -Q 'SELECT 1' -b -o /dev/null 2>/dev/null && break
+            sleep 2
+          done
+          scripts/qa/validate-migration-bundle.sh artifacts/migrations/efbundle-linux-x64 release-sql "$password" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teambuilder-migrations-${{ needs.metadata.outputs.version }}
+          path: artifacts/migrations/
+          if-no-files-found: error
+
+  web:
+    name: Web release build
+    needs: metadata
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/TeamBuilder.Web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install, type-check, test
+        run: |
+          npm ci
+          npm run lint
+          npm test
+
+      - name: Release build (developer tokens cannot be compiled in)
+        env:
+          TEAMBUILDER_WEB_RELEASE: "true"
+        run: |
+          npm run build
+          printf '{"version":"%s","commit":"%s"}\n' "${{ needs.metadata.outputs.version }}" "$GITHUB_SHA" > dist/version.json
+          tar -czf ../../teambuilder-web-${{ needs.metadata.outputs.version }}.tar.gz -C dist .
+
+      - name: Dependency audit
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teambuilder-web-${{ needs.metadata.outputs.version }}
+          path: teambuilder-web-${{ needs.metadata.outputs.version }}.tar.gz
+          if-no-files-found: error
+
+  container-smoke:
+    name: Container release smoke
+    needs: metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Build images and run the release smoke
+        env:
+          TEAMBUILDER_VERSION: ${{ needs.metadata.outputs.version }}
+          TEAMBUILDER_SOURCE_REVISION: ${{ github.sha }}
+        run: scripts/qa/container-smoke.sh
+
+      - name: Image sizes
+        if: always()
+        run: docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep -E '^teambuilder-(api|migrator|web):' | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+  reference-iac:
+    name: Azure reference deployment compiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bicep build
+        run: |
+          az bicep install
+          az bicep build --file deploy/azure/main.bicep --stdout > /dev/null
+          az bicep build-params --file deploy/azure/qa.bicepparam --stdout > /dev/null
+
+  publish-images:
+    name: Publish images (version tags)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [metadata, migrations, web, container-smoke, reference-iac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and push to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          registry="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          args=(--build-arg "VERSION=$VERSION" --build-arg "SOURCE_REVISION=$GITHUB_SHA")
+          docker build "${args[@]}" --target api -t "$registry/teambuilder-api:$VERSION" .
+          docker build "${args[@]}" --target migrator -t "$registry/teambuilder-migrator:$VERSION" .
+          docker build "${args[@]}" -t "$registry/teambuilder-web:$VERSION" apps/TeamBuilder.Web
+          for image in api migrator web; do docker push "$registry/teambuilder-$image:$VERSION"; done

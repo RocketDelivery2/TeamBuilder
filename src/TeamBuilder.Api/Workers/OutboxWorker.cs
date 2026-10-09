@@ -1,3 +1,4 @@
+using TeamBuilder.Api.Hosting;
 using Microsoft.Extensions.Options;
 using TeamBuilder.Infrastructure.Outbox;
 
@@ -16,13 +17,15 @@ public sealed class OutboxWorker : BackgroundService
     private readonly TimeProvider _timeProvider;
     private readonly OutboxOptions _options;
     private readonly ILogger<OutboxWorker> _logger;
+    private readonly IWorkerStartGate _startGate;
 
-    public OutboxWorker(OutboxProcessor processor, TimeProvider timeProvider, IOptions<OutboxOptions> options, ILogger<OutboxWorker> logger)
+    public OutboxWorker(OutboxProcessor processor, TimeProvider timeProvider, IOptions<OutboxOptions> options, ILogger<OutboxWorker> logger, IWorkerStartGate? startGate = null)
     {
         _processor = processor;
         _timeProvider = timeProvider;
         _options = options.Value;
         _logger = logger;
+        _startGate = startGate ?? OpenWorkerStartGate.Instance;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -32,6 +35,9 @@ public sealed class OutboxWorker : BackgroundService
             _logger.LogInformation("Outbox worker is disabled; outbox messages stay pending.");
             return;
         }
+
+        // Never touch another environment's database (see DatabaseEnvironmentGuard).
+        await _startGate.WaitAsync(stoppingToken);
 
         while (true)
         {

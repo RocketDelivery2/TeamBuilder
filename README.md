@@ -246,8 +246,9 @@ caller's full profile, including email. The former anonymous
 - `DELETE /api/v1/rosterimports/{id}` - Delete import
 
 ### Health
-- `GET /health` - Liveness check; reports whether the API process is running
-- `GET /health/ready` - Readiness check; verifies SQL Server connectivity
+- `GET /healthz/live` - Liveness check; reports whether the API process is running (JSON with version and commit)
+- `GET /healthz/ready` - Readiness check; database reachable and fully migrated, environment stamp, deployment configuration
+- `GET /health`, `GET /health/ready` - Earlier plain-text aliases of the two checks
 
 ## Getting Started
 
@@ -316,32 +317,21 @@ The test suite validates:
 
 ### Environment Configuration
 
-TeamBuilder supports three environments with separate configuration files:
+TeamBuilder knows four environments (`ASPNETCORE_ENVIRONMENT`):
 
-- **Development** (`appsettings.Development.json`): Safe defaults for local development
-- **QA** (`appsettings.QA.json`): Octopus Deploy variable placeholders for QA environment
-- **Production** (`appsettings.Production.json`): Octopus Deploy variable placeholders for production
+- **Development** (`appsettings.Development.json`): local development, developer tokens, Swagger
+- **LocalQA** (`appsettings.LocalQA.json`): the local docker-compose QA stack, developer tokens
+- **QA** (`appsettings.QA.json`) and **Production** (`appsettings.Production.json`): deployed
+  behind HTTPS with a real OIDC provider. These files hold only non-secret defaults; every
+  environment-specific value (connection string, `Jwt__Authority`, `Jwt__Audience`,
+  `AllowedOrigins`, Web Push keys) is injected at deployment time, and the API refuses to start
+  when one is missing or unsafe (for example a developer signing key or startup migrations).
 
-### Octopus Deploy Variables
-
-The checked-in QA and Production appsettings files contain Octopus-style
-variable placeholders. The examples below describe those templates; repository
-contents do not verify whether Octopus projects, environments, or variables
-currently exist or are configured:
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `AzureSql.ServerName` | Azure SQL Server hostname | `teambuilder-qa.database.windows.net` |
-| `AzureSql.DatabaseName` | Database name | `TeamBuilderQA` |
-| `AzureSql.UserName` | SQL authentication username | `teambuilder-api` |
-| `AzureSql.Password` | SQL authentication password (sensitive) | `***` |
-| `AllowedOrigins` | Comma-separated CORS origins | `https://qa.teambuilder.info` (QA) / `https://teambuilder.info` (Production) |
-| `ASPNETCORE_ENVIRONMENT` | Environment name | `QA` or `Production` |
-
-**Important**: Do not commit secrets. The checked-in environment templates use
-Octopus placeholder syntax (`#{VariableName}`); deployment-side values must be
-verified with the operators of the relevant environment.
-The appsettings files include an Application Insights connection-string placeholder, but the API does not currently register the Application Insights SDK.
+**Important**: Do not commit secrets. Private-QA deployment, environment separation, the
+migration bundle, OIDC registration and VAPID setup are documented in
+[docs/qa/private-qa-deployment.md](docs/qa/private-qa-deployment.md); the release checklist is
+[docs/qa/release-checklist.md](docs/qa/release-checklist.md), and the deployment contract with
+reference stacks is in [deploy/](deploy/README.md). Application Insights is not wired into the API.
 
 ### Database Migrations
 
