@@ -87,7 +87,7 @@ export function App() {
   }, [readyApi]);
 
   const signOut = useCallback(() => {
-    if (phase.name === 'ready' || phase.name === 'onboarding') void phase.adapter.signOut();
+    if (phase.name === 'ready' || phase.name === 'onboarding') void phase.adapter.signOut(true);
     setPhase({ name: 'signed-out' });
   }, [phase]);
 
@@ -109,7 +109,7 @@ export function App() {
       body = <p className="notice error">{phase.message}</p>;
       break;
     case 'signed-out':
-      body = (
+      body = config.error ? <p className="notice error">{config.error}</p> : (
         <SignIn
           message={phase.message}
           oidcAvailable={!!oidc}

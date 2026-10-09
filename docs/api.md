@@ -11,7 +11,7 @@ middle layer between any client-side frontend and the backend data platform.
 - **Authentication:** JWT bearer auth is required on protected routes; public reads remain available. Player onboarding and profile writes require authentication.
   See [Authentication](#authentication) for details and local dev token setup.
 - **Persistence:** EF Core Code First targeting Azure SQL Server.
-- **Health endpoints:** `GET /health` (liveness), `GET /health/ready` (readiness)
+- **Health endpoints:** `GET /healthz/live` (liveness), `GET /healthz/ready` (readiness); `/health` and `/health/ready` remain as aliases
 
 ---
 
@@ -71,10 +71,10 @@ The port is shown in the terminal when the API starts.
 
 ```bash
 # Liveness: is the process running?
-curl https://localhost:<port>/health
+curl https://localhost:<port>/healthz/live
 
-# Readiness: is the database reachable?
-curl https://localhost:<port>/health/ready
+# Readiness: is the database reachable and fully migrated?
+curl https://localhost:<port>/healthz/ready
 ```
 
 ---
@@ -166,8 +166,7 @@ is not linked yet.
 
 | Method | Path |
 |---|---|
-| `GET` | `/health` |
-| `GET` | `/health/ready` |
+| `GET` | `/healthz/live`, `/healthz/ready` (and the `/health`, `/health/ready` aliases) |
 | `GET` | `/api/v1/teams`, `/api/v1/teams/{id}` |
 | `GET` | `/api/v1/events`, `/api/v1/events/{id}`, `/api/v1/events/{id}/detail` |
 | `GET` | `/api/v1/venues/{id}` (a Private venue is masked unless the caller created it) |
@@ -2055,26 +2054,33 @@ Deletes a roster import record.
 
 ---
 
-### Health — `/health` and `/health/ready`
+### Health — `/healthz/live` and `/healthz/ready`
 
-#### `GET /health`
+Anonymous, not rate limited, and meant for orchestrators and load balancers. Both answer JSON
+with the overall status, each check's status and the build metadata, and never exception text:
 
-Liveness check. Returns `Healthy` as long as the API process is running.
-No external dependencies are checked. Use this to verify the process is alive.
+```json
+{ "status": "Healthy", "version": "1.0.0", "commit": "<git sha>", "checks": { "database": "Healthy", "environment": "Healthy", "configuration": "Healthy" } }
+```
 
-**Response `200`:** Healthy.
+#### `GET /healthz/live`
 
----
+Liveness. Runs no check and touches no dependency: `200` while the process serves requests.
 
-#### `GET /health/ready`
+#### `GET /healthz/ready`
 
-Readiness check. Verifies that external dependencies are reachable before
-marking the API as ready to serve traffic. The check is registered under the
-name `TeamBuilderDb` and verifies database connectivity using the configured
-`TeamBuilderSql` connection string.
+Readiness. `200` only when every check is Healthy, else `503`:
 
-**Response `200`:** Healthy — database is reachable.  
-**Response `503`:** Unhealthy — database is unreachable.
+| Check | Healthy when |
+|---|---|
+| `database` | The database answers and every migration in this build is applied (a database with additional, newer migrations is still Healthy, for rollbacks). |
+| `environment` | In QA/Production, the database is stamped for this environment (`database stamp-environment`). Always Healthy in Development and LocalQA. |
+| `configuration` | The deployment configuration rules hold (the same rules are enforced at startup). |
+
+Web Push is not part of readiness.
+
+`GET /health` and `GET /health/ready` remain as plain-text (`Healthy` / `Unhealthy`) aliases of
+the same two checks.
 
 ---
 
@@ -2103,7 +2109,7 @@ name `TeamBuilderDb` and verifies database connectivity using the configured
 | **Data annotations** | All request DTOs have `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, and `[EnumDataType]` annotations where appropriate. Missing or invalid fields return `400 ValidationProblemDetails`. |
 | **EF Core migrations** | An `InitialCreate` migration exists. Run `dotnet ef database update --project src/TeamBuilder.Infrastructure --startup-project src/TeamBuilder.Api` before first local run. |
 | **RosterImport CSV parsing is basic** | The parser skips the header and creates players from column 0. It does not associate entries with specific events or teams. |
-| **Health check requires live SQL** | Running locally without a database will cause `/health/ready` to report unhealthy. `/health` (liveness) always returns `200`. |
+| **Readiness requires a migrated database** | Running locally without a migrated database makes `/healthz/ready` report unhealthy. `/healthz/live` always returns `200`. |
 
 ---
 

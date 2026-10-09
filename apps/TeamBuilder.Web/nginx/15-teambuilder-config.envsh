@@ -1,0 +1,45 @@
+#!/bin/sh
+# Sourced by the nginx image's entrypoint before templates are rendered. Writes /config.js
+# (public per-environment settings read by src/config.ts) and the CSP connect-src list, so one
+# web build artifact serves every environment. Every value here is public; never pass a secret.
+#
+#   TEAMBUILDER_ENVIRONMENT       local | qa | production (qa/production disable developer tokens)
+#   TEAMBUILDER_OIDC_AUTHORITY    https:// issuer of the SPA's OIDC client
+#   TEAMBUILDER_OIDC_CLIENT_ID    public SPA client ID (Authorization Code + PKCE, no secret)
+#   TEAMBUILDER_OIDC_SCOPE        scopes, including the API scope
+#   TEAMBUILDER_API_BASE_URL      API origin when it is not same-origin (empty = same origin)
+#   TEAMBUILDER_CSP_CONNECT_EXTRA extra space-separated origins the app may call (e.g. a token endpoint on another host)
+
+# Values are single-line URLs and identifiers: refuse anything that would need escaping, and
+# stop the container (this file is sourced by the entrypoint) rather than serve a broken page.
+for tb_value in "${TEAMBUILDER_ENVIRONMENT:-}" "${TEAMBUILDER_OIDC_AUTHORITY:-}" "${TEAMBUILDER_OIDC_CLIENT_ID:-}" \
+                "${TEAMBUILDER_OIDC_SCOPE:-}" "${TEAMBUILDER_API_BASE_URL:-}" "${TEAMBUILDER_CSP_CONNECT_EXTRA:-}"; do
+  case "$tb_value" in
+    *[\"\\\'\<\>\;]*|*"
+"*) echo "teambuilder-config: TEAMBUILDER_* values must not contain quotes, backslashes, angle brackets, semicolons or newlines" >&2; exit 1 ;;
+  esac
+done
+
+tb_origin() {
+  # https://host[:port]/path -> https://host[:port]
+  printf '%s' "$1" | sed -n 's#^\(https\{0,1\}://[^/?#]*\).*#\1#p'
+}
+
+if [ -n "${TEAMBUILDER_ENVIRONMENT:-}${TEAMBUILDER_OIDC_AUTHORITY:-}${TEAMBUILDER_OIDC_CLIENT_ID:-}${TEAMBUILDER_API_BASE_URL:-}" ]; then
+  cat > /usr/share/nginx/html/config.js <<CONFIG
+// Written at container start from TEAMBUILDER_* variables. Public values only.
+window.__TEAMBUILDER_CONFIG__ = {
+  "environment": "${TEAMBUILDER_ENVIRONMENT:-local}",
+  "apiBaseUrl": "${TEAMBUILDER_API_BASE_URL:-}",
+  "oidcAuthority": "${TEAMBUILDER_OIDC_AUTHORITY:-}",
+  "oidcClientId": "${TEAMBUILDER_OIDC_CLIENT_ID:-}",
+  "oidcScope": "${TEAMBUILDER_OIDC_SCOPE:-openid profile}"
+};
+CONFIG
+fi
+
+TEAMBUILDER_CSP_CONNECT_SRC=""
+for value in "$(tb_origin "${TEAMBUILDER_OIDC_AUTHORITY:-}")" "$(tb_origin "${TEAMBUILDER_API_BASE_URL:-}")" ${TEAMBUILDER_CSP_CONNECT_EXTRA:-}; do
+  [ -n "$value" ] && TEAMBUILDER_CSP_CONNECT_SRC="$TEAMBUILDER_CSP_CONNECT_SRC $value"
+done
+export TEAMBUILDER_CSP_CONNECT_SRC

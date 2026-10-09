@@ -133,8 +133,11 @@ public class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
             foreach (var d in healthDescriptors)
                 services.Remove(d);
 
-            services.Configure<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>(opts =>
-                opts.Registrations.Clear());
+            if (!KeepHealthChecks)
+            {
+                services.Configure<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>(opts =>
+                    opts.Registrations.Clear());
+            }
 
             // Register an in-memory database isolated per factory instance.
             services.AddDbContext<TeamBuilderDbContext>(ConfigureDatabase);
@@ -144,6 +147,12 @@ public class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.UseEnvironment("Development");
     }
+
+    /// <summary>
+    /// Keep the API's own readiness checks (database schema, environment stamp, configuration).
+    /// Off by default so in-memory suites never depend on them.
+    /// </summary>
+    protected virtual bool KeepHealthChecks => false;
 
     /// <summary>The test database; an isolated in-memory database by default.</summary>
     protected virtual void ConfigureDatabase(DbContextOptionsBuilder options) =>

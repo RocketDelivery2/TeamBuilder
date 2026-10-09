@@ -56,15 +56,24 @@ shell, and never paste them into an issue, chat or commit.
    ```
 
    - SQL Server listens only inside the Compose network.
-   - The API is on `http://localhost:5080` and applies EF Core migrations on
-     startup (`Database:ApplyMigrationsOnStartup=true`, which is off unless
-     set).
+   - The `migrate` service runs the EF Core migration bundle (the same
+     artifact a deployed release uses) and exits before the API starts. The
+     API never changes the schema itself.
+   - The API is on `http://localhost:5080` and runs as
+     `ASPNETCORE_ENVIRONMENT=LocalQA`: developer tokens are accepted, which
+     a deployed QA or Production API refuses.
    - The web client is on `http://localhost:8080` and proxies `/api/` to the
      API, so the browser makes same-origin calls. nginx has a fixed address
      on the Compose network and is the only proxy the API trusts for
      `X-Forwarded-For` (`ForwardedHeaders`).
 
-3. Check the API: `curl http://localhost:5080/health` returns `Healthy`.
+3. Check the API: `curl http://localhost:5080/healthz/ready` returns
+   `"status":"Healthy"` with the database, environment and configuration
+   checks.
+
+This stack is for local testing. A deployed private QA with real OIDC
+sign-in, HTTPS and the migration step as a release task is described in
+[qa/private-qa-deployment.md](qa/private-qa-deployment.md).
 
 The QA web image is built with `VITE_ALLOW_DEV_TOKEN=true`, so its sign-in
 page offers developer-token sign-in and every page shows a warning banner.

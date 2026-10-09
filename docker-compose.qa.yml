@@ -1,5 +1,7 @@
-# Private QA stack: SQL Server + TeamBuilder API + web client, for local or private testing
-# only. Secrets come from a git-ignored .env file next to this one (see docs/private-qa.md):
+# Local private-QA stack (ASPNETCORE_ENVIRONMENT=LocalQA): SQL Server + migration bundle +
+# TeamBuilder API + web client, for local or private testing only. It signs in with developer
+# tokens; the deployed QA topology with real OIDC and HTTPS is deploy/compose/ (see
+# docs/qa/private-qa-deployment.md). Secrets come from a git-ignored .env file next to this one (see docs/private-qa.md):
 #   TEAMBUILDER_QA_SQL_PASSWORD   SQL Server sa password (SQL Server complexity rules apply)
 #   TEAMBUILDER_JWT_SIGNING_KEY   symmetric key (32+ bytes) the API validates dev tokens with
 # Optional browser alerts (Web Push); off unless all four are set (docs/private-qa.md):
@@ -8,6 +10,8 @@
 #   `dotnet run --project src/TeamBuilder.Api -- outbox vapid-keys`, or `exec api dotnet
 #   TeamBuilder.Api.dll outbox vapid-keys` in the running stack)
 # Start with: docker compose -f docker-compose.qa.yml up --build
+# The migrate service applies the EF Core migration bundle and exits before the API starts;
+# the API itself never changes the schema here either.
 name: teambuilder-qa
 
 services:
@@ -27,17 +31,33 @@ services:
       retries: 20
       start_period: 20s
 
-  api:
+  migrate:
     build:
       context: .
       dockerfile: Dockerfile
+      target: migrator
     depends_on:
       sql:
         condition: service_healthy
     environment:
-      ASPNETCORE_ENVIRONMENT: QA
       ConnectionStrings__TeamBuilderSql: Server=sql;Database=TeamBuilderQA;User Id=sa;Password=${TEAMBUILDER_QA_SQL_PASSWORD};Encrypt=True;TrustServerCertificate=True
-      Database__ApplyMigrationsOnStartup: "true"
+    networks:
+      - qa
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    depends_on:
+      sql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: LocalQA
+      ConnectionStrings__TeamBuilderSql: Server=sql;Database=TeamBuilderQA;User Id=sa;Password=${TEAMBUILDER_QA_SQL_PASSWORD};Encrypt=True;TrustServerCertificate=True
       AllowedOrigins: http://localhost:8080
       Jwt__Authority: ""
       Jwt__SigningKey: ${TEAMBUILDER_JWT_SIGNING_KEY:?Set TEAMBUILDER_JWT_SIGNING_KEY in .env}
@@ -52,6 +72,12 @@ services:
       WebPush__Subject: ${TEAMBUILDER_WEBPUSH_SUBJECT:-}
       WebPush__VapidPublicKey: ${TEAMBUILDER_VAPID_PUBLIC_KEY:-}
       WebPush__VapidPrivateKey: ${TEAMBUILDER_VAPID_PRIVATE_KEY:-}
+    healthcheck:
+      test: ["CMD", "dotnet", "TeamBuilder.Api.dll", "healthcheck", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - qa
     ports:
@@ -61,15 +87,17 @@ services:
     build:
       context: apps/TeamBuilder.Web
       args:
-        # Private QA image: offers developer-token sign-in (with a visible banner). Set the
-        # OIDC args instead, and drop this, once an SPA client is registered at the IdP.
+        # Local QA image: offers developer-token sign-in (with a visible banner). The deployed
+        # QA stack (deploy/compose) builds without it and signs in through the OIDC provider.
         VITE_ALLOW_DEV_TOKEN: "true"
         VITE_OIDC_AUTHORITY: ${TEAMBUILDER_QA_OIDC_AUTHORITY:-}
         VITE_OIDC_CLIENT_ID: ${TEAMBUILDER_QA_OIDC_CLIENT_ID:-}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     environment:
       API_UPSTREAM: http://api:8080
+      TEAMBUILDER_ENVIRONMENT: local
     networks:
       qa:
         ipv4_address: 172.29.80.10

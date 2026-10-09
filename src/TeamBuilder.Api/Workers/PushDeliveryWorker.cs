@@ -1,3 +1,4 @@
+using TeamBuilder.Api.Hosting;
 using Microsoft.Extensions.Options;
 using TeamBuilder.Infrastructure.WebPush;
 
@@ -15,13 +16,15 @@ public sealed class PushDeliveryWorker : BackgroundService
     private readonly PushDeliverySignal _signal;
     private readonly WebPushOptions _options;
     private readonly ILogger<PushDeliveryWorker> _logger;
+    private readonly IWorkerStartGate _startGate;
 
-    public PushDeliveryWorker(IServiceProvider services, PushDeliverySignal signal, IOptions<WebPushOptions> options, ILogger<PushDeliveryWorker> logger)
+    public PushDeliveryWorker(IServiceProvider services, PushDeliverySignal signal, IOptions<WebPushOptions> options, ILogger<PushDeliveryWorker> logger, IWorkerStartGate? startGate = null)
     {
         _services = services;
         _signal = signal;
         _options = options.Value;
         _logger = logger;
+        _startGate = startGate ?? OpenWorkerStartGate.Instance;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -31,6 +34,9 @@ public sealed class PushDeliveryWorker : BackgroundService
             _logger.LogInformation("Web Push delivery is disabled; in-app notifications are unaffected.");
             return;
         }
+
+        // Never touch another environment's database (see DatabaseEnvironmentGuard).
+        await _startGate.WaitAsync(stoppingToken);
 
         var dispatcher = _services.GetRequiredService<PushDispatcher>();
         while (true)

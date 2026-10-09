@@ -10,7 +10,8 @@ namespace TeamBuilder.Api.Networking;
 /// enabled, only requests arriving from a listed proxy address or network have their
 /// X-Forwarded-For/-Proto applied, and only <see cref="ForwardLimit"/> hops are taken, so a
 /// client on the internet cannot pick its own rate-limit partition by sending the header.
-/// Enabling it without any proxy is a startup error rather than "trust everyone".
+/// Enabling it without any proxy, or with a /0 "network", is a startup error rather than
+/// "trust everyone".
 /// </summary>
 public sealed class ForwardedHeadersSettings
 {
@@ -50,6 +51,9 @@ public sealed class ForwardedHeadersSettings
         {
             if (!System.Net.IPNetwork.TryParse(network?.Trim(), out var parsed))
                 throw new OptionsValidationException(SectionName, typeof(ForwardedHeadersSettings), ["ForwardedHeaders:KnownNetworks entries must be CIDR networks (e.g. 10.0.0.0/8)."]);
+            // 0.0.0.0/0 or ::/0 would trust every client on the internet to name its own address.
+            if (parsed.PrefixLength == 0)
+                throw new OptionsValidationException(SectionName, typeof(ForwardedHeadersSettings), ["ForwardedHeaders:KnownNetworks must not contain a /0 network; list the proxy's own network."]);
             options.KnownIPNetworks.Add(parsed);
         }
 

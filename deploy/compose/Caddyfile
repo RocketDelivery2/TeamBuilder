@@ -1,0 +1,23 @@
+# TLS ingress for the TeamBuilder release topology. Caddy obtains and renews the certificate
+# for TEAMBUILDER_SITE_ADDRESS automatically (a public DNS name pointing at this host), or uses
+# its internal CA for "localhost" (local release smoke only).
+#
+# Caddy sets X-Forwarded-For to the connecting client's address (it does not trust an incoming
+# header) and X-Forwarded-Proto to https; the API trusts these only from this container.
+{$TEAMBUILDER_SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=15552000"
+		-Server
+	}
+
+	# API routes only: /healthz, /swagger and the root banner are not exposed publicly.
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy web:80
+	}
+}

@@ -21,3 +21,33 @@ describe('resolveConfig', () => {
     });
   });
 });
+
+describe('resolveConfig with deployment settings (/config.js)', () => {
+  const qa = { environment: 'qa', oidcAuthority: 'https://login.example.test/qa', oidcClientId: 'tb-qa-spa', oidcScope: 'openid api://tb-qa/access' };
+
+  it('takes the OIDC client from the runtime settings so one build serves every environment', () => {
+    const config = resolveConfig({ DEV: false }, qa);
+    expect(config.environment).toBe('qa');
+    expect(config.oidc).toEqual({ authority: qa.oidcAuthority, clientId: 'tb-qa-spa', scope: 'openid api://tb-qa/access' });
+    expect(config.error).toBeUndefined();
+  });
+
+  it('never offers developer tokens in qa or production, even in a build that opted in', () => {
+    expect(resolveConfig({ DEV: false, VITE_ALLOW_DEV_TOKEN: 'true' }, qa).devTokenAllowed).toBe(false);
+    expect(resolveConfig({ DEV: true }, { ...qa, environment: 'Production' }).devTokenAllowed).toBe(false);
+    expect(resolveConfig({ DEV: false, VITE_ALLOW_DEV_TOKEN: 'true' }, { environment: 'local' }).devTokenAllowed).toBe(true);
+  });
+
+  it('refuses a deployed environment without OIDC or with a non-https authority', () => {
+    expect(resolveConfig({ DEV: false }, { environment: 'qa' }).error).toMatch(/not configured/);
+    const insecure = resolveConfig({ DEV: false }, { ...qa, oidcAuthority: 'http://login.example.test' });
+    expect(insecure.error).toMatch(/https/);
+    expect(insecure.oidc).toBeUndefined();
+  });
+
+  it('defaults to the local environment and build-time values', () => {
+    const config = resolveConfig({ VITE_API_BASE_URL: 'https://api.example.test' });
+    expect(config.environment).toBe('local');
+    expect(config.apiBaseUrl).toBe('https://api.example.test');
+  });
+});
