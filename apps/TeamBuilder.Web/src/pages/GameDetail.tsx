@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import type { HostAction } from '../api/teamBuilderApi';
 import { claimWithRetry } from '../api/claim';
 import { interpretError } from '../api/conflicts';
-import { AssignmentStatus, EventStatus, assignmentStatusLabel, eventStatusLabel, type OccurrenceDetail, type OccurrenceParticipant } from '../api/types';
+import { AssignmentStatus, EventStatus, assignmentStatusLabel, eventStatusLabel, type OccurrenceDetail, type OccurrenceParticipant, type RosterRequirement } from '../api/types';
 import { RosterBadge } from '../components/RosterBadge';
 import { ShareLink } from '../components/ShareLink';
 import { displayName } from '../lib/format';
 import { formatWhenInZone } from '../lib/discover';
+import { useRefreshOnFocus } from '../lib/notifications';
 import { useSession } from '../session';
 
 type Notice = { tone: 'info' | 'error'; text: string };
@@ -32,6 +33,9 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // Coming back from a notification (or another tab) shows the current roster, not a stale one.
+  const onFocus = useCallback(() => void refresh(), [refresh]);
+  useRefreshOnFocus(onFocus);
 
   /** Runs one mutation, then always re-reads the game so refills and counts show at once. */
   const run = async (action: () => Promise<Notice | undefined>) => {
@@ -54,7 +58,8 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
   }
 
   const canMutate = detail.acceptsRosterChanges && !locked && !busy;
-  const joinable = detail.requirements.filter((r) => r.openQuantity > 0);
+  const multiRole = detail.requirements.length > 1;
+  const subscribed = new Set(detail.mySubscribedRequirementIds ?? []);
 
   const join = (requirementId: string) =>
     run(async () => {
@@ -69,6 +74,17 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
         case 'roster-changed':
           return { tone: 'error', text: 'The roster kept changing while you joined. It has been refreshed; try again.' };
       }
+    });
+
+  /** "Notify me" is per requirement, so a multi-role game never subscribes ambiguously. */
+  const setNotify = (requirement: RosterRequirement, on: boolean) =>
+    run(async () => {
+      if (on) {
+        await api.subscribe(occurrenceId, requirement.id);
+        return { tone: 'info', text: "Notifications on. We'll let you know here if a spot opens; then grab it fast." };
+      }
+      await api.unsubscribe(occurrenceId, requirement.id);
+      return { tone: 'info', text: 'Notifications off for this game.' };
     });
 
   const hostAction = (participant: OccurrenceParticipant, action: HostAction) =>
@@ -102,7 +118,7 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
         </div>
         {detail.requirements.map((r) => (
           <div key={r.id} className="row spread small" data-testid="requirement">
-            <span>{r.roleCode === 'participant' ? 'Players' : r.roleCode}</span>
+            <span>{r.roleCode === 'participant' ? 'Players' : roleLabel(r)}</span>
             <span>
               {r.supplyCount}/{r.requiredCount} filled · {r.openQuantity} open
             </span>
@@ -145,14 +161,32 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
               Leave game
             </button>
           </div>
-        ) : joinable.length > 0 ? (
-          joinable.map((r) => (
-            <button key={r.id} className="primary" disabled={!canMutate} onClick={() => join(r.id)}>
-              Join game{detail.requirements.length > 1 ? ` as ${r.roleCode}` : ''}
-            </button>
-          ))
+        ) : detail.requirements.length === 0 ? (
+          <p className="muted">This game has no roster.</p>
         ) : (
-          <p className="muted">{detail.requirements.length === 0 ? 'This game has no roster.' : 'The roster is full.'}</p>
+          detail.requirements.map((r) =>
+            r.openQuantity > 0 ? (
+              <button key={r.id} className="primary" disabled={!canMutate} onClick={() => join(r.id)}>
+                Join game{multiRole ? ` as ${roleLabel(r)}` : ''}
+              </button>
+            ) : subscribed.has(r.id) ? (
+              <div key={r.id} className="row spread" data-testid="notify-on">
+                <span className="notify-on">Notifications on{multiRole ? ` for ${roleLabel(r)}` : ''}</span>
+                <button disabled={busy} onClick={() => setNotify(r, false)}>
+                  Turn off
+                </button>
+              </div>
+            ) : (
+              <div key={r.id} className="stack">
+                <p className="muted">{multiRole ? `${roleLabel(r)} is full.` : 'The roster is full.'}</p>
+                {detail.acceptsRosterChanges && (
+                  <button disabled={!canMutate} onClick={() => setNotify(r, true)}>
+                    {multiRole ? `Notify me if a ${roleLabel(r)} spot opens` : 'Notify me if a spot opens'}
+                  </button>
+                )}
+              </div>
+            ),
+          )
         )}
       </div>
 
@@ -201,6 +235,10 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
       </div>
     </section>
   );
+}
+
+function roleLabel(requirement: RosterRequirement): string {
+  return requirement.displayPosition || requirement.roleCode;
 }
 
 function TransferHost({

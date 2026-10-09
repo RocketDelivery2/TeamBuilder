@@ -97,6 +97,10 @@ public class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
                 // Discovery suites issue many searches from one test client; the limiter itself
                 // is covered with a low limit in its own test.
                 ["RateLimiting:Discovery:PermitLimit"] = "100000",
+                ["RateLimiting:Subscriptions:PermitLimit"] = "100000",
+                // Outbox processing is driven explicitly through OutboxProcessor.ProcessBatchAsync,
+                // so tests are deterministic and never wait on the poll interval.
+                ["Outbox:Enabled"] = "false",
             });
         });
 

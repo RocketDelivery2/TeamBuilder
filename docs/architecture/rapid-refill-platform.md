@@ -1,7 +1,10 @@
 # Rapid-Refill Platform Architecture
 
 **Status:** Product and architecture direction; not a description of current
-runtime capabilities or an API contract.
+runtime capabilities or an API contract, except where a section is marked
+**Current** (for example
+[the vacancy outbox and in-app notifications](#current-vacancy-outbox-and-in-app-notifications-tb-refill-001)).
+Everything else is future direction.
 
 ## Product outcome
 
@@ -66,7 +69,9 @@ when at least one requirement exists and all are filled); host assignments
 cannot overbook a requirement. `EventOccurrence.CurrentParticipantCount` remains legacy stored
 state for now. The older `RosterEntry` entity is imported/raw roster
 provenance (roster-import staging), not live participation. OpenSpot,
-SpotReservation and ReplacementOffer are not implemented yet.
+SpotReservation and ReplacementOffer are not implemented yet; vacancy
+detection, "notify me" subscriptions and in-app notifications are (see
+[Current: vacancy outbox and in-app notifications](#current-vacancy-outbox-and-in-app-notifications-tb-refill-001)).
 
 ## Rapid-refill lifecycle
 
@@ -118,6 +123,69 @@ SQL Server transactions and optimistic concurrency are appropriate in the
 current modular service. Concurrency behavior must be exercised with
 SQL Server-backed tests; an in-memory provider cannot prove rowversion or
 unique-index behavior.
+
+## Current: vacancy outbox and in-app notifications (TB-REFILL-001)
+
+This section describes what runs today. It implements steps 1 to 4 and the
+"notification" part of step 6 of the lifecycle above, without offers or
+reservations.
+
+**Vacancy event.** `roster.vacancy.opened.v1` is the first outbox contract.
+Leave, host remove and no-show compute the requirement's open quantity before
+and after the change from the same supply rule as claims
+(`RosterVacancy.Evaluate`), and stage a message only when it rises. The
+payload carries ids, counts, the reason (`PlayerLeft`, `HostRemoved`,
+`NoShow`), the occurrence start and the venue id; no names, contact details,
+coordinates or search origins. When the requirement was overfilled, the
+departure opens nothing, but the requirement row is still touched so two
+concurrent departures cannot both decide "nothing opened".
+
+**Atomicity.** The `OutboxMessages` row is added to the same `DbContext` and
+saved by the same `SaveChanges` as the assignment update (and, for host
+actions, the occurrence `RowVersion` update that enforces commit-time host
+authority). A failed commit leaves neither; SQL Server tests force the insert
+to fail with a trigger and assert the roster change rolled back. The unique
+`DeduplicationKey` (`roster.vacancy.opened.v1:{vacatedAssignmentId}`) makes a
+second message for the same departure impossible; a request that collides with
+it lost a race and is retried or answered `409` like any other roster race.
+
+**Worker.** `OutboxWorker` (a `BackgroundService` in the API process) calls
+`OutboxProcessor.ProcessBatchAsync`, which:
+
+1. fails messages whose final attempt's lease expired;
+2. claims up to `BatchSize` due messages in one statement
+   (`UPDLOCK, READPAST, ROWLOCK`), setting `Processing`, a per-batch lock owner
+   and a lease, and incrementing `AttemptCount`; an expired lease is
+   reclaimable, so a crashed worker's messages are retried;
+3. runs the handler for each message in its own scope; on success it marks the
+   message `Completed` only if it still holds the lease; on an exception it
+   schedules a retry with exponential backoff, or marks it `Failed` after
+   `MaxAttempts`. An unknown message type is `Failed` at once.
+
+Delivery is at-least-once, so the handler is idempotent:
+`UX_InAppNotifications_SourceEventId_PlayerId` lets a replay or a second
+worker create no duplicates. The handler revalidates at processing time
+(occurrence deleted or closed, requirement deleted, requirement already
+refilled: complete without notifying) and excludes current participants and
+the player who left.
+
+**Subscriptions and notifications.** `OccurrenceRosterSubscriptions` is unique
+on `(PlayerId, OccurrenceId, RosterRequirementId)` and cascades with the
+requirement. A subscription is a request for a hint, not a reservation or an
+auto-join; current participants cannot subscribe. `InAppNotifications` are
+the only delivery channel; the web client reads them with focus refresh and
+visible-tab polling.
+
+**Observability.** Meter `TeamBuilder.Refill` counts `VacancyOpened`,
+`OutboxProcessed`, `OutboxSkipped`, `OutboxFailed` and `NotificationCreated`,
+with matching structured log events. Logs carry ids and counts only.
+
+**Future, not implemented:** Web Push (VAPID), APNS/FCM, SMS and email
+channels (each a further idempotent outbox consumer); `OpenSpot`,
+`SpotReservation`, `ReplacementOffer` and waitlists; ranked or geo matching of
+candidates; Redis, Kafka or Service Bus; a dead-letter UI and replay tooling;
+retention of completed outbox rows (they are kept for now). The outbox
+contract and idempotency rules above are what those additions build on.
 
 ## Team lead and roster-manager capabilities
 

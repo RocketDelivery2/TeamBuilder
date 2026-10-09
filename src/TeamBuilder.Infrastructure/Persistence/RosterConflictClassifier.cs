@@ -24,6 +24,18 @@ public static class RosterConflictClassifier
     public static bool IsDuplicateRequirementRole(DbUpdateException exception) =>
         IsUniqueViolation(exception, RosterRequirementConfiguration.OccurrenceRoleUniqueIndexName);
 
+    /// <summary>A concurrent "notify me" for the same (player, occurrence, requirement) committed first.</summary>
+    public static bool IsDuplicateRosterSubscription(DbUpdateException exception) =>
+        IsUniqueViolation(exception, OccurrenceRosterSubscriptionConfiguration.PlayerOccurrenceRequirementUniqueIndexName);
+
+    /// <summary>Another worker already notified this player about this outbox event.</summary>
+    public static bool IsDuplicateSourceEventNotification(DbUpdateException exception) =>
+        IsUniqueViolation(exception, InAppNotificationConfiguration.SourceEventPlayerUniqueIndexName);
+
+    /// <summary>The same fact was already staged in the outbox (same deduplication key).</summary>
+    public static bool IsDuplicateOutboxMessage(DbUpdateException exception) =>
+        IsUniqueViolation(exception, OutboxMessageConfiguration.DeduplicationKeyUniqueIndexName);
+
     /// <summary>
     /// An occurrence DELETE refused because an assignment appeared after EventService.DeleteAsync
     /// checked for participation history: either by the NO ACTION FK from RosterAssignments to
