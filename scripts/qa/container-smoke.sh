@@ -116,7 +116,10 @@ grep -q "Stamped for QA" <<<"$("${rel[@]}" --profile release run --rm --no-deps 
 wait_for 30 api_ready ready && pass "ready after bundle and stamp" || fail "API not ready after bundle and stamp"
 
 "${rel[@]}" up -d --no-build --wait --wait-timeout 180
-curl_tls=(curl -sk --resolve localhost:443:127.0.0.1)
+# Trust only Caddy's local CA (never disable verification).
+wait_for 30 "${rel[@]}" exec -T proxy test -s /data/caddy/pki/authorities/local/root.crt || fail "Caddy local CA not created"
+"${rel[@]}" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$work/caddy-root.crt"
+curl_tls=(curl -s --cacert "$work/caddy-root.crt" --resolve localhost:443:127.0.0.1)
 headers="$("${curl_tls[@]}" -D - -o "$work/index.html" https://localhost/)"
 grep -q 'id="root"' "$work/index.html" && pass "web app served over HTTPS" || fail "web app not served"
 grep -qi '^strict-transport-security:' <<<"$headers" && pass "HSTS on the site" || fail "no HSTS header"
@@ -134,7 +137,7 @@ grep -qi "^x-content-type-options: nosniff" <<<"$api_headers" && grep -qi "^cont
 [[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' https://localhost/api/v1/players/me)" == "401" ]] \
   && pass "API requires a bearer token through the proxy" || fail "unauthenticated /players/me was not 401"
 
-TB_API_URL=https://localhost TB_WEB_URL=https://localhost TB_HEALTH_URL=skip TB_INSECURE_TLS=1 \
+TB_API_URL=https://localhost TB_WEB_URL=https://localhost TB_HEALTH_URL=skip NODE_EXTRA_CA_CERTS="$work/caddy-root.crt" \
   node scripts/qa/release-smoke.mjs
 
 api_image="$("${rel[@]}" config --images api 2>/dev/null | head -n 1)"

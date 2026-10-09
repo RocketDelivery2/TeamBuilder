@@ -16,13 +16,11 @@
 // Other settings: TB_HEALTH_URL (where /healthz is reachable, default TB_API_URL; the release
 // proxy does not route it publicly, so set it to skip there), TB_SMOKE_LAT / TB_SMOKE_LON (venue point, default an
 // unused spot in the Pacific so testers never see the game), TB_SMOKE_TIMEOUT_SECONDS (outbox wait, default 60),
-// TB_INSECURE_TLS=1 (accept the local Caddy CA during the local release smoke only).
+// For a private CA (the local Caddy release smoke), trust it with NODE_EXTRA_CA_CERTS=<root.crt>.
 //
 // Exit code 0 when every automated step passed. Steps that need a person or a real device are
 // printed as DEVICE/HUMAN and never counted as passed. The game it creates is cancelled at the end.
 import { createHmac, randomInt } from 'node:crypto';
-
-if (process.env.TB_INSECURE_TLS === '1') process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const api = (process.env.TB_API_URL ?? 'http://localhost:5080').replace(/\/$/, '');
 const health = (process.env.TB_HEALTH_URL ?? api).replace(/\/$/, '');
