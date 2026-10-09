@@ -145,6 +145,32 @@ export interface InAppNotificationPage {
   nextCursor?: string | null;
 }
 
+/** GET /api/v1/push/config: whether this server sends browser alerts, and the key to subscribe with. */
+export interface WebPushConfig {
+  enabled: boolean;
+  vapidPublicKey?: string | null;
+}
+
+/** The browser's PushSubscription.toJSON(), plus the endpoint it replaces. Sent, never returned. */
+export interface RegisterPushSubscription {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: { p256dh: string; auth: string };
+  previousEndpoint?: string;
+}
+
+/** One of the caller's registered browsers (no endpoint or keys). */
+export interface PushDevice {
+  id: string;
+  userAgentFamily?: string | null;
+  createdAtUtc: string;
+  lastSeenAtUtc: string;
+  expiresAtUtc?: string | null;
+  isActive: boolean;
+  disabledAtUtc?: string | null;
+  disabledReason?: string | null;
+}
+
 /** One item of GET /api/v1/players/me/occurrences */
 export interface PlayerOccurrence {
   occurrenceId: string;

@@ -51,17 +51,26 @@ describe('Notifications', () => {
     window.removeEventListener(NOTIFICATIONS_CHANGED, changed);
   });
 
-  it('opening a notification marks it read and opens the game', async () => {
+  it('opening a notification records the in-app open (which marks it read) and opens the game', async () => {
     const notifications = vi.fn().mockResolvedValue({ items: [item('n1')], nextCursor: null });
-    const markNotificationRead = vi.fn(async () => {});
-    renderWith({ notifications, markNotificationRead });
+    const notificationOpened = vi.fn(async () => {});
+    renderWith({ notifications, notificationOpened });
 
     const link = await screen.findByRole('link', { name: /Basketball spot opened/ });
     expect(link).toHaveAttribute('href', `/games/${occurrenceId}`);
     fireEvent.click(link);
 
     await waitFor(() => expect(window.location.pathname).toBe(`/games/${occurrenceId}`));
-    expect(markNotificationRead).toHaveBeenCalledWith('n1');
+    expect(notificationOpened).toHaveBeenCalledWith('n1', { via: 'inApp' });
+  });
+
+  it('opens the game even when recording the open fails', async () => {
+    window.history.pushState(null, '', '/notifications');
+    const notifications = vi.fn().mockResolvedValue({ items: [item('n1')], nextCursor: null });
+    renderWith({ notifications, notificationOpened: vi.fn(async () => { throw new Error('offline'); }) });
+
+    fireEvent.click(await screen.findByRole('link', { name: /Basketball spot opened/ }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/games/${occurrenceId}`));
   });
 
   it('loads older pages with the cursor', async () => {

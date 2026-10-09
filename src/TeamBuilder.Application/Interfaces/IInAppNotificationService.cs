@@ -15,4 +15,17 @@ public interface IInAppNotificationService
     /// does not exist or belongs to another player, which callers report as 404.
     /// </summary>
     Task<bool> MarkReadAsync(Guid playerId, Guid notificationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records that the player opened the game from this notification (marks it read too).
+    /// Idempotent; false when it is not theirs (404). Only feeds refill-funnel metrics.
+    /// </summary>
+    Task<bool> MarkOpenedAsync(Guid playerId, Guid notificationId, NotificationOpenedDto opened, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Best-effort metrics after a claim attempt on an occurrence: time from the player opening
+    /// a vacancy notification for it to this attempt, and, when the claim succeeded, from the
+    /// vacancy committing to its replacement. Never throws; never affects the claim.
+    /// </summary>
+    Task RecordClaimAttemptAsync(Guid playerId, Guid occurrenceId, Guid requirementId, bool succeeded, CancellationToken cancellationToken = default);
 }

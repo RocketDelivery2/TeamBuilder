@@ -9,14 +9,44 @@ time, closest first), **New game** (pickup game form with an optional venue),
 **Game** (roster, join/leave, host controls, venue address or the private
 venue note, and **Notify me if a spot opens** per role on a full roster),
 **Notifications** (newest first, unread highlighted, opening one marks it read
-and opens the game) and a **Share** link on each game. The header bell shows
+and opens the game, plus the browser-alert switch) and a **Share** link on each
+game. The header bell shows
 the unread count.
 
-Notifications are in-app only. The bell re-reads the unread count when the
-tab regains focus or becomes visible and every 30 seconds while it is visible
-(`BELL_POLL_MS` in `src/components/NotificationBell.tsx`); hidden tabs do not
-poll. The game page and the notifications page also re-read on focus. There
-is no SignalR, Web Push or service worker yet.
+In-app notifications are always on. The bell re-reads the unread count when
+the tab regains focus or becomes visible and every 30 seconds while it is
+visible (`BELL_POLL_MS` in `src/components/NotificationBell.tsx`); hidden tabs
+do not poll. The game page and the notifications page also re-read on focus.
+There is no SignalR.
+
+## Browser alerts (Web Push)
+
+**Current.** When the API has Web Push configured (`GET /api/v1/push/config`
+says `enabled`), a full game's page (after **Notify me if a spot opens**) and
+the **Notifications** page offer **Notify me when a spot opens**. Only that
+click asks the browser for notification permission; nothing prompts on page
+load. Allowed: the client registers the service worker's push subscription
+with the API (`src/lib/webPush.ts`) and shows **Browser alerts on** with
+**Turn off browser alerts**. Denied: it says alerts are blocked in the
+browser settings, and in-app notifications keep working. Unsupported browser,
+insecure context or server-side push off: the option is hidden or explained,
+never an error.
+
+`public/sw.js` is a small plain-JavaScript service worker (no build step, no
+caching of the app): it shows the push as a notification (one per game, so a
+repeat replaces it) and, on click, focuses an open TeamBuilder tab and
+navigates it, or opens a new one, at the exact game URL with `via=push`. It
+never claims anything. The game page then reports the open, re-reads the
+roster, and if the spot was already taken or the game was cancelled says so
+above the current roster. When the browser rotates the subscription the worker
+asks the open page to re-register it, retiring the old endpoint.
+`public/manifest.webmanifest` and the icons make the app installable; Safari on
+iOS only allows Web Push for an app added to the home screen.
+
+Push needs a secure context: HTTPS, or `http://localhost`. Tests evaluate
+`sw.js` against a fake `self` (`src/sw.test.ts`).
+
+**Future:** native mobile push (APNS/FCM apps), SMS and email.
 
 For running it against an API and SQL Server, and for the full basketball QA
 walk-through, see [docs/private-qa.md](../../docs/private-qa.md).
@@ -86,5 +116,6 @@ its venue's time zone. There is no address geocoding.
 ## Docker
 
 `Dockerfile` builds the bundle with Node and serves it from nginx, proxying
-`/api/` to `API_UPSTREAM` (default `http://api:8080`). See
+`/api/` to `API_UPSTREAM` (default `http://api:8080`); `sw.js` and the manifest
+are served `no-cache` so a fixed service worker reaches browsers at once. See
 `docker-compose.qa.yml` in the repository root.

@@ -119,3 +119,4 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .notification-link { display: flex; flex-direction: column; gap: 4px; color: inherit; text-decoration: none; }
 .notification.unread .notification-link strong::before { content: '● '; color: var(--accent); }
 .notify-on { color: var(--ready); font-weight: 600; }
+.push-opt-in { padding-top: 4px; border-top: 1px dashed var(--border); }

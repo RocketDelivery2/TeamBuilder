@@ -11,6 +11,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # The service worker and manifest must never be cached long, or a fixed worker would not
+    # reach browsers until the cache expired. Browsers also revalidate sw.js on their own.
+    location = /sw.js {
+        add_header Cache-Control "no-cache";
+        add_header Service-Worker-Allowed "/";
+        try_files $uri =404;
+    }
+
+    location = /manifest.webmanifest {
+        add_header Cache-Control "no-cache";
+        default_type application/manifest+json;
+        try_files $uri =404;
+    }
+
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files $uri =404;

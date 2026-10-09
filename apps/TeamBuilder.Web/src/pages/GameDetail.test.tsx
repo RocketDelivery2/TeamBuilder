@@ -4,7 +4,7 @@ import { ApiError } from '../api/http';
 import type { TeamBuilderApi } from '../api/teamBuilderApi';
 import type { OccurrenceDetail } from '../api/types';
 import { SessionContext } from '../session';
-import { GameDetail } from './GameDetail';
+import { GameDetail, notificationArrival } from './GameDetail';
 
 const id = '22222222-2222-2222-2222-222222222222';
 
@@ -157,5 +157,46 @@ describe('GameDetail', () => {
     await act(async () => { window.dispatchEvent(new Event('focus')); });
 
     expect(getDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it('opened from a push: reports the open once the current roster shows, strips the link, and never claims', async () => {
+    window.history.pushState(null, '', `/games/${id}?n=11111111111111111111111111111111&via=push&t=${Date.now() - 250}`);
+    const getDetail = vi.fn().mockResolvedValue(detail());
+    const notificationOpened = vi.fn(async () => {});
+    const claim = vi.fn();
+
+    renderWith({ getDetail, notificationOpened, claim });
+
+    await waitFor(() => expect(notificationOpened).toHaveBeenCalledTimes(1));
+    const [notificationId, opened] = (notificationOpened.mock.calls as unknown as [string, { via: string; clickToOpenMs?: number }][])[0];
+    expect(notificationId).toBe('11111111111111111111111111111111');
+    expect(opened.via).toBe('push');
+    expect(opened.clickToOpenMs).toBeGreaterThanOrEqual(0);
+    expect(window.location.search).toBe('');
+    expect(screen.getByRole('button', { name: 'Join game' })).toBeEnabled();
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it('a stale alert is normal: the spot already refilled is explained from the fresh read', async () => {
+    window.history.pushState(null, '', `/games/${id}?n=11111111111111111111111111111111&via=push&t=1`);
+    const full = detail({ supplyCount: 10, openQuantity: 0, isRosterReady: true, requirements: [{ id: 'req', occurrenceId: id, roleCode: 'participant', requiredCount: 10, supplyCount: 10, openQuantity: 0 }] });
+    renderWith({ getDetail: vi.fn().mockResolvedValue(full), notificationOpened: vi.fn(async () => {}) });
+
+    expect(await screen.findByRole('status')).toHaveTextContent('already been taken');
+    expect(screen.queryByRole('button', { name: 'Join game' })).not.toBeInTheDocument();
+  });
+
+  it('a cancelled game opened from an alert shows closed, with no join', async () => {
+    window.history.pushState(null, '', `/games/${id}?n=11111111111111111111111111111111&via=push&t=1`);
+    renderWith({ getDetail: vi.fn().mockResolvedValue(detail({ status: 5, acceptsRosterChanges: false })), notificationOpened: vi.fn(async () => {}) });
+
+    expect(await screen.findByText(/This game is closed/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Join game' })).toBeDisabled();
+  });
+
+  it('parses notification arrivals defensively', () => {
+    expect(notificationArrival('?n=11111111-1111-1111-1111-111111111111')).toEqual({ notificationId: '11111111-1111-1111-1111-111111111111', via: 'inApp', clickedAt: undefined });
+    expect(notificationArrival('?n=../../etc&via=push')).toBeUndefined();
+    expect(notificationArrival('')).toBeUndefined();
   });
 });

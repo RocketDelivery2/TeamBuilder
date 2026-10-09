@@ -35,6 +35,20 @@ shell, and never paste them into an issue, chat or commit.
 
    For example, `openssl rand -base64 48` produces a suitable signing key.
 
+   Browser alerts (Web Push) are optional and off by default; everything
+   below works without them. To try them, generate a VAPID key pair with
+   `dotnet run --project src/TeamBuilder.Api -- outbox vapid-keys` and add to
+   `.env`:
+
+   ```bash
+   TEAMBUILDER_WEBPUSH_ENABLED=true
+   TEAMBUILDER_WEBPUSH_SUBJECT=mailto:<your address>
+   TEAMBUILDER_VAPID_PUBLIC_KEY=<WebPush__VapidPublicKey from the command>
+   TEAMBUILDER_VAPID_PRIVATE_KEY=<WebPush__VapidPrivateKey from the command>
+   ```
+
+   The private key is a secret: keep it in `.env` only.
+
 2. Start the stack:
 
    ```bash
@@ -46,7 +60,9 @@ shell, and never paste them into an issue, chat or commit.
      startup (`Database:ApplyMigrationsOnStartup=true`, which is off unless
      set).
    - The web client is on `http://localhost:8080` and proxies `/api/` to the
-     API, so the browser makes same-origin calls.
+     API, so the browser makes same-origin calls. nginx has a fixed address
+     on the Compose network and is the only proxy the API trusts for
+     `X-Forwarded-For` (`ForwardedHeaders`).
 
 3. Check the API: `curl http://localhost:5080/health` returns `Healthy`.
 
@@ -169,7 +185,7 @@ still needed](#outside-identity-provider-configuration-still-needed).
    **Remove** or **No show**). Within a few seconds (the API's outbox worker
    polls every 2 seconds by default) the eleventh player's header bell shows
    an unread count. The bell refreshes when the tab regains focus and every
-   30 seconds while the tab is visible; there is no push. **Notifications**
+   30 seconds while the tab is visible. **Notifications**
    lists "Basketball spot opened: A participant spot opened in …" without
    saying who left. Opening it marks it read and goes to the game, where they
    press **Join game** and the roster is **10/10** again. If someone else
@@ -180,6 +196,35 @@ still needed](#outside-identity-provider-configuration-still-needed).
    count actually rises; a leave on a finished or cancelled game notifies
    nobody; nobody is notified twice for the same departure, and the player who
    left is never notified about their own spot.
+
+9. **Browser alerts (Web Push, optional).** With the VAPID values set, the
+   eleventh player's full-game page (after **Notify me if a spot opens**) and
+   **Notifications** page show **Notify me when a spot opens**. Nothing asks
+   for permission until they press it; then the browser asks. **Allow** shows
+   **Browser alerts on**. Switch to another tab or minimise the window and
+   have a participant leave: within a few seconds the system shows "Basketball
+   spot opened / A participant spot opened in Wednesday Basketball." (no name,
+   address or distance). Clicking it focuses TeamBuilder (or opens it) on that
+   exact game, which shows the current roster; nothing is joined until they
+   press **Join game**.
+
+   Checks for this step:
+
+   - **Block** instead of Allow: the page says alerts are blocked and the bell
+     still works.
+   - Click an alert after someone else took the spot: the game says "That spot
+     has already been taken" above the full roster.
+   - Click after the host cancelled: the game shows as cancelled with no
+     **Join game**.
+   - Turn alerts on in two browsers as the same player: both get the alert.
+   - **Turn off browser alerts**: no more alerts on that browser; in-app still
+     arrives.
+
+   Push needs `http://localhost` or HTTPS, and a browser that supports it
+   (Chrome, Edge, Firefox; Safari only from a home-screen app on iOS). Chrome
+   and Edge deliver through Google's push service, so the machine needs
+   internet access. Operators can watch the queue with
+   `docker compose -f docker-compose.qa.yml exec api dotnet TeamBuilder.Api.dll outbox status`.
 
 ## Finding games nearby
 
@@ -265,4 +310,7 @@ later with the real provider becomes a different player.
 | **Use my location** fails | The browser blocked location, or the page is not served over HTTPS or `localhost`. Enter coordinates instead. |
 | "Too many searches" (`429`) | The discovery rate limit; wait a minute, or raise the limit for a group QA session. |
 | "The roster changed while saving" | Several people changed the roster at once. On a join the client already retried twice with a short random delay, then refreshed; press **Join game** again if a spot is still open. |
+| No **Notify me when a spot opens** button | The API has Web Push off (`GET /api/v1/push/config` says `enabled: false`), or the browser has no push support or the page is not on HTTPS or `localhost`. |
+| Alerts allowed but nothing arrives | The window may be focused on the game (most browsers still show it; check the OS's notification settings and Do Not Disturb). Check `outbox status`, then the API log for `PushFailed` or `PushSubscriptionDisabled` (for example the browser's subscription expired; turn alerts off and on). |
+| API exits on startup with a `WebPush` error | `TEAMBUILDER_WEBPUSH_ENABLED=true` without a subject or with a mismatched key pair; regenerate with `outbox vapid-keys`. |
 | API exits on startup in Docker | SQL Server was not ready or the password does not meet complexity rules; check `docker compose -f docker-compose.qa.yml logs sql`. |

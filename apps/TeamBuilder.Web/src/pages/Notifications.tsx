@@ -4,6 +4,7 @@ import type { InAppNotification } from '../api/types';
 import { gamePath, navigate } from '../router';
 import { useSession } from '../session';
 import { notifyNotificationsChanged, useRefreshOnFocus } from '../lib/notifications';
+import { PushOptIn } from '../components/PushOptIn';
 
 /** The caller's in-app notifications, newest first. Opening one marks it read and opens the game. */
 export function Notifications() {
@@ -40,7 +41,9 @@ export function Notifications() {
 
   const open = async (item: InAppNotification) => {
     try {
-      await markRead(item);
+      // Marks it read and records the open (refill metrics); the game page re-reads the roster.
+      await api.notificationOpened(item.id, { via: 'inApp' });
+      notifyNotificationsChanged();
     } catch {
       // Opening the game matters more than the read mark; it can be marked again later.
     }
@@ -64,6 +67,7 @@ export function Notifications() {
   return (
     <section className="stack">
       <h1>Notifications</h1>
+      <PushOptIn />
       {error && <p className="notice error">{error}</p>}
       {!items && !error && <p className="muted">Loading…</p>}
       {items?.length === 0 && (

@@ -12,8 +12,11 @@ import type {
   PlayerOccurrencePage,
   PlayerProfile,
   PublicPlayer,
+  PushDevice,
+  RegisterPushSubscription,
   RosterAssignment,
   RosterSubscription,
+  WebPushConfig,
 } from './types';
 
 export type HostAction = 'check-in' | 'activate' | 'no-show' | 'remove';
@@ -99,6 +102,32 @@ export class TeamBuilderApi {
   /** Idempotent. */
   async markNotificationRead(notificationId: string): Promise<void> {
     await this.http.request<void>('POST', `/api/v1/players/me/notifications/${notificationId}/read`);
+  }
+
+  /**
+   * The game was opened from this notification (`push` click or the `inApp` bell). Marks it
+   * read; feeds refill metrics only. Idempotent.
+   */
+  async notificationOpened(notificationId: string, opened: { via: 'push' | 'inApp'; clickToOpenMs?: number }): Promise<void> {
+    await this.http.request<void>('POST', `/api/v1/players/me/notifications/${notificationId}/opened`, opened);
+  }
+
+  async pushConfig(): Promise<WebPushConfig> {
+    return (await this.http.request<WebPushConfig>('GET', '/api/v1/push/config')).data;
+  }
+
+  /** Registers or refreshes this browser for alerts. Idempotent (201 new, 200 refreshed). */
+  async registerPush(subscription: RegisterPushSubscription): Promise<PushDevice> {
+    return (await this.http.request<PushDevice>('PUT', '/api/v1/players/me/push-subscriptions', subscription)).data;
+  }
+
+  /** Turns alerts off for this browser and deletes its credentials. Idempotent. */
+  async unregisterPush(endpoint: string): Promise<void> {
+    await this.http.request<void>('POST', '/api/v1/players/me/push-subscriptions/unregister', { endpoint });
+  }
+
+  async pushDevices(): Promise<PushDevice[]> {
+    return (await this.http.request<PushDevice[]>('GET', '/api/v1/players/me/push-subscriptions')).data;
   }
 
   async transferHost(occurrenceId: string, newHostPlayerId: string): Promise<EventSummary> {

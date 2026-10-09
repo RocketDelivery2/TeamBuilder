@@ -1,12 +1,14 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TeamBuilder.Application.Outbox;
 using TeamBuilder.Domain;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Infrastructure.Data;
 using TeamBuilder.Infrastructure.Data.Configurations;
 using TeamBuilder.Infrastructure.Persistence;
+using TeamBuilder.Infrastructure.WebPush;
 
 namespace TeamBuilder.Infrastructure.Outbox;
 
@@ -25,6 +27,13 @@ namespace TeamBuilder.Infrastructure.Outbox;
 /// Idempotent: (SourceEventId, PlayerId) is unique, existing rows are skipped, and a duplicate
 /// insert from a concurrent late worker is absorbed by re-reading.
 /// </para>
+/// <para>
+/// When Web Push is enabled, the same commit also queues one <see cref="PushDelivery"/> per
+/// active browser of each new recipient. The in-app notification stays the durable record and
+/// the push is best effort: the message completes as soon as that commit succeeds, and the
+/// <see cref="WebPush.PushDispatcher"/> sends (and retries) each device independently. A replay
+/// creates no new notifications and therefore no new deliveries.
+/// </para>
 /// </summary>
 public sealed class RosterVacancyNotificationHandler : IOutboxMessageHandler
 {
@@ -34,11 +43,22 @@ public sealed class RosterVacancyNotificationHandler : IOutboxMessageHandler
 
     private readonly TeamBuilderDbContext _context;
     private readonly ILogger<RosterVacancyNotificationHandler> _logger;
+    private readonly TimeProvider _timeProvider;
+    private readonly WebPushOptions _webPush;
+    private readonly PushDeliverySignal? _pushSignal;
 
-    public RosterVacancyNotificationHandler(TeamBuilderDbContext context, ILogger<RosterVacancyNotificationHandler> logger)
+    public RosterVacancyNotificationHandler(
+        TeamBuilderDbContext context,
+        ILogger<RosterVacancyNotificationHandler> logger,
+        TimeProvider timeProvider,
+        IOptions<WebPushOptions> webPush,
+        PushDeliverySignal? pushSignal = null)
     {
         _context = context;
         _logger = logger;
+        _timeProvider = timeProvider;
+        _webPush = webPush.Value;
+        _pushSignal = pushSignal;
     }
 
     public string Type => RosterVacancyOpenedV1.EventType;
@@ -86,11 +106,33 @@ public sealed class RosterVacancyNotificationHandler : IOutboxMessageHandler
                 return new OutboxHandlerResult(0, alreadyNotified ? "AlreadyNotified" : "NoEligibleSubscribers");
             }
 
+            var devices = _webPush.Enabled
+                ? await ActiveDevicesAsync(recipients, cancellationToken)
+                : [];
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var queued = 0;
+
             foreach (var playerId in recipients)
             {
+                var notificationId = Guid.NewGuid();
+                foreach (var subscriptionId in devices.GetValueOrDefault(playerId) ?? [])
+                {
+                    _context.PushDeliveries.Add(new PushDelivery
+                    {
+                        Id = Guid.NewGuid(),
+                        InAppNotificationId = notificationId,
+                        PushSubscriptionId = subscriptionId,
+                        Status = Domain.Enums.PushDeliveryStatus.Pending,
+                        NextAttemptAtUtc = now,
+                        SourceOccurredAtUtc = vacancy.OccurredAtUtc,
+                        CreatedAtUtc = now
+                    });
+                    queued++;
+                }
+
                 _context.InAppNotifications.Add(new InAppNotification
                 {
-                    Id = Guid.NewGuid(),
+                    Id = notificationId,
                     PlayerId = playerId,
                     Type = NotificationType,
                     OccurrenceId = vacancy.OccurrenceId,
@@ -114,11 +156,36 @@ public sealed class RosterVacancyNotificationHandler : IOutboxMessageHandler
             }
 
             RefillTelemetry.NotificationCreated.Add(recipients.Count, new KeyValuePair<string, object?>("type", NotificationType));
+            RefillTelemetry.VacancyToNotification.Record(RefillTelemetry.Milliseconds(vacancy.OccurredAtUtc, _timeProvider.GetUtcNow().UtcDateTime));
             _logger.LogInformation(
-                "NotificationCreated: {Count} vacancy notification(s) for event {EventId} on occurrence {OccurrenceId} requirement {RequirementId}.",
-                recipients.Count, vacancy.EventId, vacancy.OccurrenceId, vacancy.RosterRequirementId);
+                "NotificationCreated: {Count} vacancy notification(s) and {Pushes} push delivery(ies) for event {EventId} on occurrence {OccurrenceId} requirement {RequirementId}.",
+                recipients.Count, queued, vacancy.EventId, vacancy.OccurrenceId, vacancy.RosterRequirementId);
+            if (queued > 0)
+                _pushSignal?.Signal();
             return new OutboxHandlerResult(recipients.Count, "Notified");
         }
+    }
+
+    /// <summary>Active browser subscriptions of the recipients, by player (several devices each).</summary>
+    private async Task<Dictionary<Guid, List<Guid>>> ActiveDevicesAsync(List<Guid> recipients, CancellationToken cancellationToken)
+    {
+        var devices = new Dictionary<Guid, List<Guid>>();
+        // Chunked so a large fan-out stays well under SQL Server's parameter limit.
+        foreach (var chunk in recipients.Chunk(500))
+        {
+            var rows = await _context.PushSubscriptions
+                .AsNoTracking()
+                .Where(s => s.IsActive && chunk.Contains(s.PlayerId))
+                .Select(s => new { s.PlayerId, s.Id })
+                .ToListAsync(cancellationToken);
+            foreach (var row in rows)
+            {
+                if (!devices.TryGetValue(row.PlayerId, out var list))
+                    devices[row.PlayerId] = list = [];
+                list.Add(row.Id);
+            }
+        }
+        return devices;
     }
 
     private async Task<List<Guid>> FindRecipientsAsync(RosterVacancyOpenedV1 vacancy, CancellationToken cancellationToken)
