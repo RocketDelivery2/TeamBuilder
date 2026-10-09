@@ -2,6 +2,11 @@
 # only. Secrets come from a git-ignored .env file next to this one (see docs/private-qa.md):
 #   TEAMBUILDER_QA_SQL_PASSWORD   SQL Server sa password (SQL Server complexity rules apply)
 #   TEAMBUILDER_JWT_SIGNING_KEY   symmetric key (32+ bytes) the API validates dev tokens with
+# Optional browser alerts (Web Push); off unless all four are set (docs/private-qa.md):
+#   TEAMBUILDER_WEBPUSH_ENABLED=true, TEAMBUILDER_WEBPUSH_SUBJECT (mailto: or https: contact),
+#   TEAMBUILDER_VAPID_PUBLIC_KEY, TEAMBUILDER_VAPID_PRIVATE_KEY (generate with
+#   `dotnet run --project src/TeamBuilder.Api -- outbox vapid-keys`, or `exec api dotnet
+#   TeamBuilder.Api.dll outbox vapid-keys` in the running stack)
 # Start with: docker compose -f docker-compose.qa.yml up --build
 name: teambuilder-qa
 
@@ -13,6 +18,8 @@ services:
       MSSQL_SA_PASSWORD: ${TEAMBUILDER_QA_SQL_PASSWORD:?Set TEAMBUILDER_QA_SQL_PASSWORD in .env}
     volumes:
       - sql-data:/var/opt/mssql
+    networks:
+      - qa
     healthcheck:
       test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
       interval: 10s
@@ -37,6 +44,16 @@ services:
       Jwt__Issuer: teambuilder-local-qa
       Jwt__Audience: teambuilder-api
       Jwt__RequireHttpsMetadata: "false"
+      # The web container's nginx is the only proxy trusted to set X-Forwarded-For, so
+      # per-IP rate limits see the real client; a header from anyone else is ignored.
+      ForwardedHeaders__Enabled: "true"
+      ForwardedHeaders__KnownProxies__0: 172.29.80.10
+      WebPush__Enabled: ${TEAMBUILDER_WEBPUSH_ENABLED:-false}
+      WebPush__Subject: ${TEAMBUILDER_WEBPUSH_SUBJECT:-}
+      WebPush__VapidPublicKey: ${TEAMBUILDER_VAPID_PUBLIC_KEY:-}
+      WebPush__VapidPrivateKey: ${TEAMBUILDER_VAPID_PRIVATE_KEY:-}
+    networks:
+      - qa
     ports:
       - "5080:8080"
 
@@ -53,8 +70,17 @@ services:
       - api
     environment:
       API_UPSTREAM: http://api:8080
+    networks:
+      qa:
+        ipv4_address: 172.29.80.10
     ports:
       - "8080:80"
+
+networks:
+  qa:
+    ipam:
+      config:
+        - subnet: 172.29.80.0/24
 
 volumes:
   sql-data:

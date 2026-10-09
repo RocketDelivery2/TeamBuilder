@@ -308,6 +308,133 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
 
 ---
 
+## Refill delivery operations
+
+**Current (TB-REFILL-002).** Everything below runs inside the API process and
+SQL Server; there is no Redis, message bus or separate worker service.
+
+### Web Push (VAPID)
+
+Browser alerts are **off by default**, and dev, QA and tests work without them
+(players still get in-app notifications). To turn them on, generate a VAPID
+key pair once per environment:
+
+```bash
+dotnet run --project src/TeamBuilder.Api -- outbox vapid-keys
+# or, from a published build or container:
+dotnet TeamBuilder.Api.dll outbox vapid-keys
+```
+
+It prints `WebPush__VapidPublicKey=…` and `WebPush__VapidPrivateKey=…`. Store
+the private key as a secret (Octopus sensitive variable, Render secret, `.env`
+that git ignores); **never commit it**. Then set:
+
+| Variable | Value |
+|---|---|
+| `WebPush__Enabled` | `true` |
+| `WebPush__Subject` | a contact the push services can reach, `mailto:ops@example.com` or an `https:` URL |
+| `WebPush__VapidPublicKey` | public key from the command (65-byte P-256 point, base64url) |
+| `WebPush__VapidPrivateKey` | private key from the command (secret) |
+
+With `Enabled=true` the API refuses to start unless the subject and a matching
+key pair are present. Keep the same key pair for the life of the environment:
+changing it invalidates every browser subscription (browsers re-subscribe the
+next time the player opens the app with alerts on). Other settings:
+`MaxDevicesPerPlayer` (10), `TimeToLive` (30 minutes; older alerts are
+dropped, not sent), `MaxAttempts` (4), `RetryBaseDelay`/`RetryMaxDelay`,
+`MaxConsecutiveFailures` (5), `RequestTimeout` (10 s), `BatchSize`,
+`MaxConcurrency`, `AllowedEndpointHosts` (push services the server will post to;
+defaults cover Chrome/Edge/Android (FCM), Firefox, Safari and Windows).
+`AllowLocalhostEndpoints` exists for local dogfooding against a fake push
+service and is rejected outside `Development`.
+
+The web client needs a secure context (HTTPS, or `http://localhost`) for push;
+over plain HTTP on another host the browser offers no push and the option is
+hidden. `sw.js` and `manifest.webmanifest` are served with `no-cache` by the
+web image's nginx.
+
+### Reverse proxies and client addresses
+
+`ForwardedHeaders` decides whose `X-Forwarded-For`/`-Proto` the API believes.
+It is **off by default**: the TCP peer address is the client, and forwarded
+headers are ignored. Enable it only with the proxies that actually sit in front
+of the API:
+
+| Variable | Meaning |
+|---|---|
+| `ForwardedHeaders__Enabled` | `true` to honour forwarded headers |
+| `ForwardedHeaders__KnownProxies__0` | an exact proxy IP (repeat with `__1`, …) |
+| `ForwardedHeaders__KnownNetworks__0` | a proxy network in CIDR form, e.g. a load balancer subnet |
+| `ForwardedHeaders__ForwardLimit` | proxy hops to unwind (default 1) |
+
+Enabled with no proxy listed is a startup error, never "trust everyone".
+Headers from any other address are ignored, and only `ForwardLimit` entries
+are taken from the right of `X-Forwarded-For`, so a client cannot spoof its
+address by sending the header itself. The QA compose stack gives nginx a fixed
+address (`172.29.80.10`) and trusts only it. On a platform whose load balancer
+addresses are not fixed (Render, App Service), list its documented network
+range or leave this off; per-IP limits then see the balancer's address.
+Signed-in rate limits (claims, subscriptions, push registration) partition by
+token issuer and subject and do not depend on this setting; only anonymous
+discovery is limited per IP.
+
+### Outbox retention
+
+`OutboxMaintenanceWorker` purges finished history every
+`OutboxMaintenance:Interval` (15 minutes):
+
+| Rows | Deleted after | Setting |
+|---|---|---|
+| Completed outbox messages | 7 days | `CompletedRetention` |
+| Accepted, failed or abandoned push deliveries | 7 days | `PushDeliveryRetention` |
+| Disabled push subscriptions | 30 days | `DisabledPushSubscriptionRetention` |
+| Failed outbox messages | never, unless set | `FailedRetention` (opt-in) |
+
+Pending and Processing messages are never purged. Each statement deletes at
+most `BatchSize` (1000) rows with `READPAST, ROWLOCK` in its own short
+transaction, at most `MaxBatchesPerRun` (100) per table per pass, so several
+API instances can purge at once without blocking each other or the workers.
+`OutboxMaintenance__Enabled=false` turns the worker off.
+
+### Inspecting and replaying failed messages
+
+There is no admin HTTP route. Operators who can run the API binary against the
+database (they already hold its connection string) use the maintenance command:
+
+```bash
+dotnet TeamBuilder.Api.dll outbox status          # counts by status
+dotnet TeamBuilder.Api.dll outbox failed [take]   # failed messages: id, type, aggregate, times, attempts, error preview; never the payload
+dotnet TeamBuilder.Api.dll outbox replay <id>     # requeue one failed message
+dotnet TeamBuilder.Api.dll outbox purge           # run one retention pass now
+# QA stack: docker compose -f docker-compose.qa.yml exec api dotnet TeamBuilder.Api.dll outbox status
+```
+
+`replay` moves the message's attempts into its history (`PriorAttemptCount`,
+`ReplayCount`, `LastReplayedAtUtc`), makes it Pending and due now, and only
+acts on a Failed message, so running it twice requeues it once. Handlers are
+idempotent: replaying a message that had partly or fully delivered creates no
+duplicate notifications or push deliveries. Fix the cause first (the error
+preview says what failed), then replay.
+
+### Refill metrics
+
+Meter `TeamBuilder.Refill` (System.Diagnostics.Metrics; export with
+OpenTelemetry or watch with `dotnet-counters monitor --counters TeamBuilder.Refill`):
+
+- Counters: `teambuilder.push.attempted`, `.accepted`, `.permanent_failure`,
+  `.transient_failure`, `.abandoned`, `.subscription_disabled`;
+  `teambuilder.outbox.purged`, `.replayed`, `.processed`, `.skipped`, `.failed`;
+  `teambuilder.notifications.created`, `.opened`; `teambuilder.refill.vacancy_opened`.
+- Timings (ms): `teambuilder.refill.vacancy_to_notification`,
+  `vacancy_to_push_accepted`, `push_click_to_game_open`,
+  `game_open_to_claim_attempt`, `vacancy_to_replacement`.
+
+Tags are fixed categories (push service, outcome, error category, reason,
+table, `via`); logs carry ids and counts. Neither ever contains push endpoints
+or keys, addresses, coordinates, tokens or email.
+
+---
+
 ## Deployment Checklist
 
 ### Before Deployment
@@ -354,7 +481,9 @@ Mark sensitive variables (passwords, connection strings) as **Sensitive**.
   self-profile mutations require authentication; public player discovery
   omits Email. Join-request reads are applicant/team-owner restricted, and
   roster-import reads are importer-only.
-- Consider API rate limiting for production
+- Rate limits are in memory per API instance (discovery per IP; claims,
+  subscriptions and push registration per token issuer and subject). Configure
+  `ForwardedHeaders` for your proxy before relying on per-IP limits.
 
 ---
 

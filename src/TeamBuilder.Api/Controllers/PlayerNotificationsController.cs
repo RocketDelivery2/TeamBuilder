@@ -80,4 +80,25 @@ public class PlayerNotificationsController : ControllerBase
 
         return await _notifications.MarkReadAsync(playerId.Value, notificationId, cancellationToken) ? NoContent() : NotFound();
     }
+
+    /// <summary>
+    /// The caller opened the game from this notification: <c>via</c> is <c>push</c> (an OS or
+    /// browser notification click) or <c>inApp</c>; <c>clickToOpenMs</c> is the client-measured
+    /// time from the click to the game showing. Marks it read; idempotent 204 (only the first
+    /// open counts). Another player's or a missing notification 404. Metrics only: it grants
+    /// nothing and claims nothing.
+    /// </summary>
+    [HttpPost("{notificationId}/opened")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> MarkOpened(Guid notificationId, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] NotificationOpenedDto? opened, CancellationToken cancellationToken)
+    {
+        var playerId = await _currentPlayer.ResolvePlayerIdAsync(cancellationToken);
+        if (playerId == null)
+            return Forbid();
+
+        return await _notifications.MarkOpenedAsync(playerId.Value, notificationId, opened ?? new NotificationOpenedDto(), cancellationToken) ? NoContent() : NotFound();
+    }
 }

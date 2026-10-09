@@ -15,6 +15,7 @@ import { GameDetail } from './pages/GameDetail';
 import { Discover } from './pages/Discover';
 import { Notifications } from './pages/Notifications';
 import { NotificationBell } from './components/NotificationBell';
+import { navigationFromWorker, SW_PUSH_CHANGED, syncBrowserPush } from './lib/webPush';
 
 type Phase =
   | { name: 'starting' }
@@ -67,6 +68,24 @@ export function App() {
     })();
   }, [route.name, start]);
 
+  // A notification click routes an already open tab to the game (see public/sw.js).
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const path = navigationFromWorker(event.data);
+      if (path) navigate(path);
+      else if (phase.name === 'ready' && (event.data as { type?: string } | null)?.type === SW_PUSH_CHANGED) void syncBrowserPush(phase.api).catch(() => {});
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [phase]);
+
+  // Signed in with alerts already allowed: refresh this browser's registration (never prompts).
+  const readyApi = phase.name === 'ready' ? phase.api : undefined;
+  useEffect(() => {
+    if (readyApi) void syncBrowserPush(readyApi).catch(() => {});
+  }, [readyApi]);
+
   const signOut = useCallback(() => {
     if (phase.name === 'ready' || phase.name === 'onboarding') void phase.adapter.signOut();
     setPhase({ name: 'signed-out' });
@@ -114,7 +133,7 @@ export function App() {
         route.name === 'create' ? <CreateGame /> :
         route.name === 'discover' ? <Discover /> :
         route.name === 'notifications' ? <Notifications /> :
-        route.name === 'game' ? <GameDetail occurrenceId={route.id} /> :
+        route.name === 'game' ? <GameDetail key={`${route.id}${route.visit ?? ''}`} occurrenceId={route.id} /> :
         route.name === 'not-found' ? <p className="notice">Page not found.</p> :
         <MyGames />;
       break;

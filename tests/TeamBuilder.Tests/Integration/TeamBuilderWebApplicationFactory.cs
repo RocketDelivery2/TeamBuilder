@@ -98,9 +98,14 @@ public class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
                 // is covered with a low limit in its own test.
                 ["RateLimiting:Discovery:PermitLimit"] = "100000",
                 ["RateLimiting:Subscriptions:PermitLimit"] = "100000",
+                ["RateLimiting:PushSubscriptions:PermitLimit"] = "100000",
                 // Outbox processing is driven explicitly through OutboxProcessor.ProcessBatchAsync,
                 // so tests are deterministic and never wait on the poll interval.
                 ["Outbox:Enabled"] = "false",
+                // Likewise push dispatch (PushDispatcher.ProcessBatchAsync) and retention
+                // (OutboxMaintenance.PurgeAsync) are driven explicitly by their tests.
+                ["WebPush:DispatcherEnabled"] = "false",
+                ["OutboxMaintenance:Enabled"] = "false",
             });
         });
 

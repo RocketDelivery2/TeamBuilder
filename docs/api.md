@@ -1439,10 +1439,128 @@ Marks one of the caller's notifications read. Idempotent (the first read time
 is kept). **Response `204`**; another player's or a missing notification is
 `404`.
 
-**Future, not implemented:** Web Push, mobile push, SMS or email delivery,
-spot reservations or holds, waitlists and ranked matching, and an external
+#### `POST api/v1/players/me/notifications/{id}/opened`
+
+**Current (TB-REFILL-002).** The caller opened the game from this
+notification. Optional body `{ "via": "push" | "inApp", "clickToOpenMs": 420 }`
+(`clickToOpenMs` is measured by the client from the click to the game
+showing; values outside 0 to 10 minutes are ignored). Marks the notification
+read and records the open time once; **`204`**, idempotent; another player's or
+a missing notification is `404`. It feeds metrics only: it grants nothing and
+claims nothing.
+
+**Subscription limit.** A player may hold at most
+`RefillLimits:MaxActiveOccurrenceSubscriptionsPerPlayer` (default 50)
+subscriptions on games that are not completed, cancelled or archived. One more
+is **`409`** with code `SubscriptionLimitReached`; re-subscribing to one already
+held is still `200`. A game's subscriber list is never truncated: every
+subscriber is notified.
+
+### Browser alerts (Web Push)
+
+**Current (TB-REFILL-002):** the same vacancy alert can also arrive as a
+browser notification (RFC 8030 Web Push, RFC 8291 `aes128gcm` encryption,
+RFC 8292 VAPID), for players who press **Notify me when a spot opens** in the
+web client and allow notifications. It is off unless the operator configures a
+VAPID key pair (`WebPush` settings, see
+[deployment](deployment.md#web-push-vapid)). Push is best effort and never
+blocks the in-app notification, which is always created first.
+
+**Pipeline.** The outbox handler that creates the in-app notifications also
+inserts one `PushDeliveries` row per active browser of each notified player,
+in the same commit. A separate dispatcher in the API process claims due
+deliveries (`UPDLOCK, READPAST`, leased like the outbox), checks that the
+browser is still active and still belongs to that player and that the alert is
+younger than `WebPush:TimeToLive` (30 minutes by default), encrypts the
+payload, signs a VAPID token and posts it to the browser's push service.
+Responses:
+
+| Push service answer | Result |
+|---|---|
+| `2xx` | Accepted; the device's failure count resets. |
+| `404` or `410` | That browser is gone: the delivery fails and the subscription is disabled (`Expired`). |
+| `429`, `5xx`, timeout, network error | Retried with exponential backoff (honouring `Retry-After`) up to `WebPush:MaxAttempts`, then failed. |
+| other `4xx` (`400`, `401`, `403`, `413`) | That delivery fails; after `WebPush:MaxConsecutiveFailures` failures in a row the subscription is disabled (`Rejected`). |
+
+A failure affects only that browser; other browsers and the outbox are not
+held up. Database effects are idempotent (one in-app notification per
+`(message, player)`, one delivery per `(notification, browser)`); the push
+itself is at-least-once and can, rarely, be shown twice (the service worker
+uses one notification tag per game, so a repeat replaces rather than stacks).
+
+**Payload.** Encrypted for the browser; at most a type, the notification id,
+the occurrence id, the title, the body, a same-origin URL
+(`/games/{occurrenceId}?n={notificationId}`), a per-game tag and the send time.
+For example title "Basketball spot opened", body "A participant spot opened in
+Wednesday Basketball.". Never who left, the venue address, coordinates,
+distance, email, identity-provider data or the roster.
+
+**Click.** The service worker opens or focuses the exact game URL. The page
+re-reads the game; if the spot was already taken or the game was cancelled it
+says so and shows the current roster. Nothing is claimed automatically: the
+player presses **Join game** and the normal atomic claim decides.
+
+#### `GET api/v1/push/config`
+
+Anonymous. **Response `200`:** `{ "enabled": true, "vapidPublicKey": "BN…" }`
+(`enabled: false` and no key when the server does not send push; the client
+then hides the option).
+
+#### `PUT api/v1/players/me/push-subscriptions`
+
+Registers or refreshes the caller's browser. Body: the browser's
+`PushSubscription.toJSON()` plus an optional `previousEndpoint`:
+
+```json
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/…",
+  "expirationTime": null,
+  "keys": { "p256dh": "BP…", "auth": "…" },
+  "previousEndpoint": "https://fcm.googleapis.com/fcm/send/…"
+}
+```
+
+The endpoint must be `https` on a known push service
+(`WebPush:AllowedEndpointHosts`, default FCM, Mozilla, Apple, Windows), with no
+credentials, port or fragment, so the server never posts to arbitrary hosts;
+`p256dh` must be an uncompressed P-256 point and `auth` 16 bytes. Idempotent:
+**`201`** when new, **`200`** when the endpoint is already registered (keys,
+expiry and last-seen are refreshed; an endpoint previously registered by
+another player on the same browser moves to the caller). `previousEndpoint`
+(after the browser rotated its subscription) disables the old one. A player has
+at most `WebPush:MaxDevicesPerPlayer` (default 10) active browsers; registering
+one more disables the least recently seen. Errors: `400` with fixed text (the
+submitted endpoint and keys are never echoed or logged), `401`, `403` unlinked,
+**`409`** `WebPushDisabled` when the server has no VAPID identity, `429`.
+
+**Response:** `{ id, userAgentFamily, createdAtUtc, lastSeenAtUtc,
+expiresAtUtc, isActive, disabledAtUtc, disabledReason }`. Endpoints and keys are
+credentials: no response ever contains them.
+
+#### `POST api/v1/players/me/push-subscriptions/unregister`
+
+Body `{ "endpoint": "…" }`. Deletes the caller's subscription for that
+endpoint, credentials included. **`204`**, also when there was none (or it
+belongs to someone else, which is left untouched).
+
+#### `GET api/v1/players/me/push-subscriptions`
+
+The caller's browsers, as above (no endpoints or keys).
+
+#### `DELETE api/v1/players/me/push-subscriptions/{id}`
+
+Deletes one of the caller's browsers (for example a lost phone). **`204`**;
+another player's or a missing id is `404`.
+
+The three mutation routes share the `RateLimiting:PushSubscriptions` limit
+(default 20 per 60 seconds per caller, partitioned by token issuer and
+subject): **`429`** with `Retry-After`.
+
+**Future, not implemented:** native APNS/FCM (mobile apps), SMS and email
+delivery, spot reservations or holds (`SpotReservation`), host approval,
+competitive applications, waitlists and ranked matching, and an external
 message bus. See the
-[rapid-refill architecture](architecture/rapid-refill-platform.md#current-vacancy-outbox-and-in-app-notifications-tb-refill-001).
+[rapid-refill architecture](architecture/rapid-refill-platform.md#current-web-push-and-refill-operations-tb-refill-002).
 
 ---
 
@@ -1602,8 +1720,11 @@ errors name the parameter without echoing its value.
 window per client IP, `RateLimiting:Discovery:PermitLimit` requests (default
 60) per `RateLimiting:Discovery:WindowSeconds` (default 60), in memory per API
 instance. Over the limit: `429` with `Retry-After`. Behind a reverse proxy
-every client shares the proxy's address unless forwarded headers are
-configured. The limiter never decides roster claims, which the database
+every client shares the proxy's address unless `ForwardedHeaders` lists that
+proxy (see [deployment](deployment.md#reverse-proxies-and-client-addresses));
+`X-Forwarded-For` from anyone else is ignored, so a client cannot choose its
+own partition. Signed-in routes partition by token issuer and subject instead,
+which no header can change. The limiter never decides roster claims, which the database
 guards.
 
 **Response `400`:** invalid parameters (`errors` names the field: `lat`,

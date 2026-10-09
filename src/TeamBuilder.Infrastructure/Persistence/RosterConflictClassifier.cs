@@ -32,6 +32,10 @@ public static class RosterConflictClassifier
     public static bool IsDuplicateSourceEventNotification(DbUpdateException exception) =>
         IsUniqueViolation(exception, InAppNotificationConfiguration.SourceEventPlayerUniqueIndexName);
 
+    /// <summary>A concurrent registration of the same browser endpoint committed first.</summary>
+    public static bool IsDuplicatePushEndpoint(DbUpdateException exception) =>
+        IsUniqueViolation(exception, PushSubscriptionConfiguration.EndpointHashUniqueIndexName);
+
     /// <summary>The same fact was already staged in the outbox (same deduplication key).</summary>
     public static bool IsDuplicateOutboxMessage(DbUpdateException exception) =>
         IsUniqueViolation(exception, OutboxMessageConfiguration.DeduplicationKeyUniqueIndexName);

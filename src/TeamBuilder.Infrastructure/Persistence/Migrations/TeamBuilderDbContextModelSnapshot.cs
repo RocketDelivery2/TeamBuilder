@@ -239,6 +239,9 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("OccurrenceId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("OpenedAtUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<Guid>("PlayerId")
                         .HasColumnType("uniqueidentifier");
 
@@ -412,6 +415,9 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
 
+                    b.Property<DateTime?>("LastReplayedAtUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<DateTime?>("LockExpiresAtUtc")
                         .HasColumnType("datetime2");
 
@@ -430,8 +436,14 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int>("PriorAttemptCount")
+                        .HasColumnType("int");
+
                     b.Property<DateTime?>("ProcessedAtUtc")
                         .HasColumnType("datetime2");
+
+                    b.Property<int>("ReplayCount")
+                        .HasColumnType("int");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -460,9 +472,19 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
 
                     SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("NextAttemptAtUtc", "CreatedAtUtc"), new[] { "AttemptCount" });
 
+                    b.HasIndex(new[] { "ProcessedAtUtc" }, "IX_OutboxMessages_Completed_ProcessedAtUtc")
+                        .HasFilter("[Status] = 3");
+
+                    b.HasIndex(new[] { "ProcessedAtUtc" }, "IX_OutboxMessages_Failed_ProcessedAtUtc")
+                        .HasFilter("[Status] = 4");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex(new[] { "ProcessedAtUtc" }, "IX_OutboxMessages_Failed_ProcessedAtUtc"), new[] { "Type", "AggregateId", "AttemptCount", "ReplayCount" });
+
                     b.ToTable("OutboxMessages", null, t =>
                         {
                             t.HasCheckConstraint("CK_OutboxMessages_AttemptCount_NonNegative", "[AttemptCount] >= 0");
+
+                            t.HasCheckConstraint("CK_OutboxMessages_ReplayCounts_NonNegative", "[ReplayCount] >= 0 AND [PriorAttemptCount] >= 0");
 
                             t.HasCheckConstraint("CK_OutboxMessages_Status_Range", "[Status] >= 1 AND [Status] <= 4");
                         });
@@ -576,6 +598,165 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("UX_PlayerIdentities_Issuer_Subject");
 
                     b.ToTable("PlayerIdentities");
+                });
+
+            modelBuilder.Entity("TeamBuilder.Domain.Entities.PushDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("InAppNotificationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<int?>("LastStatusCode")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("LockExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LockOwner")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<DateTime>("NextAttemptAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("PushSubscriptionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("SourceOccurredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedAtUtc")
+                        .HasDatabaseName("IX_PushDeliveries_Terminal_CompletedAtUtc")
+                        .HasFilter("[Status] >= 3");
+
+                    b.HasIndex("LockExpiresAtUtc")
+                        .HasDatabaseName("IX_PushDeliveries_Sending_LockExpiresAtUtc")
+                        .HasFilter("[Status] = 2");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("LockExpiresAtUtc"), new[] { "AttemptCount" });
+
+                    b.HasIndex("InAppNotificationId", "PushSubscriptionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PushDeliveries_InAppNotificationId_PushSubscriptionId");
+
+                    b.HasIndex("NextAttemptAtUtc", "CreatedAtUtc")
+                        .HasDatabaseName("IX_PushDeliveries_Pending_NextAttemptAtUtc")
+                        .HasFilter("[Status] = 1");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("NextAttemptAtUtc", "CreatedAtUtc"), new[] { "AttemptCount" });
+
+                    b.ToTable("PushDeliveries", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PushDeliveries_Status_Range", "[Status] >= 1 AND [Status] <= 5");
+                        });
+                });
+
+            modelBuilder.Entity("TeamBuilder.Domain.Entities.PushSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Auth")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DisabledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DisabledReason")
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2048)");
+
+                    b.Property<byte[]>("EndpointHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("binary(32)")
+                        .IsFixedLength();
+
+                    b.Property<DateTime?>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("FailureCount")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("LastSeenAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("P256dh")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<Guid>("PlayerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UserAgentFamily")
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EndpointHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PushSubscriptions_EndpointHash");
+
+                    b.HasIndex("PlayerId", "LastSeenAtUtc")
+                        .HasDatabaseName("IX_PushSubscriptions_PlayerId_Active")
+                        .HasFilter("[IsActive] = 1");
+
+                    b.ToTable("PushSubscriptions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PushSubscriptions_FailureCount_NonNegative", "[FailureCount] >= 0");
+                        });
                 });
 
             modelBuilder.Entity("TeamBuilder.Domain.Entities.RosterAssignment", b =>
@@ -1148,6 +1329,28 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                         .HasForeignKey("PlayerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Player");
+                });
+
+            modelBuilder.Entity("TeamBuilder.Domain.Entities.PushDelivery", b =>
+                {
+                    b.HasOne("TeamBuilder.Domain.Entities.InAppNotification", null)
+                        .WithMany()
+                        .HasForeignKey("InAppNotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_PushDeliveries_InAppNotifications_InAppNotificationId");
+                });
+
+            modelBuilder.Entity("TeamBuilder.Domain.Entities.PushSubscription", b =>
+                {
+                    b.HasOne("TeamBuilder.Domain.Entities.Player", "Player")
+                        .WithMany()
+                        .HasForeignKey("PlayerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_PushSubscriptions_Players_PlayerId");
 
                     b.Navigation("Player");
                 });

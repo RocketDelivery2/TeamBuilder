@@ -180,12 +180,110 @@ visible-tab polling.
 `OutboxProcessed`, `OutboxSkipped`, `OutboxFailed` and `NotificationCreated`,
 with matching structured log events. Logs carry ids and counts only.
 
-**Future, not implemented:** Web Push (VAPID), APNS/FCM, SMS and email
-channels (each a further idempotent outbox consumer); `OpenSpot`,
-`SpotReservation`, `ReplacementOffer` and waitlists; ranked or geo matching of
-candidates; Redis, Kafka or Service Bus; a dead-letter UI and replay tooling;
-retention of completed outbox rows (they are kept for now). The outbox
-contract and idempotency rules above are what those additions build on.
+Retention, replay tooling and Web Push were added by TB-REFILL-002 (next
+section).
+
+## Current: Web Push and refill operations (TB-REFILL-002)
+
+This section describes what runs today on top of TB-REFILL-001. It adds a
+second delivery channel and the operations a long-running outbox needs.
+
+**Pipeline.** `roster change + outbox message` (one commit) → outbox worker →
+revalidation → `InAppNotification` per eligible subscriber **and**, in the same
+commit, one `PushDelivery` per active browser of each of those players →
+`PushDispatcher` → browser push service → service worker → the exact game
+page → a fresh roster read → the normal atomic claim. The outbox message
+completes once the notifications and deliveries are committed; it never waits
+on a push service.
+
+**Push subscriptions.** `PushSubscriptions` holds one row per browser endpoint
+(unique on a SHA-256 of the endpoint, since endpoints exceed index key limits),
+owned by one player, with the browser's `p256dh` and `auth` keys, last-seen,
+expiry, failure count and disabled reason (`Unregistered`, `Expired`,
+`Replaced`, `Rejected`, `Evicted`). Endpoints and keys are credentials: no DTO,
+log, metric tag, payload or error message contains them. A player has several
+browsers (`WebPush:MaxDevicesPerPlayer`, the least recently seen is evicted);
+re-registering refreshes keys, a rotated endpoint retires the previous one, and
+an endpoint re-registered by another player on a shared browser moves to them.
+Endpoints are restricted to known push-service hosts over HTTPS (no redirects
+followed), so registration cannot make the server call arbitrary URLs.
+
+**Delivery ledger.** `PushDeliveries` is unique on
+`(InAppNotificationId, PushSubscriptionId)` and leased like the outbox
+(`UPDLOCK, READPAST`, lock owner, lease expiry, attempt count, backoff). Before
+sending, the dispatcher abandons a delivery whose browser was removed,
+disabled, or now belongs to another player, or whose alert is older than the
+TTL. Results map by push-service status: accepted (2xx), gone (404/410:
+disable the browser), transient (429/5xx/timeout/network: retry with
+backoff and `Retry-After`, bounded by `MaxAttempts`), rejected (other 4xx:
+fail this delivery; disable after `MaxConsecutiveFailures`). Every outcome is
+per browser. Database side effects are idempotent; external delivery is
+at-least-once (a send can succeed and its record be lost to a crash, so a
+browser can rarely see the alert twice; one notification tag per game makes the
+repeat replace the first). It is never claimed to be exactly-once.
+
+**Protocol.** RFC 8030 requests with `TTL` (the alert's remaining lifetime),
+`Urgency: high` and a per-game `Topic` (a newer alert for the same game
+replaces an undelivered older one at the push service); RFC 8291 `aes128gcm`
+payload encryption (ephemeral ECDH P-256, HKDF, AES-128-GCM, one 4096-byte
+record), verified against the RFC's test vector; RFC 8292 VAPID ES256 tokens
+cached per push-service origin. Implemented in-house in
+`TeamBuilder.Infrastructure.WebPush` on .NET cryptography; no third-party push
+library and no Google or Mozilla dependency in tests (a fake gateway decrypts
+what the server sent).
+
+**Payload and click.** Sparse: title "Basketball spot opened", body "A
+participant spot opened in Wednesday Basketball.", the occurrence and
+notification ids, a same-origin URL and a tag. Never the leaver, venue address,
+coordinates, distance, email, identity-provider data or roster. The service
+worker opens or focuses the game URL, the page reports the open
+(`POST …/notifications/{id}/opened`, for the funnel metrics) and re-reads the
+game: a filled spot or cancelled game is shown as such. Nothing is claimed
+automatically, and permission is only requested from the **Notify me when a
+spot opens** button, never on load; a denied permission leaves in-app
+notifications working.
+
+**Retention.** `OutboxMaintenance` deletes completed outbox messages (7 days),
+finished push deliveries (7 days) and disabled push subscriptions (30 days) in
+bounded `DELETE TOP (n) … WITH (READPAST, ROWLOCK)` batches served by filtered
+indexes, safe with several instances. Pending and Processing messages are never
+purged; Failed messages only with an explicit `FailedRetention`.
+
+**Replay.** `dotnet TeamBuilder.Api.dll outbox failed|replay <id>|status|purge`
+(no HTTP route, no admin role). Replay requeues one Failed message, keeping
+its attempt history (`PriorAttemptCount`, `ReplayCount`,
+`LastReplayedAtUtc`); idempotent handlers make it safe.
+
+**Limits.** `RefillLimits:MaxActiveOccurrenceSubscriptionsPerPlayer` (50) and
+`WebPush:MaxDevicesPerPlayer` (10). A game's subscriber list is never
+truncated. Measured on SQL Server 2022 (Testcontainers, gateway mocked):
+
+| Subscribers (1 browser each) | Leave commit | Outbox processing (notifications + push ledger) | Push dispatch preparation |
+|---:|---:|---:|---:|
+| 1 | 31 ms | 88 ms | 56 ms |
+| 10 | 39 ms | 125 ms | 92 ms |
+| 100 | 31 ms | 302 ms | 148 ms |
+| 1000 | 147 ms | 1626 ms | 1264 ms (10 batches) |
+
+The leave's commit does not grow with subscribers (fanout happens in the
+worker); the worker's cost is linear and set-based.
+
+**Observability.** Meter `TeamBuilder.Refill` adds push counters (attempted,
+accepted, permanent and transient failure, abandoned, subscription disabled),
+`outbox.purged`, `outbox.replayed`, `notifications.opened`, and the funnel
+timings vacancy → in-app, vacancy → push accepted, push click → game open,
+game open → claim attempt and vacancy → replacement confirmed.
+
+**Forwarded headers.** Off by default; when on, only listed proxies may set the
+client address and only `ForwardLimit` hops are unwound (see
+[deployment](../deployment.md#reverse-proxies-and-client-addresses)).
+Per-caller limits stay keyed on token issuer and subject.
+
+**Future, not implemented:** native APNS/FCM for mobile apps, SMS and email
+channels (each a further idempotent consumer of the same outbox and
+notification), `OpenSpot`, `SpotReservation`, `ReplacementOffer`, host
+approval, competitive applications and waitlists; ranked or geo matching of
+candidates; Redis, Kafka or Service Bus; a dead-letter UI.
 
 ## Team lead and roster-manager capabilities
 

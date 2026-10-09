@@ -6,14 +6,25 @@ using Microsoft.Extensions.Options;
 using TeamBuilder.Api.Auth;
 using TeamBuilder.Api.Errors;
 using TeamBuilder.Api.Middleware;
+using TeamBuilder.Api.Networking;
+using TeamBuilder.Api.Operations;
 using TeamBuilder.Api.RateLimiting;
 using TeamBuilder.Api.Workers;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
 using TeamBuilder.Infrastructure.Outbox;
 using TeamBuilder.Infrastructure.Services;
+using TeamBuilder.Infrastructure.WebPush;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Operator maintenance (`dotnet TeamBuilder.Api.dll outbox ...`): runs one command against the
+// configured database and exits without starting the web host.
+if (args.Length > 0 && args[0] == OutboxCommand.Name)
+{
+    Environment.ExitCode = await OutboxCommand.RunAsync(args[1..], Console.Out, builder.Configuration);
+    return;
+}
 
 // Add DbContext
 builder.Services.AddDbContext<TeamBuilderDbContext>(options =>
@@ -51,6 +62,53 @@ builder.Services.AddOptions<OutboxOptions>()
 builder.Services.AddSingleton<OutboxProcessor>();
 builder.Services.AddScoped<IOutboxMessageHandler, RosterVacancyNotificationHandler>();
 builder.Services.AddHostedService<OutboxWorker>();
+builder.Services.AddOptions<RefillLimitsOptions>()
+    .BindConfiguration(RefillLimitsOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// Retention of finished refill rows (completed outbox messages, finished push deliveries,
+// dead push subscriptions) in bounded batches; Failed messages stay for `outbox replay`.
+builder.Services.AddOptions<OutboxMaintenanceOptions>()
+    .BindConfiguration(OutboxMaintenanceOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<OutboxMaintenance>();
+builder.Services.AddScoped<OutboxOperations>();
+builder.Services.AddHostedService<OutboxMaintenanceWorker>();
+
+// Web Push (VAPID): best-effort delivery of the same alerts to registered browsers. Off unless
+// WebPush:Enabled with a VAPID key pair from secret configuration; in-app notifications never
+// depend on it.
+builder.Services.AddOptions<WebPushOptions>()
+    .BindConfiguration(WebPushOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<WebPushOptions>>(
+    new WebPushOptionsValidator(builder.Environment.IsDevelopment()));
+builder.Services.AddSingleton<PushDeliverySignal>();
+builder.Services.AddScoped<IPushSubscriptionService, PushSubscriptionService>();
+builder.Services.AddSingleton(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<WebPushOptions>>().Value;
+    if (!VapidKeys.TryCreate(options.VapidPublicKey, options.VapidPrivateKey, out var keys, out var error))
+        throw new InvalidOperationException(error);
+    return new VapidTokenFactory(keys!, options.Subject!, sp.GetRequiredService<TimeProvider>());
+});
+builder.Services.AddHttpClient<IWebPushClient, HttpWebPushClient>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // Never follow a push service redirect elsewhere; recycle connections so DNS changes apply.
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+    })
+    .ConfigureHttpClient(client => client.Timeout = Timeout.InfiniteTimeSpan)
+    // The default HttpClient logging writes each request URL, and a push endpoint URL is a
+    // credential (it embeds the browser's push token). The dispatcher logs ids and the service only.
+    .RemoveAllLoggers();
+builder.Services.AddSingleton<PushDispatcher>();
+builder.Services.AddHostedService<PushDeliveryWorker>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
@@ -109,6 +167,16 @@ builder.Services.AddOptions<SubscriptionRateLimitOptions>()
     .BindConfiguration(SubscriptionRateLimitOptions.SectionName)
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<PushSubscriptionRateLimitOptions>()
+    .BindConfiguration(PushSubscriptionRateLimitOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// Client address behind a reverse proxy: only listed proxies may set X-Forwarded-For (see
+// ForwardedHeadersSettings). Off by default, so a direct client's header is ignored.
+var forwardedHeaders = builder.Configuration.GetSection(ForwardedHeadersSettings.SectionName).Get<ForwardedHeadersSettings>() ?? new ForwardedHeadersSettings();
+forwardedHeaders.Apply(new ForwardedHeadersOptions()); // fail at startup, not on the first request
+builder.Services.Configure<ForwardedHeadersOptions>(forwardedHeaders.Apply);
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -121,27 +189,22 @@ builder.Services.AddRateLimiter(options =>
         {
             Status = StatusCodes.Status429TooManyRequests,
             Title = "Too Many Requests",
-            Detail = policy == SubscriptionRateLimitOptions.PolicyName
+            Detail = policy is SubscriptionRateLimitOptions.PolicyName or PushSubscriptionRateLimitOptions.PolicyName
                 ? "Too many notification changes. Wait a moment and try again."
                 : "Too many searches. Wait a moment and try again."
         }, cancellationToken);
     };
+    // Authenticated mutation routes partition by issuer|subject (preferred), the client IP only
+    // as a fallback; each policy keeps its own windows.
     options.AddPolicy(SubscriptionRateLimitOptions.PolicyName, httpContext =>
     {
         var limits = httpContext.RequestServices.GetRequiredService<IOptions<SubscriptionRateLimitOptions>>().Value;
-        var identity = httpContext.RequestServices.GetRequiredService<IExternalIdentityAccessor>().Current;
-        var partition = identity is null
-            ? $"ip:{httpContext.Connection.RemoteIpAddress}"
-            : $"id:{identity.Issuer}|{identity.Subject}";
-        return RateLimitPartition.GetFixedWindowLimiter(
-            partition,
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = limits.PermitLimit,
-                Window = TimeSpan.FromSeconds(limits.WindowSeconds),
-                QueueLimit = 0,
-                AutoReplenishment = true
-            });
+        return CallerFixedWindow(httpContext, limits.PermitLimit, limits.WindowSeconds);
+    });
+    options.AddPolicy(PushSubscriptionRateLimitOptions.PolicyName, httpContext =>
+    {
+        var limits = httpContext.RequestServices.GetRequiredService<IOptions<PushSubscriptionRateLimitOptions>>().Value;
+        return CallerFixedWindow(httpContext, limits.PermitLimit, limits.WindowSeconds);
     });
     options.AddPolicy(DiscoveryRateLimitOptions.PolicyName, httpContext =>
     {
@@ -213,6 +276,8 @@ if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
 }
 
 // Configure the HTTP request pipeline
+// First, so logging and rate limiting see the client address a trusted proxy reported.
+app.UseForwardedHeaders();
 app.UseExceptionHandler();
 
 // Correlation ID and structured request logging � runs early so every request is covered.
@@ -252,6 +317,23 @@ app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.Health
 }).AllowAnonymous();
 
 app.Run();
+
+static RateLimitPartition<string> CallerFixedWindow(HttpContext httpContext, int permitLimit, int windowSeconds)
+{
+    var identity = httpContext.RequestServices.GetRequiredService<IExternalIdentityAccessor>().Current;
+    var partition = identity is null
+        ? $"ip:{httpContext.Connection.RemoteIpAddress}"
+        : $"id:{identity.Issuer}|{identity.Subject}";
+    return RateLimitPartition.GetFixedWindowLimiter(
+        partition,
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = permitLimit,
+            Window = TimeSpan.FromSeconds(windowSeconds),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+}
 
 // Token validation shared by both JWT bearer schemes.
 static void ConfigureJwtBearer(JwtBearerOptions options, IConfiguration config)

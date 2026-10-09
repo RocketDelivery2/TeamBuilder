@@ -200,6 +200,7 @@ public class EventRosterController : ControllerBase
     public async Task<ActionResult<RosterAssignmentDto>> Claim(
         Guid occurrenceId,
         [FromBody] ClaimRosterSpotDto claimDto,
+        [FromServices] IInAppNotificationService notifications,
         CancellationToken cancellationToken)
     {
         if (!ModelState.IsValid)
@@ -216,7 +217,14 @@ public class EventRosterController : ControllerBase
                 return Ok(result.Assignment);
 
             _logger.LogInformation("Player {PlayerId} claimed roster assignment {AssignmentId} for event {EventId}", playerId.Value, result.Assignment.Id, occurrenceId);
+            // Refill-funnel metrics only (notification opened -> claim, vacancy -> replacement); never affects the claim.
+            await notifications.RecordClaimAttemptAsync(playerId.Value, occurrenceId, claimDto.RequirementId ?? Guid.Empty, succeeded: true, cancellationToken);
             return CreatedAtAction(nameof(GetAssignments), new { occurrenceId }, result.Assignment);
+        }
+        catch (RosterConflictException ex) when (ex.Code is RosterConflictCodes.RequirementFull or RosterConflictCodes.RosterChanged)
+        {
+            await notifications.RecordClaimAttemptAsync(playerId.Value, occurrenceId, claimDto.RequirementId ?? Guid.Empty, succeeded: false, cancellationToken);
+            throw;
         }
         catch (EventOccurrenceNotFoundException)
         {

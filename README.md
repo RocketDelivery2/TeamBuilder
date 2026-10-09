@@ -184,14 +184,23 @@ message commit together. A background worker in the API delivers it
 at-least-once, re-checks that the spot is still open, and creates one in-app
 notification per subscriber who is not playing. Notifications never say who
 left. A subscription reserves nothing: the first player to claim the spot gets
-it. In-app only for now; Web Push, mobile push, SMS, email, reservations and
-waitlists are future work. See
+it. Players can also turn on browser alerts (Web Push, when the server has a
+VAPID key configured): the same sparse alert, delivered best effort, opening
+the exact game. Mobile push (APNS/FCM), SMS, email, reservations and waitlists
+are future work. Completed outbox rows are purged after 7 days, and operators
+inspect and replay failed messages with `dotnet TeamBuilder.Api.dll outbox …`
+([deployment](docs/deployment.md#refill-delivery-operations)). See
 [the API reference](docs/api.md#vacancy-notifications) and the
 [rapid-refill architecture](docs/architecture/rapid-refill-platform.md#current-vacancy-outbox-and-in-app-notifications-tb-refill-001).
 
 - `GET /api/v1/players/me/notifications?unreadOnly=false&pageSize=20&cursor=` - The caller's notifications, newest first (keyset paged)
 - `GET /api/v1/players/me/notifications/unread-count` - Unread badge count
 - `POST /api/v1/players/me/notifications/{id}/read` - Mark one read (idempotent)
+- `POST /api/v1/players/me/notifications/{id}/opened` - The game was opened from this notification (marks read; metrics only)
+- `GET /api/v1/push/config` - Whether browser alerts are on, and the VAPID public key
+- `PUT /api/v1/players/me/push-subscriptions` - Register or refresh this browser (rate limited)
+- `POST /api/v1/players/me/push-subscriptions/unregister` - Turn browser alerts off for this browser
+- `GET /api/v1/players/me/push-subscriptions` / `DELETE …/{id}` - The caller's browsers (no endpoints or keys) / remove one
 
 ### Venues and local discovery
 - `POST /api/v1/venues` - Create a venue (linked player; Public or Private; coordinates supplied by the client)
@@ -485,10 +494,11 @@ commitment to a specific release date.
 
 ### Background processing and notifications
 
-- Current: hourly series materialization and the vacancy outbox worker run in
-  the API process; vacancy notifications are in-app only.
-- Next: Web Push and mobile push channels as further outbox consumers, then
-  spot reservations and offers; keep delivery out of request/response paths.
+- Current: hourly series materialization, the vacancy outbox worker, the Web
+  Push dispatcher and outbox retention run in the API process; vacancy
+  notifications are in-app plus optional browser alerts (Web Push).
+- Next: mobile push (APNS/FCM), SMS or email as further consumers, then spot
+  reservations and offers; keep delivery out of request/response paths.
 
 ### API versioning and platform integrations
 

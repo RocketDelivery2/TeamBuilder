@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { HostAction } from '../api/teamBuilderApi';
 import { claimWithRetry } from '../api/claim';
 import { interpretError } from '../api/conflicts';
@@ -7,7 +7,8 @@ import { RosterBadge } from '../components/RosterBadge';
 import { ShareLink } from '../components/ShareLink';
 import { displayName } from '../lib/format';
 import { formatWhenInZone } from '../lib/discover';
-import { useRefreshOnFocus } from '../lib/notifications';
+import { notifyNotificationsChanged, useRefreshOnFocus } from '../lib/notifications';
+import { PushOptIn } from '../components/PushOptIn';
 import { useSession } from '../session';
 
 type Notice = { tone: 'info' | 'error'; text: string };
@@ -18,6 +19,10 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
   const [notice, setNotice] = useState<Notice>();
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
+  // Arrived from a notification (?n=…, plus via=push&t=… from the service worker): report the
+  // open once the current roster is on screen, then drop the parameters from the address bar.
+  const [arrival] = useState(() => notificationArrival(window.location.search));
+  const reported = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -33,6 +38,18 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!detail || !arrival || reported.current) return;
+    reported.current = true;
+    window.history.replaceState(null, '', window.location.pathname);
+    const clickToOpenMs = arrival.clickedAt ? Math.max(0, Date.now() - arrival.clickedAt) : undefined;
+    api.notificationOpened(arrival.notificationId, { via: arrival.via, clickToOpenMs }).then(notifyNotificationsChanged, () => {});
+    // A notification is a hint; the roster above is the truth.
+    if (!detail.myAssignmentId && detail.acceptsRosterChanges && detail.openQuantity === 0) {
+      setNotice({ tone: 'info', text: 'That spot has already been taken. The roster below is current.' });
+    }
+  }, [api, arrival, detail]);
   // Coming back from a notification (or another tab) shows the current roster, not a stale one.
   const onFocus = useCallback(() => void refresh(), [refresh]);
   useRefreshOnFocus(onFocus);
@@ -81,7 +98,7 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
     run(async () => {
       if (on) {
         await api.subscribe(occurrenceId, requirement.id);
-        return { tone: 'info', text: "Notifications on. We'll let you know here if a spot opens; then grab it fast." };
+        return { tone: 'info', text: "Notifications on. We'll let you know if a spot opens; then grab it fast." };
       }
       await api.unsubscribe(occurrenceId, requirement.id);
       return { tone: 'info', text: 'Notifications off for this game.' };
@@ -188,6 +205,7 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
             ),
           )
         )}
+        {!detail.myAssignmentId && detail.requirements.some((r) => r.openQuantity === 0 && subscribed.has(r.id)) && <PushOptIn />}
       </div>
 
       <div className="card stack">
@@ -235,6 +253,25 @@ export function GameDetail({ occurrenceId }: { occurrenceId: string }) {
       </div>
     </section>
   );
+}
+
+interface NotificationArrival {
+  notificationId: string;
+  via: 'push' | 'inApp';
+  clickedAt?: number;
+}
+
+/** Reads ?n=<notification id>[&via=push&t=<click ms>] written by a push payload and the service worker. */
+export function notificationArrival(search: string): NotificationArrival | undefined {
+  const params = new URLSearchParams(search);
+  const id = params.get('n');
+  if (!id || !/^[0-9a-fA-F-]{32,36}$/.test(id)) return undefined;
+  const clicked = Number(params.get('t'));
+  return {
+    notificationId: id,
+    via: params.get('via') === 'push' ? 'push' : 'inApp',
+    clickedAt: Number.isFinite(clicked) && clicked > 0 ? clicked : undefined,
+  };
 }
 
 function roleLabel(requirement: RosterRequirement): string {

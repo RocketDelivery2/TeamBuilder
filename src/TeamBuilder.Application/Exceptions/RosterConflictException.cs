@@ -32,6 +32,12 @@ public static class RosterConflictCodes
     /// </summary>
     public const string RosterChanged = "RosterChanged";
 
+    /// <summary>
+    /// The player already holds the maximum number of "notify me" subscriptions on open games
+    /// (RefillLimits:MaxActiveOccurrenceSubscriptionsPerPlayer). Turn one off first.
+    /// </summary>
+    public const string SubscriptionLimitReached = "SubscriptionLimitReached";
+
     /// <summary>The occurrence is Completed, Cancelled or Archived.</summary>
     public const string OccurrenceClosed = "OccurrenceClosed";
 

@@ -20,4 +20,5 @@ internal static class MigrationIds
     public const string PreserveRosterHistoryOnOccurrenceDelete = "20261007054540_PreserveRosterHistoryOnOccurrenceDelete";
     public const string AddVenueOwnershipPrivacyAndSearchLocation = "20261008044353_AddVenueOwnershipPrivacyAndSearchLocation";
     public const string AddVacancyOutboxSubscriptionsAndNotifications = "20261009024932_AddVacancyOutboxSubscriptionsAndNotifications";
+    public const string AddWebPushAndOutboxOperations = "20261009154418_AddWebPushAndOutboxOperations";
 }

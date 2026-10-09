@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Domain;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Infrastructure.Data;
+using TeamBuilder.Infrastructure.Outbox;
 using TeamBuilder.Infrastructure.Persistence;
 
 namespace TeamBuilder.Infrastructure.Services;
@@ -19,10 +21,12 @@ public class RosterSubscriptionService : IRosterSubscriptionService
         "You already hold a spot in this game, so there is nothing to be notified about.";
 
     private readonly TeamBuilderDbContext _context;
+    private readonly RefillLimitsOptions _limits;
 
-    public RosterSubscriptionService(TeamBuilderDbContext context)
+    public RosterSubscriptionService(TeamBuilderDbContext context, IOptions<RefillLimitsOptions> limits)
     {
         _context = context;
+        _limits = limits.Value;
     }
 
     public async Task<RosterSubscriptionResult> SubscribeAsync(Guid occurrenceId, Guid requirementId, Guid playerId, CancellationToken cancellationToken = default)
@@ -42,6 +46,21 @@ public class RosterSubscriptionService : IRosterSubscriptionService
                 cancellationToken))
         {
             throw new RosterConflictException(RosterConflictCodes.AlreadyParticipating, AlreadyParticipatingMessage);
+        }
+
+        // Fan-out guard per player (never per game): count alerts on games that can still change.
+        var activeSubscriptions = await _context.OccurrenceRosterSubscriptions
+            .Where(s => s.PlayerId == playerId)
+            .Where(s => _context.Events.Any(e => e.Id == s.OccurrenceId &&
+                e.Status != Domain.Enums.EventStatus.Completed &&
+                e.Status != Domain.Enums.EventStatus.Cancelled &&
+                e.Status != Domain.Enums.EventStatus.Archived))
+            .CountAsync(cancellationToken);
+        if (activeSubscriptions >= _limits.MaxActiveOccurrenceSubscriptionsPerPlayer)
+        {
+            throw new RosterConflictException(
+                RosterConflictCodes.SubscriptionLimitReached,
+                $"You already have {_limits.MaxActiveOccurrenceSubscriptionsPerPlayer} spot alerts on open games. Turn one off to add another.");
         }
 
         var subscription = new OccurrenceRosterSubscription

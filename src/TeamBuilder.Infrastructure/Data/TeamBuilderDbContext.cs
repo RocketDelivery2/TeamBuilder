@@ -24,6 +24,8 @@ public class TeamBuilderDbContext : DbContext
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
     public DbSet<OccurrenceRosterSubscription> OccurrenceRosterSubscriptions => Set<OccurrenceRosterSubscription>();
     public DbSet<InAppNotification> InAppNotifications => Set<InAppNotification>();
+    public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
+    public DbSet<PushDelivery> PushDeliveries => Set<PushDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

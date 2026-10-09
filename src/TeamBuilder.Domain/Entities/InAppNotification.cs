@@ -25,4 +25,10 @@ public class InAppNotification : BaseEntity
     public string Body { get; set; } = string.Empty;
 
     public DateTime? ReadAtUtc { get; set; }
+
+    /// <summary>
+    /// When the player first opened the game from this notification (the bell, or a push
+    /// click). Only used for refill-funnel metrics; it grants nothing.
+    /// </summary>
+    public DateTime? OpenedAtUtc { get; set; }
 }

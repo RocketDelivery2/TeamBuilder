@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
+using TeamBuilder.Infrastructure.Outbox;
 
 namespace TeamBuilder.Infrastructure.Services;
 
@@ -94,6 +95,75 @@ public class InAppNotificationService : IInAppNotificationService
         }
 
         return true;
+    }
+
+    /// <summary>A click-to-open time beyond this is a stale tab or a bad clock, not a measurement.</summary>
+    internal const int MaxClickToOpenMs = 10 * 60 * 1000;
+
+    /// <summary>Only notifications opened within this window count toward a later claim attempt.</summary>
+    internal static readonly TimeSpan ClaimAttributionWindow = TimeSpan.FromHours(6);
+
+    public async Task<bool> MarkOpenedAsync(Guid playerId, Guid notificationId, NotificationOpenedDto opened, CancellationToken cancellationToken = default)
+    {
+        var notification = await _context.InAppNotifications
+            .FirstOrDefaultAsync(n => n.Id == notificationId && n.PlayerId == playerId, cancellationToken);
+        if (notification is null)
+            return false;
+
+        var via = string.Equals(opened.Via, "push", StringComparison.OrdinalIgnoreCase) ? "push" : "inApp";
+        if (notification.OpenedAtUtc is null)
+        {
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            notification.OpenedAtUtc = now;
+            notification.ReadAtUtc ??= now;
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // Opened concurrently in another tab: already recorded.
+                return true;
+            }
+
+            RefillTelemetry.NotificationOpened.Add(1, new KeyValuePair<string, object?>("via", via));
+            if (via == "push" && opened.ClickToOpenMs is >= 0 and <= MaxClickToOpenMs)
+                RefillTelemetry.PushClickToGameOpen.Record(opened.ClickToOpenMs.Value);
+        }
+
+        return true;
+    }
+
+    public async Task RecordClaimAttemptAsync(Guid playerId, Guid occurrenceId, Guid requirementId, bool succeeded, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var since = now - ClaimAttributionWindow;
+            var opened = await _context.InAppNotifications
+                .AsNoTracking()
+                .Where(n => n.PlayerId == playerId && n.OccurrenceId == occurrenceId && n.OpenedAtUtc != null && n.OpenedAtUtc >= since)
+                .OrderByDescending(n => n.OpenedAtUtc)
+                .Select(n => new
+                {
+                    n.OpenedAtUtc,
+                    n.RosterRequirementId,
+                    VacancyAtUtc = _context.OutboxMessages.Where(m => m.Id == n.SourceEventId).Select(m => (DateTime?)m.OccurredAtUtc).FirstOrDefault()
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (opened?.OpenedAtUtc is not { } openedAt)
+                return;
+
+            RefillTelemetry.GameOpenToClaimAttempt.Record(
+                RefillTelemetry.Milliseconds(openedAt, now),
+                new KeyValuePair<string, object?>("outcome", succeeded ? "claimed" : "conflict"));
+            if (succeeded && opened.RosterRequirementId == requirementId && opened.VacancyAtUtc is { } vacancyAt)
+                RefillTelemetry.VacancyToReplacement.Record(RefillTelemetry.Milliseconds(vacancyAt, now));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Metrics only: a failure here must never surface on the claim.
+        }
     }
 }
 

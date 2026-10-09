@@ -58,4 +58,16 @@ public class OutboxMessage
     public string? LastError { get; set; }
 
     public DateTime CreatedAtUtc { get; set; }
+
+    /// <summary>
+    /// Times an operator requeued this message after it Failed (see the <c>outbox replay</c>
+    /// maintenance command). Each replay moves <see cref="AttemptCount"/> into
+    /// <see cref="PriorAttemptCount"/> and starts a fresh set of attempts.
+    /// </summary>
+    public int ReplayCount { get; set; }
+
+    /// <summary>Attempts made before the latest replay; with <see cref="AttemptCount"/>, the full history.</summary>
+    public int PriorAttemptCount { get; set; }
+
+    public DateTime? LastReplayedAtUtc { get; set; }
 }
