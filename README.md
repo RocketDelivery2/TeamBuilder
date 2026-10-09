@@ -174,6 +174,24 @@ does not represent 50M simultaneous HTTP clients.
 - `PUT /api/v1/events/{id}` - Update event
 - `DELETE /api/v1/events/{id}` - Delete/cancel event
 - `GET /api/v1/events/{id}/detail` - Game page view (roster, caller relationship, venue after privacy masking)
+- `PUT|DELETE /api/v1/events/{occurrenceId}/roster/requirements/{requirementId}/subscription` - Turn "notify me if a spot opens" on or off for one requirement (rate limited)
+
+### Vacancy notifications
+
+When a player leaves, is removed, or is marked a no-show and that actually
+opens a spot, the roster change and a `roster.vacancy.opened.v1` outbox
+message commit together. A background worker in the API delivers it
+at-least-once, re-checks that the spot is still open, and creates one in-app
+notification per subscriber who is not playing. Notifications never say who
+left. A subscription reserves nothing: the first player to claim the spot gets
+it. In-app only for now; Web Push, mobile push, SMS, email, reservations and
+waitlists are future work. See
+[the API reference](docs/api.md#vacancy-notifications) and the
+[rapid-refill architecture](docs/architecture/rapid-refill-platform.md#current-vacancy-outbox-and-in-app-notifications-tb-refill-001).
+
+- `GET /api/v1/players/me/notifications?unreadOnly=false&pageSize=20&cursor=` - The caller's notifications, newest first (keyset paged)
+- `GET /api/v1/players/me/notifications/unread-count` - Unread badge count
+- `POST /api/v1/players/me/notifications/{id}/read` - Mark one read (idempotent)
 
 ### Venues and local discovery
 - `POST /api/v1/venues` - Create a venue (linked player; Public or Private; coordinates supplied by the client)
@@ -467,9 +485,10 @@ commitment to a specific release date.
 
 ### Background processing and notifications
 
-- Introduce background workers for long-running tasks.
-- Add notifications when they improve team, event, or join-request workflows.
-- Keep queued or delayed work out of request/response paths.
+- Current: hourly series materialization and the vacancy outbox worker run in
+  the API process; vacancy notifications are in-app only.
+- Next: Web Push and mobile push channels as further outbox consumers, then
+  spot reservations and offers; keep delivery out of request/response paths.
 
 ### API versioning and platform integrations
 

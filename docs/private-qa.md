@@ -157,6 +157,30 @@ still needed](#outside-identity-provider-configuration-still-needed).
    **Finish game** and **Transfer host** (pick a participant or type a
    username). After the game is finished the page disables roster controls.
 
+7. **Notify me when a spot opens.** With the roster at **10/10**, an eleventh
+   player (`qa-player-11`) opens the game and sees "The roster is full" with
+   **Notify me if a spot opens**. Pressing it shows **Notifications on** and a
+   **Turn off** button; nothing is reserved and they are not on the roster.
+   In a game with several roles the button names the role ("Notify me if a
+   Goalkeeper spot opens") and only covers that role. Current participants
+   never see it.
+
+8. **A spot opens.** A participant presses **Leave game** (or the host uses
+   **Remove** or **No show**). Within a few seconds (the API's outbox worker
+   polls every 2 seconds by default) the eleventh player's header bell shows
+   an unread count. The bell refreshes when the tab regains focus and every
+   30 seconds while the tab is visible; there is no push. **Notifications**
+   lists "Basketball spot opened: A participant spot opened in …" without
+   saying who left. Opening it marks it read and goes to the game, where they
+   press **Join game** and the roster is **10/10** again. If someone else
+   took the spot first, they see that the roster filled up, as for any join.
+
+   Checks for this step: checking in or activating a player notifies nobody;
+   leaving a game that already has open spots notifies only when the open
+   count actually rises; a leave on a finished or cancelled game notifies
+   nobody; nobody is notified twice for the same departure, and the player who
+   left is never notified about their own spot.
+
 ## Finding games nearby
 
 Discovery is searched by coordinates. Nothing is geocoded, so a game is found

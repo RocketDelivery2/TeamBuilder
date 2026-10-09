@@ -4,6 +4,7 @@ export type Route =
   | { name: 'my-games' }
   | { name: 'create' }
   | { name: 'discover' }
+  | { name: 'notifications' }
   | { name: 'game'; id: string }
   | { name: 'auth-callback' }
   | { name: 'not-found' };
@@ -12,6 +13,7 @@ export function parseRoute(pathname: string): Route {
   if (pathname === '/' || pathname === '') return { name: 'my-games' };
   if (pathname === '/new') return { name: 'create' };
   if (pathname === '/discover') return { name: 'discover' };
+  if (pathname === '/notifications') return { name: 'notifications' };
   if (pathname === '/auth/callback') return { name: 'auth-callback' };
   const game = /^\/games\/([0-9a-fA-F-]{36})\/?$/.exec(pathname);
   if (game) return { name: 'game', id: game[1] };

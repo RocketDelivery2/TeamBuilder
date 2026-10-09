@@ -893,8 +893,11 @@ join order: `assignmentId`, `playerId`, `username`, `displayName`,
 history stays on the paged `…/roster/assignments` route. The caller's
 relationship (`isHost`, `myAssignmentId`, `myAssignmentStatus`,
 `myRequirementId`) is filled from a valid linked token and is false/null for
-anonymous or unlinked callers. No email or external identity data is
-returned.
+anonymous or unlinked callers. `mySubscribedRequirementIds` lists the
+requirements the caller has asked to be notified about (see
+[vacancy notifications](#vacancy-notifications)); it is empty for anonymous
+callers and current participants, and never reveals anyone else's
+subscriptions. No email or external identity data is returned.
 
 `venue` (null without a venue) is the attached venue after privacy masking:
 for a **Private** venue the street address, postal code and coordinates are
@@ -1353,6 +1356,93 @@ The host may run these on their own assignment if they claimed one. Typical
 flow: players claim, the host checks them in as they arrive, sets the event
 `InProgress` and activates them at tip-off; a no-show or an early leaver
 reopens a spot that anyone can claim while the game is in progress.
+
+---
+
+### Vacancy notifications
+
+**Current (TB-REFILL-001):** a player on a full game can ask to be told, in
+the app, when a spot opens in a specific requirement. It is a hint, not a
+reservation: the spot stays first-come, first-served through the normal
+claim endpoint, and nobody is ever joined automatically.
+
+**How a vacancy is detected.** Leave, host remove and no-show write a
+`roster.vacancy.opened.v1` message to the `OutboxMessages` table **in the
+same database commit** as the roster change (and, for host actions, the
+occurrence `RowVersion` update). If the commit fails, neither exists. A
+message is written only when the requirement's open quantity actually rises
+(`openAfter > openBefore`); a departure from an overfilled requirement opens
+nothing. Check-in, activate, claims, host assignment, already-ended
+assignments and closed occurrences never write one. The deduplication key is
+`roster.vacancy.opened.v1:{vacatedAssignmentId}`, unique in the database, so
+one departure yields at most one message.
+
+The message payload holds ids and counts only (no names, emails or
+coordinates): `eventId`, `occurrenceId`, `rosterRequirementId`, `roleCode`,
+`vacatedAssignmentId`, `reason` (`PlayerLeft`, `HostRemoved` or `NoShow`),
+`previousOpenQuantity`, `openQuantity`, `requiredCount`,
+`occurrenceStartUtc`, `venueId` and `occurredAtUtc`.
+
+**Delivery.** A background worker in the API process (`Outbox` settings:
+`Enabled`, `PollInterval`, `BatchSize`, `LeaseDuration`, `MaxAttempts`,
+`RetryBaseDelay`, `RetryMaxDelay`) claims due messages with
+`UPDLOCK, READPAST`, leases them, and processes each one. Delivery is
+at-least-once: an expired lease is reclaimed, a failure is retried with
+exponential backoff, and a message that fails `MaxAttempts` times is marked
+Failed. At processing time the handler re-reads the game: a deleted or closed
+occurrence, a missing requirement, or a requirement that has already refilled
+completes the message without notifying anyone. Otherwise each subscriber who
+is not currently playing, is not the player who left, and has not already
+been notified for this message gets one `InAppNotification` (unique on
+`(sourceEventId, playerId)`, so a replay never notifies twice). The text names
+the game and role only (for example "A participant spot opened in Wednesday
+Basketball."), never who left or why.
+
+#### `PUT api/v1/events/{occurrenceId}/roster/requirements/{requirementId}/subscription`
+
+Turns on "notify me" for the caller. Idempotent. Order: no token `401`,
+unlinked `403`, missing occurrence, or a requirement of another occurrence,
+`404`; an existing subscription returns `200`; a closed occurrence `409`
+`OccurrenceClosed`; a caller who currently holds a spot in the game `409`
+`AlreadyParticipating`. **Response `201`** (created) or **`200`** (already
+on): `{ occurrenceId, rosterRequirementId, subscribed: true, createdAtUtc }`.
+A subscription is allowed while the requirement still has open spots; it only
+matters once a later departure opens one.
+
+#### `DELETE api/v1/events/{occurrenceId}/roster/requirements/{requirementId}/subscription`
+
+Turns it off. Same `401`/`403`/`404` order. **Response `204`**, also when no
+subscription existed.
+
+Both subscription routes are rate limited per caller (fixed window,
+`RateLimiting:Subscriptions:PermitLimit` default 30 per
+`RateLimiting:Subscriptions:WindowSeconds` default 60, in memory per API
+instance): **`429`** with `Retry-After`.
+
+#### `GET api/v1/players/me/notifications?unreadOnly=false&pageSize=20&cursor=`
+
+The caller's notifications, newest first, keyset paged on
+`(createdAtUtc, id)`. `pageSize` 1 to 50 (default 20; out of range uses the
+default); pass the returned `nextCursor` (opaque) for the next page; an
+invalid cursor is `400`. Items: `id`, `type` (`roster.vacancy`),
+`occurrenceId`, `rosterRequirementId`, `title`, `body`, `createdAtUtc`,
+`readAtUtc`, `isRead`. Only the caller's own notifications are ever returned.
+`401` without a token, `403` unlinked.
+
+#### `GET api/v1/players/me/notifications/unread-count`
+
+**Response `200`:** `{ "unreadCount": 3 }`.
+
+#### `POST api/v1/players/me/notifications/{id}/read`
+
+Marks one of the caller's notifications read. Idempotent (the first read time
+is kept). **Response `204`**; another player's or a missing notification is
+`404`.
+
+**Future, not implemented:** Web Push, mobile push, SMS or email delivery,
+spot reservations or holds, waitlists and ranked matching, and an external
+message bus. See the
+[rapid-refill architecture](architecture/rapid-refill-platform.md#current-vacancy-outbox-and-in-app-notifications-tb-refill-001).
 
 ---
 

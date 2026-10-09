@@ -13,6 +13,8 @@ import { MyGames } from './pages/MyGames';
 import { CreateGame } from './pages/CreateGame';
 import { GameDetail } from './pages/GameDetail';
 import { Discover } from './pages/Discover';
+import { Notifications } from './pages/Notifications';
+import { NotificationBell } from './components/NotificationBell';
 
 type Phase =
   | { name: 'starting' }
@@ -111,6 +113,7 @@ export function App() {
       body =
         route.name === 'create' ? <CreateGame /> :
         route.name === 'discover' ? <Discover /> :
+        route.name === 'notifications' ? <Notifications /> :
         route.name === 'game' ? <GameDetail occurrenceId={route.id} /> :
         route.name === 'not-found' ? <p className="notice">Page not found.</p> :
         <MyGames />;
@@ -125,6 +128,7 @@ export function App() {
         {session && (
           <div className="header-actions">
             <a href="/discover" className="nav-link" onClick={(e) => { e.preventDefault(); navigate('/discover'); }}>Discover</a>
+            <NotificationBell />
             <span className="muted small header-name">{session.me.displayName || session.me.username}</span>
             <button className="link" onClick={signOut}>Sign out</button>
           </div>

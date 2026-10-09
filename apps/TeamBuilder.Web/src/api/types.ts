@@ -115,6 +115,34 @@ export interface OccurrenceDetail {
   myAssignmentId?: string | null;
   myAssignmentStatus?: AssignmentStatus | null;
   myRequirementId?: string | null;
+  /** Requirements the caller asked to hear about ("Notify me if a spot opens"); the caller's own only. */
+  mySubscribedRequirementIds?: string[];
+}
+
+/** PUT /api/v1/events/{id}/roster/requirements/{requirementId}/subscription */
+export interface RosterSubscription {
+  occurrenceId: string;
+  rosterRequirementId: string;
+  subscribed: boolean;
+  createdAtUtc?: string | null;
+}
+
+/** One of the caller's in-app notifications. `occurrenceId` is the link; title/body are display text. */
+export interface InAppNotification {
+  id: string;
+  type: string;
+  occurrenceId: string;
+  rosterRequirementId?: string | null;
+  title: string;
+  body: string;
+  createdAtUtc: string;
+  readAtUtc?: string | null;
+  isRead: boolean;
+}
+
+export interface InAppNotificationPage {
+  items: InAppNotification[];
+  nextCursor?: string | null;
 }
 
 /** One item of GET /api/v1/players/me/occurrences */

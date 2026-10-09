@@ -1,12 +1,17 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Exceptions;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Application.Models;
+using TeamBuilder.Application.Outbox;
 using TeamBuilder.Domain;
 using TeamBuilder.Domain.Entities;
 using TeamBuilder.Domain.Enums;
+using TeamBuilder.Domain.Outbox;
 using TeamBuilder.Infrastructure.Data;
+using TeamBuilder.Infrastructure.Outbox;
 using TeamBuilder.Infrastructure.Persistence;
 
 namespace TeamBuilder.Infrastructure.Services;
@@ -16,6 +21,13 @@ namespace TeamBuilder.Infrastructure.Services;
 /// are the participation authority for roster operations, computed only through
 /// <see cref="RosterState.Compute"/>; the legacy <see cref="EventOccurrence.CurrentParticipantCount"/>
 /// is neither read nor written here.
+/// <para>
+/// Every mutation that ends a live assignment (player leave, host remove, host no-show) stages a
+/// <c>roster.vacancy.opened.v1</c> outbox message in the same SaveChanges, and therefore the
+/// same SQL Server transaction, as the assignment change whenever it actually increases the
+/// requirement's open quantity (<see cref="RosterVacancy"/>). Nothing is sent from here: the
+/// outbox worker delivers it after commit, and a rolled-back mutation leaves no message.
+/// </para>
 /// </summary>
 public class EventRosterService : IEventRosterService
 {
@@ -48,11 +60,13 @@ public class EventRosterService : IEventRosterService
 
     private readonly TeamBuilderDbContext _context;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<EventRosterService> _logger;
 
-    public EventRosterService(TeamBuilderDbContext context, TimeProvider timeProvider)
+    public EventRosterService(TeamBuilderDbContext context, TimeProvider timeProvider, ILogger<EventRosterService>? logger = null)
     {
         _context = context;
         _timeProvider = timeProvider;
+        _logger = logger ?? NullLogger<EventRosterService>.Instance;
     }
 
     public async Task<RosterSummaryDto?> GetSummaryAsync(Guid occurrenceId, CancellationToken cancellationToken = default)
@@ -489,7 +503,8 @@ public class EventRosterService : IEventRosterService
             return null;
 
         // Query 2: requirements. Query 3: live participants only (history stays on the paged
-        // assignments route), public player fields only.
+        // assignments route), public player fields only. Query 4, only for a linked caller who
+        // holds no spot (the only one who can use "notify me"): their own subscriptions.
         var requirements = await LoadRequirementsAsync(occurrenceId, cancellationToken);
         var supplyStatuses = RosterState.SupplyStatuses;
         var participants = await _context.RosterAssignments
@@ -526,6 +541,14 @@ public class EventRosterService : IEventRosterService
             ? null
             : VenuePrivacy.ToOccurrenceVenue(occurrence.Venue, callerIsEntitled: isHost || mine is not null, distanceMeters: null);
 
+        IReadOnlyList<Guid> subscribedRequirementIds = callerPlayerId is { } subscriber && mine is null
+            ? await _context.OccurrenceRosterSubscriptions
+                .AsNoTracking()
+                .Where(s => s.PlayerId == subscriber && s.OccurrenceId == occurrenceId)
+                .Select(s => s.RosterRequirementId)
+                .ToListAsync(cancellationToken)
+            : [];
+
         return new OccurrenceDetailDto
         {
             OccurrenceId = occurrence.Id,
@@ -554,7 +577,8 @@ public class EventRosterService : IEventRosterService
             IsHost = isHost,
             MyAssignmentId = mine?.AssignmentId,
             MyAssignmentStatus = mine?.Status,
-            MyRequirementId = mine?.RequirementId
+            MyRequirementId = mine?.RequirementId,
+            MySubscribedRequirementIds = subscribedRequirementIds
         };
     }
 
@@ -577,9 +601,20 @@ public class EventRosterService : IEventRosterService
                 .FirstOrDefaultAsync(a => a.Id == assignmentId && a.OccurrenceId == occurrenceId, cancellationToken)
                 ?? throw new RosterAssignmentNotFoundException(assignmentId);
 
-            apply(assignment, _timeProvider.GetUtcNow().UtcDateTime);
+            var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+            var heldSupply = RosterState.IsSupply(assignment.Status);
+            apply(assignment, nowUtc);
+
+            // Remove and no-show stop holding supply; check-in and activate do not.
+            var vacancy = heldSupply && !RosterState.IsSupply(assignment.Status)
+                ? await StageVacancyIfOpenedAsync(assignment, occurrence.ScheduledStartUtc, occurrence.VenueId, nowUtc, cancellationToken)
+                : null;
+
+            // One SaveChanges: the occurrence RowVersion UPDATE (commit-time host/status guard),
+            // the assignment UPDATE and the outbox INSERT commit or roll back together.
             TouchForCommitTimeAuthority(occurrence);
             await _context.SaveChangesAsync(cancellationToken);
+            RecordVacancy(vacancy);
 
             var player = await LoadPublicPlayerAsync(assignment.PlayerId, cancellationToken);
             return MapToDto(assignment, player?.Username ?? string.Empty, player?.DisplayName);
@@ -614,8 +649,11 @@ public class EventRosterService : IEventRosterService
             {
                 return await write(occurrence);
             }
-            catch (DbUpdateConcurrencyException ex)
+            catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException || RosterConflictClassifier.IsDuplicateOutboxMessage(ex))
             {
+                // A duplicate vacancy key is a lost race too: a concurrent leave/remove/no-show of
+                // the same assignment committed first (with its own vacancy). SQL Server can
+                // report that INSERT before the stale assignment UPDATE's zero row count.
                 _context.ChangeTracker.Clear();
                 if (attempt >= MaxHostUpdateAttempts)
                     throw new RosterConflictException(RosterConflictCodes.RosterChanged, AssignmentChangedMessage, ex);
@@ -822,8 +860,11 @@ public class EventRosterService : IEventRosterService
 
     /// <summary>
     /// The holder ends their own live assignment without deleting it (see <see cref="End"/>).
-    /// Open quantity reopens in the same commit because supply is derived from status. The
-    /// assignment's RowVersion guards against a concurrent transition.
+    /// Open quantity reopens in the same commit because supply is derived from status, and the
+    /// vacancy outbox message (if capacity actually opened) is inserted by the same SaveChanges.
+    /// The assignment's RowVersion guards against a concurrent transition. A concurrency loss
+    /// that left the assignment untouched can only come from the overfilled-requirement guard in
+    /// <see cref="StageVacancyIfOpenedAsync"/>, so the leave is re-run on fresh state (bounded).
     /// </summary>
     private async Task<RosterAssignmentDto> EndAssignmentAsync(
         Guid occurrenceId,
@@ -832,38 +873,140 @@ public class EventRosterService : IEventRosterService
         Guid requiredHolderId,
         CancellationToken cancellationToken)
     {
-        var occurrenceStatus = await LoadOccurrenceStatusAsync(occurrenceId, cancellationToken);
-
-        var assignment = await _context.RosterAssignments
-            .FirstOrDefaultAsync(a => a.Id == assignmentId && a.OccurrenceId == occurrenceId, cancellationToken)
-            ?? throw new RosterAssignmentNotFoundException(assignmentId);
-
-        if (assignment.PlayerId != requiredHolderId)
-            throw new RosterAssignmentForbiddenException(assignmentId, requiredHolderId);
-
-        EnsureOpen(occurrenceStatus);
-
-        End(assignment, exitReason, _timeProvider.GetUtcNow().UtcDateTime);
-
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            await _context.SaveChangesAsync(cancellationToken);
+            var occurrence = await _context.Events
+                .AsNoTracking()
+                .Where(e => e.Id == occurrenceId)
+                .Select(e => new { e.Status, e.ScheduledStartUtc, e.VenueId })
+                .FirstOrDefaultAsync(cancellationToken)
+                ?? throw new EventOccurrenceNotFoundException(occurrenceId);
+
+            var assignment = await _context.RosterAssignments
+                .FirstOrDefaultAsync(a => a.Id == assignmentId && a.OccurrenceId == occurrenceId, cancellationToken)
+                ?? throw new RosterAssignmentNotFoundException(assignmentId);
+
+            if (assignment.PlayerId != requiredHolderId)
+                throw new RosterAssignmentForbiddenException(assignmentId, requiredHolderId);
+
+            EnsureOpen(occurrence.Status);
+
+            var statusBefore = assignment.Status;
+            var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+            End(assignment, exitReason, nowUtc);
+            var vacancy = await StageVacancyIfOpenedAsync(assignment, occurrence.ScheduledStartUtc, occurrence.VenueId, nowUtc, cancellationToken);
+
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException || RosterConflictClassifier.IsDuplicateOutboxMessage(ex))
+            {
+                // A duplicate vacancy key means a concurrent remove/no-show of this assignment
+                // committed first; it is classified like the RowVersion loss it really is.
+                _context.ChangeTracker.Clear();
+                var current = await _context.RosterAssignments
+                    .Where(a => a.Id == assignmentId)
+                    .Select(a => (RosterAssignmentStatus?)a.Status)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (current is { } status && !RosterState.IsSupply(status))
+                    throw new RosterConflictException(RosterConflictCodes.AssignmentEnded, AssignmentEndedMessage, ex);
+
+                if (current == statusBefore && attempt < MaxHostUpdateAttempts)
+                    continue;
+
+                throw new RosterConflictException(RosterConflictCodes.RosterChanged, AssignmentChangedMessage, ex);
+            }
+
+            RecordVacancy(vacancy);
+            var player = await LoadPublicPlayerAsync(assignment.PlayerId, cancellationToken);
+            return MapToDto(assignment, player?.Username ?? string.Empty, player?.DisplayName);
         }
-        catch (DbUpdateConcurrencyException ex)
+    }
+
+    /// <summary>
+    /// Stages a <c>roster.vacancy.opened.v1</c> outbox INSERT for <paramref name="assignment"/>,
+    /// which has just (in memory, not yet saved) stopped holding supply, when that increases its
+    /// requirement's open quantity (<see cref="RosterVacancy.Evaluate"/>). The caller's single
+    /// SaveChanges commits it with the roster change. Nothing is staged for an assignment with
+    /// no requirement or for an exit reason that is not a vacancy path.
+    /// <para>
+    /// Supply of the other assignments is read now, without a lock. While the requirement is not
+    /// overfilled that is exact enough: every departure opens capacity, whatever else commits
+    /// meanwhile. When the others already fill it, whether this departure opens anything
+    /// depends on concurrent departures, so the requirement row is also UPDATEd with its
+    /// RowVersion (as allocation does): two such departures cannot both commit on the same
+    /// stale count, and the loser re-evaluates on fresh state.
+    /// </para>
+    /// </summary>
+    private async Task<RosterVacancyOpenedV1?> StageVacancyIfOpenedAsync(
+        RosterAssignment assignment,
+        DateTime occurrenceStartUtc,
+        Guid? venueId,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        if (assignment.RequirementId is not { } requirementId || RosterVacancy.ReasonFor(assignment.ExitReason) is not { } reason)
+            return null;
+
+        var requirement = await LoadTrackedRequirementAsync(assignment.OccurrenceId, requirementId, cancellationToken);
+        if (requirement is null)
+            return null;
+
+        var supplyStatuses = RosterState.SupplyStatuses;
+        var otherSupply = await _context.RosterAssignments.CountAsync(
+            a => a.RequirementId == requirementId && a.Id != assignment.Id && supplyStatuses.Contains(a.Status),
+            cancellationToken);
+
+        if (otherSupply >= requirement.RequiredCount)
+            _context.Entry(requirement).Property(r => r.RequiredCount).IsModified = true;
+
+        var change = RosterVacancy.Evaluate(requirement.RequiredCount, otherSupply);
+        if (!change.Opened)
+            return null;
+
+        var vacancy = new RosterVacancyOpenedV1
         {
-            _context.ChangeTracker.Clear();
-            var current = await _context.RosterAssignments
-                .Where(a => a.Id == assignmentId)
-                .Select(a => (RosterAssignmentStatus?)a.Status)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (current is { } status && !RosterState.IsSupply(status))
-                throw new RosterConflictException(RosterConflictCodes.AssignmentEnded, AssignmentEndedMessage, ex);
+            EventId = Guid.NewGuid(),
+            OccurrenceId = assignment.OccurrenceId,
+            RosterRequirementId = requirementId,
+            RoleCode = requirement.RoleCode,
+            VacatedAssignmentId = assignment.Id,
+            Reason = reason,
+            PreviousOpenQuantity = change.PreviousOpenQuantity,
+            OpenQuantity = change.OpenQuantity,
+            RequiredCount = requirement.RequiredCount,
+            OccurrenceStartUtc = EventService.AsUtc(occurrenceStartUtc),
+            VenueId = venueId,
+            OccurredAtUtc = nowUtc
+        };
 
-            throw new RosterConflictException(RosterConflictCodes.RosterChanged, AssignmentChangedMessage, ex);
-        }
+        _context.OutboxMessages.Add(new OutboxMessage
+        {
+            Id = vacancy.EventId,
+            Type = RosterVacancyOpenedV1.EventType,
+            AggregateId = vacancy.OccurrenceId,
+            OccurredAtUtc = nowUtc,
+            PayloadJson = vacancy.ToJson(),
+            DeduplicationKey = RosterVacancyOpenedV1.DeduplicationKeyFor(assignment.Id),
+            Status = OutboxMessageStatus.Pending,
+            NextAttemptAtUtc = nowUtc,
+            CreatedAtUtc = nowUtc
+        });
 
-        var player = await LoadPublicPlayerAsync(assignment.PlayerId, cancellationToken);
-        return MapToDto(assignment, player?.Username ?? string.Empty, player?.DisplayName);
+        return vacancy;
+    }
+
+    /// <summary>After the commit only: a vacancy that rolled back is never counted.</summary>
+    private void RecordVacancy(RosterVacancyOpenedV1? vacancy)
+    {
+        if (vacancy is null)
+            return;
+
+        RefillTelemetry.VacancyOpened.Add(1, new KeyValuePair<string, object?>("reason", vacancy.Reason.ToString()));
+        _logger.LogInformation(
+            "VacancyOpened: event {EventId} on occurrence {OccurrenceId} requirement {RequirementId} ({Reason}), open {PreviousOpen} -> {Open} of {Required}.",
+            vacancy.EventId, vacancy.OccurrenceId, vacancy.RosterRequirementId, vacancy.Reason, vacancy.PreviousOpenQuantity, vacancy.OpenQuantity, vacancy.RequiredCount);
     }
 
     private static RosterClaimResult ExistingClaimOrConflict(RosterAssignmentDto existing, Guid requirementId)

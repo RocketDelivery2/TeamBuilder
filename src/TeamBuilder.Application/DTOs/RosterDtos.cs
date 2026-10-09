@@ -352,6 +352,12 @@ public class OccurrenceDetailDto
 
     public RosterAssignmentStatus? MyAssignmentStatus { get; set; }
     public Guid? MyRequirementId { get; set; }
+
+    /// <summary>
+    /// Requirements the caller asked to be notified about ("Notify me if a spot opens"). Only
+    /// the caller's own subscriptions; empty for an anonymous or unlinked caller.
+    /// </summary>
+    public IReadOnlyList<Guid> MySubscribedRequirementIds { get; set; } = [];
 }
 
 /// <summary>A current participant on an occurrence detail: public player fields only.</summary>

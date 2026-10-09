@@ -10,6 +10,7 @@ using TeamBuilder.Api.RateLimiting;
 using TeamBuilder.Api.Workers;
 using TeamBuilder.Application.Interfaces;
 using TeamBuilder.Infrastructure.Data;
+using TeamBuilder.Infrastructure.Outbox;
 using TeamBuilder.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,6 +39,18 @@ builder.Services.AddOptions<EventSeriesMaterializationOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 builder.Services.AddHostedService<EventSeriesMaterializationWorker>();
+builder.Services.AddScoped<IRosterSubscriptionService, RosterSubscriptionService>();
+builder.Services.AddScoped<IInAppNotificationService, InAppNotificationService>();
+
+// Transactional outbox: roster mutations insert vacancy messages in their own commit; this
+// worker delivers them asynchronously (in-app notifications for "notify me" subscribers).
+builder.Services.AddOptions<OutboxOptions>()
+    .BindConfiguration(OutboxOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<OutboxProcessor>();
+builder.Services.AddScoped<IOutboxMessageHandler, RosterVacancyNotificationHandler>();
+builder.Services.AddHostedService<OutboxWorker>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
@@ -92,6 +105,10 @@ builder.Services.AddOptions<DiscoveryRateLimitOptions>()
     .BindConfiguration(DiscoveryRateLimitOptions.SectionName)
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<SubscriptionRateLimitOptions>()
+    .BindConfiguration(SubscriptionRateLimitOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -99,13 +116,33 @@ builder.Services.AddRateLimiter(options =>
     {
         if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
             context.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var policy = context.HttpContext.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>()?.PolicyName;
         await context.HttpContext.Response.WriteAsJsonAsync(new ProblemDetails
         {
             Status = StatusCodes.Status429TooManyRequests,
             Title = "Too Many Requests",
-            Detail = "Too many searches. Wait a moment and try again."
+            Detail = policy == SubscriptionRateLimitOptions.PolicyName
+                ? "Too many notification changes. Wait a moment and try again."
+                : "Too many searches. Wait a moment and try again."
         }, cancellationToken);
     };
+    options.AddPolicy(SubscriptionRateLimitOptions.PolicyName, httpContext =>
+    {
+        var limits = httpContext.RequestServices.GetRequiredService<IOptions<SubscriptionRateLimitOptions>>().Value;
+        var identity = httpContext.RequestServices.GetRequiredService<IExternalIdentityAccessor>().Current;
+        var partition = identity is null
+            ? $"ip:{httpContext.Connection.RemoteIpAddress}"
+            : $"id:{identity.Issuer}|{identity.Subject}";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partition,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = limits.PermitLimit,
+                Window = TimeSpan.FromSeconds(limits.WindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
     options.AddPolicy(DiscoveryRateLimitOptions.PolicyName, httpContext =>
     {
         var limits = httpContext.RequestServices.GetRequiredService<IOptions<DiscoveryRateLimitOptions>>().Value;

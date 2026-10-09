@@ -7,7 +7,16 @@ capacity, readiness and permissions are decided by the server.
 Screens: **My games**, **Find a game** (nearby games by distance, date and
 time, closest first), **New game** (pickup game form with an optional venue),
 **Game** (roster, join/leave, host controls, venue address or the private
-venue note) and a **Share** link on each game.
+venue note, and **Notify me if a spot opens** per role on a full roster),
+**Notifications** (newest first, unread highlighted, opening one marks it read
+and opens the game) and a **Share** link on each game. The header bell shows
+the unread count.
+
+Notifications are in-app only. The bell re-reads the unread count when the
+tab regains focus or becomes visible and every 30 seconds while it is visible
+(`BELL_POLL_MS` in `src/components/NotificationBell.tsx`); hidden tabs do not
+poll. The game page and the notifications page also re-read on focus. There
+is no SignalR, Web Push or service worker yet.
 
 For running it against an API and SQL Server, and for the full basketball QA
 walk-through, see [docs/private-qa.md](../../docs/private-qa.md).

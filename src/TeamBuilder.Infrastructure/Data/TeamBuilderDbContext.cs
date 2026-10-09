@@ -21,6 +21,9 @@ public class TeamBuilderDbContext : DbContext
     public DbSet<RosterAssignment> RosterAssignments => Set<RosterAssignment>();
     public DbSet<JoinRequest> JoinRequests => Set<JoinRequest>();
     public DbSet<RosterImport> RosterImports => Set<RosterImport>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+    public DbSet<OccurrenceRosterSubscription> OccurrenceRosterSubscriptions => Set<OccurrenceRosterSubscription>();
+    public DbSet<InAppNotification> InAppNotifications => Set<InAppNotification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -29,7 +29,8 @@ public class EventOccurrenceConfigurationTests
         var model = Model();
         model.FindEntityType(typeof(EventOccurrence))!.GetTableName().Should().Be("Events");
         model.GetEntityTypes().Select(e => e.GetTableName())
-            .Should().NotContain(t => t!.Contains("Occurrence"));
+            .Should().NotContain(t => t == "Occurrences" || t!.StartsWith("EventOccurrence"),
+                "occurrences live in the existing Events table; tables that only refer to them (OccurrenceRosterSubscriptions) are fine");
     }
 
     [Fact]

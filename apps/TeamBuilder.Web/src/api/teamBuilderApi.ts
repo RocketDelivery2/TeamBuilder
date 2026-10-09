@@ -7,11 +7,13 @@ import type {
   Venue,
   EventStatus,
   EventSummary,
+  InAppNotificationPage,
   OccurrenceDetail,
   PlayerOccurrencePage,
   PlayerProfile,
   PublicPlayer,
   RosterAssignment,
+  RosterSubscription,
 } from './types';
 
 export type HostAction = 'check-in' | 'activate' | 'no-show' | 'remove';
@@ -73,9 +75,39 @@ export class TeamBuilderApi {
     return (await this.http.request<EventSummary>('PUT', `/api/v1/events/${occurrenceId}`, { status })).data;
   }
 
+  /** "Notify me if a spot opens" on one requirement. Idempotent: 201 created, 200 already on. */
+  async subscribe(occurrenceId: string, requirementId: string): Promise<RosterSubscription> {
+    return (await this.http.request<RosterSubscription>('PUT', subscriptionPath(occurrenceId, requirementId))).data;
+  }
+
+  /** Turns the alert off. Idempotent (204 even when it was already off). */
+  async unsubscribe(occurrenceId: string, requirementId: string): Promise<void> {
+    await this.http.request<void>('DELETE', subscriptionPath(occurrenceId, requirementId));
+  }
+
+  async notifications(options: { unreadOnly?: boolean; cursor?: string; pageSize?: number } = {}): Promise<InAppNotificationPage> {
+    const query = new URLSearchParams({ unreadOnly: String(options.unreadOnly ?? false) });
+    if (options.cursor) query.set('cursor', options.cursor);
+    if (options.pageSize) query.set('pageSize', String(options.pageSize));
+    return (await this.http.request<InAppNotificationPage>('GET', `/api/v1/players/me/notifications?${query}`)).data;
+  }
+
+  async unreadNotificationCount(): Promise<number> {
+    return (await this.http.request<{ unreadCount: number }>('GET', '/api/v1/players/me/notifications/unread-count')).data.unreadCount;
+  }
+
+  /** Idempotent. */
+  async markNotificationRead(notificationId: string): Promise<void> {
+    await this.http.request<void>('POST', `/api/v1/players/me/notifications/${notificationId}/read`);
+  }
+
   async transferHost(occurrenceId: string, newHostPlayerId: string): Promise<EventSummary> {
     return (await this.http.request<EventSummary>('POST', `/api/v1/events/${occurrenceId}/host/transfer`, { newHostPlayerId })).data;
   }
+}
+
+function subscriptionPath(occurrenceId: string, requirementId: string): string {
+  return `/api/v1/events/${occurrenceId}/roster/requirements/${requirementId}/subscription`;
 }
 
 export function discoverSearchParams(query: DiscoverQuery): URLSearchParams {

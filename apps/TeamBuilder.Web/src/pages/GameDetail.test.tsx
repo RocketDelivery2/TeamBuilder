@@ -87,4 +87,75 @@ describe('GameDetail', () => {
     expect(screen.getByRole('button', { name: 'Transfer hosting' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Join game' })).toBeInTheDocument();
   });
+
+  it('offers "Notify me" on a full roster and subscribes to that requirement', async () => {
+    const full = { requirements: [{ id: 'req', occurrenceId: id, roleCode: 'participant', requiredCount: 10, supplyCount: 10, openQuantity: 0 }], supplyCount: 10, openQuantity: 0 };
+    const getDetail = vi.fn()
+      .mockResolvedValueOnce(detail(full))
+      .mockResolvedValue(detail({ ...full, mySubscribedRequirementIds: ['req'] }));
+    const subscribe = vi.fn(async () => ({ requirementId: 'req' }) as never);
+
+    renderWith({ getDetail, subscribe });
+    expect(await screen.findByText('The roster is full.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Join game' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Notify me if a spot opens' }));
+
+    expect(await screen.findByTestId('notify-on')).toHaveTextContent('Notifications on');
+    expect(subscribe).toHaveBeenCalledWith(id, 'req');
+    expect(screen.getByRole('status')).toHaveTextContent('grab it fast');
+  });
+
+  it('turns notifications off', async () => {
+    const full = { requirements: [{ id: 'req', occurrenceId: id, roleCode: 'participant', requiredCount: 10, supplyCount: 10, openQuantity: 0 }], supplyCount: 10, openQuantity: 0 };
+    const getDetail = vi.fn()
+      .mockResolvedValueOnce(detail({ ...full, mySubscribedRequirementIds: ['req'] }))
+      .mockResolvedValue(detail(full));
+    const unsubscribe = vi.fn(async () => {});
+
+    renderWith({ getDetail, unsubscribe });
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }));
+
+    expect(await screen.findByRole('button', { name: 'Notify me if a spot opens' })).toBeInTheDocument();
+    expect(unsubscribe).toHaveBeenCalledWith(id, 'req');
+  });
+
+  it('attaches "Notify me" to the full role only in a multi-role game', async () => {
+    const getDetail = vi.fn().mockResolvedValue(detail({
+      requirements: [
+        { id: 'gk', occurrenceId: id, roleCode: 'goalkeeper', displayPosition: 'Goalkeeper', requiredCount: 2, supplyCount: 2, openQuantity: 0 },
+        { id: 'field', occurrenceId: id, roleCode: 'field', displayPosition: 'Field player', requiredCount: 10, supplyCount: 8, openQuantity: 2 },
+      ],
+    }));
+    const subscribe = vi.fn(async () => ({}) as never);
+
+    renderWith({ getDetail, subscribe });
+    expect(await screen.findByRole('button', { name: 'Join game as Field player' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Notify me if a Field player/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Notify me if a Goalkeeper spot opens' }));
+
+    await waitFor(() => expect(subscribe).toHaveBeenCalledWith(id, 'gk'));
+  });
+
+  it('hides "Notify me" from participants and on closed games', async () => {
+    const full = { requirements: [{ id: 'req', occurrenceId: id, roleCode: 'participant', requiredCount: 10, supplyCount: 10, openQuantity: 0 }], supplyCount: 10, openQuantity: 0 };
+    const getDetail = vi.fn().mockResolvedValue(detail({ ...full, myAssignmentId: 'mine', myAssignmentStatus: 2 }));
+    const view = renderWith({ getDetail });
+    expect(await screen.findByRole('button', { name: 'Leave game' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Notify me/ })).not.toBeInTheDocument();
+    view.unmount();
+
+    renderWith({ getDetail: vi.fn().mockResolvedValue(detail({ ...full, acceptsRosterChanges: false, status: 3 })) });
+    expect(await screen.findByText(/This game is closed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Notify me/ })).not.toBeInTheDocument();
+  });
+
+  it('re-reads the game when the tab regains focus', async () => {
+    const getDetail = vi.fn().mockResolvedValue(detail());
+    renderWith({ getDetail });
+    await screen.findByRole('button', { name: 'Join game' });
+
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+
+    expect(getDetail).toHaveBeenCalledTimes(2);
+  });
 });
