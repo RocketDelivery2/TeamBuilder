@@ -299,6 +299,15 @@ period a little longer (the reference stack uses 40 s).
   OIDC subjects, push endpoints and keys, the VAPID private key, private venue addresses. The
   web container's access log records the path without the query string. The container release
   smoke checks the API and web logs for tokens, subjects, coordinates and the test address.
+* Raising `Microsoft.AspNetCore` to Information for troubleshooting is safe: appsettings.json
+  pins `Microsoft.AspNetCore.Hosting.Diagnostics` (whose request entries carry the full URL) and
+  `System.Net.Http.HttpClient` (push endpoint URLs) at Warning. Override those two categories
+  only on a machine whose logs are thrown away.
+* Proxy errors: Caddy keeps access logging off and logs failed requests (for example a 502
+  while the API restarts) with the query string replaced by `?REDACTED` and no Referer; the
+  `err_id`, method, path and status remain. nginx does not log upstream errors for `/api/`,
+  because its error lines quote the full request. The container release smoke stops the API,
+  searches through each proxy and checks the logs.
 * Troubleshooting: `/healthz/ready` per-check status; `outbox status` / `outbox failed` /
   `outbox replay`; `database status` / `show-environment`; refill metrics through
   `dotnet-counters` (meter `TeamBuilder.Refill`, see docs/deployment.md).
