@@ -4,6 +4,25 @@
 #
 # Caddy sets X-Forwarded-For to the connecting client's address (it does not trust an incoming
 # header) and X-Forwarded-Proto to https; the API trusts these only from this container.
+#
+# Logs: access logging stays off. Errors (for example a 502 while the API restarts) are logged
+# with the request, so every log entry drops the query string, which carries discovery search
+# coordinates, and the Referer. Path, method, status, err_id and headers such as X-Request-Id stay
+# for correlation; Caddy already redacts Authorization and Cookie. A site-level `log` directive
+# would bypass this filter, so give any access log the same `format filter`.
+{
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp \?.*$ ?REDACTED
+				request>headers>Referer delete
+			}
+		}
+	}
+}
+
 {$TEAMBUILDER_SITE_ADDRESS} {
 	encode zstd gzip
 

@@ -7,10 +7,12 @@
 #
 # Phase 1, local QA stack (docker-compose.qa.yml, LocalQA, developer tokens): migration bundle
 #   before the API, the full basketball refill loop (scripts/qa/release-smoke.mjs), logs free of
-#   tokens, subjects and search coordinates, and a forced API redeploy that keeps the data.
+#   tokens, subjects and search coordinates (also for a search while the API is down), and a
+#   forced API redeploy that keeps the data.
 # Phase 2, release topology (deploy/compose, ASPNETCORE_ENVIRONMENT=QA behind Caddy HTTPS):
 #   not ready before the bundle and the environment stamp, ready after; HTTPS, HSTS, CSP, CORS
-#   allowlist and API headers through the proxy; fail-closed startup on unsafe settings; QA
+#   allowlist and API headers through the proxy; proxy error logs without search coordinates;
+#   fail-closed startup on unsafe settings; QA
 #   backup restored to a separate database with the same schema.
 # The QA phase uses a placeholder OIDC authority, so it checks anonymous behaviour only; real
 # sign-in is a human step in docs/qa/release-checklist.md.
@@ -83,7 +85,14 @@ players_after="$(sqlq qa TeamBuilderQA 'SELECT COUNT(*) FROM Players')"
 [[ "$players_before" -ge 4 && "$players_before" == "$players_after" ]] \
   && pass "API redeploy kept the database ($players_after players)" || fail "player count changed across redeploy ($players_before -> $players_after)"
 
+# A search while the API is down: nginx answers 502/504 and must not log the query either.
+"${qa[@]}" stop api >/dev/null
+[[ "$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8080/api/v1/discover/occurrences?lat=0.0223&lon=150.0456&radiusMiles=15')" =~ ^50[24]$ ]] \
+  || fail "web proxy did not answer 502/504 with the API stopped"
+"${qa[@]}" up -d --no-build --no-deps --wait --wait-timeout 180 api
+
 "${qa[@]}" logs api web > "$work/qa-logs.txt" 2>&1
+grep -Eq 'GET /api/v1/discover/occurrences HTTP/1.1" 50[24]' "$work/qa-logs.txt" || fail "web access log has no 502/504 entry for the failed search"
 if grep -Eq 'eyJ[A-Za-z0-9_-]{10,}|smoke-[a-z0-9]+-(host|pa|pb|pc)|lat=|lon=|0\.0223|150\.0456|1 Smoke Test Way' "$work/qa-logs.txt"; then
   grep -En 'eyJ|smoke-|lat=|lon=|0\.0223|150\.0456|Smoke Test Way' "$work/qa-logs.txt" | head -5 >&2
   fail "logs contain a token, subject, coordinate or private address"
@@ -139,6 +148,21 @@ grep -qi "^x-content-type-options: nosniff" <<<"$api_headers" && grep -qi "^cont
 
 TB_API_URL=https://localhost TB_WEB_URL=https://localhost TB_HEALTH_URL=skip NODE_EXTRA_CA_CERTS="$work/caddy-root.crt" \
   node scripts/qa/release-smoke.mjs
+
+# Coordinates stay out of the proxy's logs, also when the API is down and Caddy logs the failed
+# request as an error (502): the query string is redacted, the path and err_id remain.
+search='/api/v1/discover/occurrences?lat=0.0223&lon=150.0456&radiusMiles=15'
+[[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' "https://localhost$search")" == "200" ]] || fail "discovery through the proxy failed"
+"${rel[@]}" stop api >/dev/null
+[[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' "https://localhost$search")" == "502" ]] || fail "proxy did not answer 502 with the API stopped"
+"${rel[@]}" up -d --no-build --no-deps --wait --wait-timeout 180 api
+"${rel[@]}" logs proxy api web > "$work/release-logs.txt" 2>&1
+grep -q '"uri":"/api/v1/discover/occurrences?REDACTED"' "$work/release-logs.txt" || fail "proxy logged no redacted error entry for the failed search"
+if grep -Eq 'eyJ[A-Za-z0-9_-]{10,}|lat=|lon=|0\.0223|150\.0456' "$work/release-logs.txt"; then
+  grep -En 'eyJ|lat=|lon=|0\.0223|150\.0456' "$work/release-logs.txt" | head -5 >&2
+  fail "release logs contain a token or search coordinates"
+fi
+pass "proxy, API and web logs carry no search coordinates or token, even for a failed upstream request"
 
 api_image="$("${rel[@]}" config --images api 2>/dev/null | head -n 1)"
 api_image="${api_image:-teambuilder-api:local}"

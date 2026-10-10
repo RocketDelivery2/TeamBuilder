@@ -14,6 +14,10 @@ server {
     # (The local compose stack uses this. In the release topology the TLS proxy routes /api
     # straight to the API and this block is never reached.)
     location /api/ {
+        # nginx error entries quote the full request line, query string included, so upstream
+        # failures here (a 502 while the API restarts) are not logged: they would carry search
+        # coordinates. The API logs its own side without the query.
+        error_log /dev/stderr crit;
         proxy_pass ${API_UPSTREAM};
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
