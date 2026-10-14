@@ -86,7 +86,7 @@ jobs:
           done
           scripts/qa/validate-migration-bundle.sh artifacts/migrations/efbundle-linux-x64 release-sql "$password" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: teambuilder-migrations-${{ needs.metadata.outputs.version }}
           path: artifacts/migrations/
@@ -125,7 +125,7 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: teambuilder-web-${{ needs.metadata.outputs.version }}
           path: teambuilder-web-${{ needs.metadata.outputs.version }}.tar.gz
