@@ -154,11 +154,18 @@ jobs:
           done
           summary_text="$(printf '%s\n' "${summary_lines[@]}")"
 
+          # external_id is an opaque tag we control, independent of the check
+          # run's display name. pr-auto-merge.yml requires both this exact
+          # value AND app.slug == "github-actions" (see
+          # reviewer_status_for_sha() and docs/reviewer-agent.md) before
+          # trusting a check run named "Reviewer Agent" -- raising the bar
+          # above "any check run happens to be named the same thing".
           gh api "repos/${BASE_REPO}/check-runs" \
             -f name="Reviewer Agent" \
             -f head_sha="$HEAD_SHA" \
             -f status="completed" \
             -f conclusion="$conclusion" \
+            -f external_id="teambuilder-pr-reviewer-agent" \
             -f "output[title]=Reviewer Agent: ${result}" \
             -f "output[summary]=${summary_text}" \
             >/dev/null

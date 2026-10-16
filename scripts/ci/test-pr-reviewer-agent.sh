@@ -94,6 +94,7 @@ assert_eq "$SCENARIO_STATUS" "0" "clean_pass: exits 0"
 assert_contains "$SCENARIO_SUMMARY" "Result: **PASS**" "clean_pass: PASS result"
 assert_contains "$SCENARIO_CHECKRUN_CALLS" "-f conclusion=success" "clean_pass: posts success conclusion"
 assert_contains "$SCENARIO_CHECKRUN_CALLS" "-f head_sha=headsha1" "clean_pass: check run scoped to exact head SHA"
+assert_contains "$SCENARIO_CHECKRUN_CALLS" "-f external_id=teambuilder-pr-reviewer-agent" "clean_pass: check run tagged with the expected external_id so pr-auto-merge.yml can verify origin, not just name"
 
 ### Scenario 2: a non-owner author's diff touches workflow/control-plane
 ### files -> automatic FAIL. This is the concrete control against an agent

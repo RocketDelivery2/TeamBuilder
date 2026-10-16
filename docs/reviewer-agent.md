@@ -57,12 +57,29 @@ driven by attacker-controlled diff content.
 
 `require_approved()` (GraphQL `reviewDecision`) has been replaced with a
 check that queries `GET repos/{repo}/commits/{head_sha}/check-runs`, filters
-for `name == "Reviewer Agent"`, takes the most recently completed run, and
-requires `status == "completed" && conclusion == "success"`. Anything else —
-no matching check run (`MISSING`), still running (`PENDING`), `failure`
-(`FAIL`), or `neutral` (`INCONCLUSIVE`) — is treated identically: refuse to
-merge or enable auto-merge, and disable any auto-merge that was previously
-armed, since its passing result no longer applies to the current state.
+for runs where `name == "Reviewer Agent"` **and** `app.slug == "github-actions"`
+**and** `external_id == "teambuilder-pr-reviewer-agent"`, takes the most
+recently completed matching run, and requires
+`status == "completed" && conclusion == "success"`. Anything else —
+no matching check run (`MISSING`), a check run with a matching name but the
+wrong app/external_id (also treated as `MISSING` — see below), still running
+(`PENDING`), `failure` (`FAIL`), or `neutral` (`INCONCLUSIVE`) — is treated
+identically: refuse to merge or enable auto-merge, and disable any auto-merge
+that was previously armed, since its passing result no longer applies to the
+current state.
+
+Filtering by `app.slug`/`external_id`, not just `name`, matters because check
+run *names* are just strings: any GitHub App or integration with `checks:
+write` on this repository could, in principle, create a check run also named
+"Reviewer Agent". Requiring `app.slug == "github-actions"` restricts matches
+to check runs created by a GitHub Actions run in this repository using the
+default token (only GitHub Apps can create check runs at all — not plain
+PATs or OAuth tokens). Requiring the specific `external_id` that
+`pr-reviewer-agent.yml` sets on every check run it posts narrows this further
+still, ruling out any other, unrelated GitHub Actions workflow in this
+repository that happens to also create a check run literally named "Reviewer
+Agent". See "What this does *not* guarantee" below for what this
+origin-check still cannot rule out.
 
 This query is made **by the exact current head SHA, every time, at every
 decision point** (mirroring the existing re-check-before-each-decision
@@ -76,10 +93,18 @@ Because `pull_request_target` events don't fire again once the Reviewer
 Agent finishes (that's a `check_run` event, a different trigger type),
 `pr-auto-merge.yml` also listens for `check_run: types: [completed]` so the
 merge gate re-evaluates once a passing (or failing) Reviewer Agent result is
-available. That event payload has no `pull_request.*` fields, so PR context
-(base ref, head repo, author, draft state, current head SHA) is re-resolved
-via `gh pr view $PR_NUMBER --json ...` rather than trusted from the
-triggering payload.
+available. That event's `check_run.pull_requests[0].number` field is used
+**only** to resolve which PR to re-evaluate — every other fact needed to
+make the merge decision (base ref, head repo, author, draft state, and
+critically the *current* head SHA) is re-resolved fresh via
+`gh pr view $PR_NUMBER --json ...` rather than trusted from the triggering
+payload, and the Reviewer Agent status itself is independently re-queried by
+that freshly-resolved head SHA (never from the `check_run` payload's own
+`head_sha` field). If that PR number is absent (the check run is not
+associated with any open PR) or cannot be resolved (`gh pr view` fails,
+e.g. the PR was closed between the check run completing and this workflow
+running), the event is skipped with no merge calls made — fail closed, not
+fail open.
 
 Existing safeguards are unchanged and still enforced at the same decision
 points: draft PRs, forked PRs, untrusted authors, `fail_if_head_moved`
@@ -107,6 +132,17 @@ cannot grant itself expanded permissions in either workflow for the run that
 judges it.
 
 ## What this does *not* guarantee (the honest limitation)
+
+The `app.slug == "github-actions"` and `external_id ==
+"teambuilder-pr-reviewer-agent"` check described above is a **real, meaningful
+mitigation against external impersonation and accidental collisions** — it
+rules out a check run from a different integration, a different repository's
+workflow, or an unrelated tool that happens to choose the same display name.
+It is **not** a mitigation against a modified copy of
+`pr-reviewer-agent.yml` itself (or any other workflow file added to this
+repository) deliberately setting the same `external_id` and relying on the
+same shared `github-actions` App identity — see the token-sharing limitation
+below, which this check does not remove.
 
 Every workflow in this repository that uses the default `GITHUB_TOKEN`
 authenticates as the **same `github-actions[bot]` App installation**. There

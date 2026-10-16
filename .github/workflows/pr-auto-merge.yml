@@ -96,6 +96,21 @@ jobs:
           # immune to staleness by construction: a check run created for an
           # older commit is never returned here once the head has moved,
           # because we always ask about the SHA we are deciding on right now.
+          #
+          # Matching is NOT done by check name alone: the check run must
+          # also report app.slug == "github-actions" (the GitHub App
+          # identity every Actions run authenticates as via the default
+          # GITHUB_TOKEN) and the exact external_id pr-reviewer-agent.yml
+          # tags its own check runs with. This rules out any check run that
+          # did not come from a GitHub Actions run using the default token
+          # in this repository (e.g. a stale check from a renamed/removed
+          # integration, or a differently-named-but-similar check created by
+          # an unrelated tool). It does NOT, by itself, prove the check run
+          # came specifically from pr-reviewer-agent.yml rather than some
+          # other workflow file in this same repository also using the
+          # default token -- see docs/reviewer-agent.md for the full,
+          # honest trust-boundary analysis and the recommended follow-up
+          # (a dedicated credential) that would close that remaining gap.
           reviewer_status_for_sha() {
             local sha="$1"
             local checks_json
@@ -104,7 +119,11 @@ jobs:
               return
             fi
             jq -r '
-              ([.check_runs[]? | select(.name == "Reviewer Agent")]
+              ([.check_runs[]? | select(
+                  .name == "Reviewer Agent"
+                  and ((.app.slug // "") == "github-actions")
+                  and ((.external_id // "") == "teambuilder-pr-reviewer-agent")
+                )]
                 | sort_by(.completed_at // .started_at // "")) as $runs
               | if ($runs | length) == 0 then "MISSING"
                 else

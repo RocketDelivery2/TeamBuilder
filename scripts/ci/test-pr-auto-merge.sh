@@ -115,16 +115,29 @@ checkruns_json() {
       echo '{"check_runs":[]}'
       ;;
     pending)
-      echo '{"check_runs":[{"name":"Reviewer Agent","status":"in_progress","conclusion":null,"completed_at":null}]}'
+      echo '{"check_runs":[{"name":"Reviewer Agent","status":"in_progress","conclusion":null,"completed_at":null,"app":{"slug":"github-actions"},"external_id":"teambuilder-pr-reviewer-agent"}]}'
       ;;
     pass)
-      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:00:00Z"}]}'
+      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:00:00Z","app":{"slug":"github-actions"},"external_id":"teambuilder-pr-reviewer-agent"}]}'
       ;;
     fail)
-      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:00:00Z"}]}'
+      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:00:00Z","app":{"slug":"github-actions"},"external_id":"teambuilder-pr-reviewer-agent"}]}'
       ;;
     inconclusive)
-      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"neutral","completed_at":"2026-01-01T00:00:00Z"}]}'
+      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"neutral","completed_at":"2026-01-01T00:00:00Z","app":{"slug":"github-actions"},"external_id":"teambuilder-pr-reviewer-agent"}]}'
+      ;;
+    pass_wrong_app)
+      # Same name and a "success" conclusion, but neither the app.slug nor
+      # the external_id pr-reviewer-agent.yml tags its own check runs with
+      # match -- i.e. some other check run that merely happens to be named
+      # "Reviewer Agent". Must be treated identically to MISSING.
+      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:00:00Z","app":{"slug":"some-other-app"},"external_id":"not-ours"}]}'
+      ;;
+    pass_missing_external_id)
+      # Correct app.slug but no (or a mismatched) external_id: still not
+      # trusted, since external_id is the tag that is actually under this
+      # workflow's exclusive control.
+      echo '{"check_runs":[{"name":"Reviewer Agent","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:00:00Z","app":{"slug":"github-actions"}}]}'
       ;;
     *)
       echo "unknown checkruns fixture: $status" >&2
@@ -213,6 +226,30 @@ assert_eq "$SCENARIO_STATUS" "0" "reviewer_stale_after_new_push: exits 0"
 assert_contains "$SCENARIO_SUMMARY" "Reviewer Agent status is 'MISSING'" "reviewer_stale_after_new_push: skip message mentions MISSING"
 assert_contains "$SCENARIO_MERGE_CALLS" "--disable-auto" "reviewer_stale_after_new_push: disables stale auto-merge"
 
+### Scenario 9b: a check run named "Reviewer Agent" exists and conclusion is
+### "success", but it was not published by the expected GitHub App (wrong
+### app.slug, wrong external_id) -- i.e. not merely identified by check
+### name. Must be treated identically to MISSING, never as PASS.
+mock_dir="$work_dir/mock_reviewer_wrong_app_origin"; mkdir -p "$mock_dir"
+pr_state_json "headsha1" "CLEAN" "" > "$mock_dir/states.jsonl"
+checkruns_json pass_wrong_app > "$mock_dir/checkruns.json"
+run_scenario "reviewer_wrong_app_origin" "${common_env[@]}"
+assert_eq "$SCENARIO_STATUS" "0" "reviewer_wrong_app_origin: exits 0"
+assert_contains "$SCENARIO_SUMMARY" "Reviewer Agent status is 'MISSING'" "reviewer_wrong_app_origin: treated as MISSING despite matching name+success"
+assert_eq "$SCENARIO_MERGE_CALLS" "" "reviewer_wrong_app_origin: no merge calls"
+
+### Scenario 9c: correct app.slug but missing/mismatched external_id -- the
+### app-slug check alone is not sufficient (every workflow in this repo using
+### the default token shares that slug); external_id is the specific tag
+### only pr-reviewer-agent.yml sets. Must also be treated as MISSING.
+mock_dir="$work_dir/mock_reviewer_missing_external_id"; mkdir -p "$mock_dir"
+pr_state_json "headsha1" "CLEAN" "" > "$mock_dir/states.jsonl"
+checkruns_json pass_missing_external_id > "$mock_dir/checkruns.json"
+run_scenario "reviewer_missing_external_id" "${common_env[@]}"
+assert_eq "$SCENARIO_STATUS" "0" "reviewer_missing_external_id: exits 0"
+assert_contains "$SCENARIO_SUMMARY" "Reviewer Agent status is 'MISSING'" "reviewer_missing_external_id: treated as MISSING without the expected external_id"
+assert_eq "$SCENARIO_MERGE_CALLS" "" "reviewer_missing_external_id: no merge calls"
+
 ### Scenario 10: trusted author, Reviewer Agent PASS, CLEAN -> immediate squash merge with exact head SHA.
 mock_dir="$work_dir/mock_reviewer_pass_clean"; mkdir -p "$mock_dir"
 pr_state_json "headsha1" "CLEAN" "" > "$mock_dir/states.jsonl"
@@ -284,6 +321,38 @@ run_scenario "check_run_trigger_unrelated" \
 assert_eq "$SCENARIO_STATUS" "0" "check_run_trigger_unrelated: exits 0"
 assert_contains "$SCENARIO_SUMMARY" "not Reviewer Agent" "check_run_trigger_unrelated: skip message"
 assert_eq "$SCENARIO_MERGE_CALLS" "" "check_run_trigger_unrelated: no merge calls"
+
+### Scenario 16: check_run event for "Reviewer Agent" but with no associated
+### pull request number at all (e.g. the check run's commit isn't the head
+### of any open PR) -> skip before attempting to resolve any PR context.
+mock_dir="$work_dir/mock_check_run_trigger_no_pr"; mkdir -p "$mock_dir"
+run_scenario "check_run_trigger_no_pr" \
+  env \
+  EVENT_NAME="check_run" \
+  CHECK_RUN_NAME="Reviewer Agent" \
+  CHECK_RUN_PR_NUMBER="" \
+  BASE_REPO="RocketDelivery2/TeamBuilder"
+assert_eq "$SCENARIO_STATUS" "0" "check_run_trigger_no_pr: exits 0"
+assert_contains "$SCENARIO_SUMMARY" "not associated with an open pull request" "check_run_trigger_no_pr: skip message"
+assert_eq "$SCENARIO_MERGE_CALLS" "" "check_run_trigger_no_pr: no merge calls"
+
+### Scenario 17: check_run event for "Reviewer Agent" names a PR number that
+### cannot be resolved (closed, deleted, or otherwise inaccessible via
+### `gh pr view`) -> a "wrong-PR" check_run event must fail closed (skip),
+### never fall through to treating stale/absent env vars as eligible.
+mock_dir="$work_dir/mock_check_run_trigger_unresolvable_pr"; mkdir -p "$mock_dir"
+# Deliberately no pr_view.json written: fake_gh.sh's `cat` on the missing
+# file fails, so `gh pr view` itself fails, exactly like the real CLI would
+# for a closed or nonexistent PR number.
+run_scenario "check_run_trigger_unresolvable_pr" \
+  env \
+  EVENT_NAME="check_run" \
+  CHECK_RUN_NAME="Reviewer Agent" \
+  CHECK_RUN_PR_NUMBER="999" \
+  BASE_REPO="RocketDelivery2/TeamBuilder"
+assert_eq "$SCENARIO_STATUS" "0" "check_run_trigger_unresolvable_pr: exits 0"
+assert_contains "$SCENARIO_SUMMARY" "could not resolve pull request #999" "check_run_trigger_unresolvable_pr: skip message"
+assert_eq "$SCENARIO_MERGE_CALLS" "" "check_run_trigger_unresolvable_pr: no merge calls"
 
 echo
 echo "Results: $pass passed, $fail failed"
