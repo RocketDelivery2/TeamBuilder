@@ -1,0 +1,166 @@
+name: PR Reviewer Agent
+
+# Deterministic, automated policy review of each pull request's exact diff,
+# run by a workflow that is separate from pr-auto-merge.yml and has no
+# ability to merge, approve, or write pull request state. Posts a Check Run
+# named "Reviewer Agent" scoped to the exact head commit SHA with a
+# PASS / FAIL / INCONCLUSIVE result.
+#
+# This is an automated, deterministic policy check -- not a human code
+# review, and explicitly NOT represented as a GitHub "approved" pull request
+# review. It never calls a model and never executes any code contributed by
+# the pull request; it only reads the diff between the immutable base and
+# head commits via the GitHub REST compare API.
+#
+# See docs/reviewer-agent.md for the full design, the identified GitHub
+# token / workflow-trust limitations that keep this from being a fully
+# tamper-proof independent reviewer today, and what else a repository
+# administrator should configure (required status check in branch
+# protection / rulesets) to close that gap.
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+# Deliberately disjoint from pr-auto-merge.yml's permissions (contents:
+# write, pull-requests: write). This workflow can read the diff and write a
+# check run, but it cannot write repository contents or pull request state,
+# so it structurally cannot merge, approve, or alter any pull request
+# itself -- no matter what the diff it is reviewing contains.
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: pr-reviewer-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Automated policy review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Review the exact diff and post a Check Run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # The compare API pins this review to the two immutable commits
+          # this run was triggered for ("current PR files" would instead
+          # reflect whatever the PR branch looks like *right now*, which can
+          # race a later push). A later push produces a new HEAD_SHA and a
+          # brand new, separate check run; this run can never be
+          # reinterpreted as covering a different commit.
+          compare_json="$(gh api "repos/${BASE_REPO}/compare/${BASE_SHA}...${HEAD_SHA}")"
+
+          files_json="$(jq -c '[.files[]? | {filename, status, additions, deletions, patch: (.patch // "")}]' <<<"$compare_json")"
+          file_count="$(jq 'length' <<<"$files_json")"
+          total_changes="$(jq '[.[] | (.additions + .deletions)] | add // 0' <<<"$files_json")"
+
+          result="PASS"
+          reasons=()
+
+          # 1. Control-plane isolation: this is the concrete, enforceable
+          #    answer to "prevent agents from manipulating their own review
+          #    results or bypassing the merge gate". Only the repository
+          #    owner may touch the files that implement review or merge
+          #    decisions; any other author touching them is an automatic
+          #    FAIL regardless of anything else in the diff.
+          controlled_paths_touched="$(jq -r '
+            [.[] | select(
+              (.filename | startswith(".github/workflows/")) or
+              (.filename | startswith("scripts/ci/"))
+            ) | .filename] | join(", ")
+          ' <<<"$files_json")"
+
+          if [[ -n "$controlled_paths_touched" && "$AUTHOR" != "RocketDelivery2" ]]; then
+            result="FAIL"
+            reasons+=("Author '${AUTHOR}' is not the repository owner but the diff modifies review/merge control-plane files: ${controlled_paths_touched}")
+          fi
+
+          # 2. Heuristic scan of added/changed lines for likely committed
+          #    secrets. Deliberately simple, non-quote-heavy patterns so the
+          #    check stays easy to audit and cannot itself be a source of
+          #    injection via a crafted diff.
+          secret_hits="$(jq -r '
+            [.[]
+              | select(.patch != null)
+              | select(
+                  (.patch | test("AKIA[0-9A-Z]{16}"))
+                  or (.patch | test("-----BEGIN [A-Z]+ PRIVATE KEY-----"))
+                  or (.patch | test("xox[baprs]-[0-9A-Za-z-]{10,}"))
+                )
+              | .filename
+            ] | unique | join(", ")
+          ' <<<"$files_json" 2>/dev/null || true)"
+
+          if [[ -n "$secret_hits" ]]; then
+            result="FAIL"
+            reasons+=("Diff contains a likely committed secret pattern in: ${secret_hits}")
+          fi
+
+          # 3. Scale heuristic: a very large diff cannot be deterministically
+          #    vouched for by simple pattern checks; route it to a human
+          #    instead of silently passing it.
+          if [[ "$result" == "PASS" ]] && { [[ "$file_count" -gt 40 ]] || [[ "$total_changes" -gt 4000 ]]; }; then
+            result="INCONCLUSIVE"
+            reasons+=("Diff is large (${file_count} files, ${total_changes} changed lines); routed to a human reviewer instead of an automated PASS.")
+          fi
+
+          if [[ "${#reasons[@]}" -eq 0 ]]; then
+            reasons+=("No control-plane path changes by a non-owner author, no secret-like patterns detected, diff size within automated-review bounds (${file_count} files, ${total_changes} changed lines).")
+          fi
+
+          case "$result" in
+            PASS) conclusion="success" ;;
+            FAIL) conclusion="failure" ;;
+            *) conclusion="neutral" ;;
+          esac
+
+          {
+            echo "## Reviewer Agent result"
+            echo ""
+            echo "- PR: #${PR_NUMBER}"
+            echo "- Head SHA reviewed: ${HEAD_SHA}"
+            echo "- Base SHA: ${BASE_SHA}"
+            echo "- Result: **${result}** (this is an automated policy check, not a GitHub-approved human review)"
+            echo ""
+            printf -- '- %s\n' "${reasons[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          summary_lines=(
+            "Automated Reviewer Agent result -- NOT a GitHub-approved human review."
+            ""
+            "Result: ${result}"
+            "Head SHA reviewed: ${HEAD_SHA}"
+            "Base SHA: ${BASE_SHA}"
+            ""
+            "Reasons:"
+          )
+          for reason in "${reasons[@]}"; do
+            summary_lines+=("- ${reason}")
+          done
+          summary_text="$(printf '%s\n' "${summary_lines[@]}")"
+
+          gh api "repos/${BASE_REPO}/check-runs" \
+            -f name="Reviewer Agent" \
+            -f head_sha="$HEAD_SHA" \
+            -f status="completed" \
+            -f conclusion="$conclusion" \
+            -f "output[title]=Reviewer Agent: ${result}" \
+            -f "output[summary]=${summary_text}" \
+            >/dev/null
+
+          echo "Posted Reviewer Agent check run: ${result} (${conclusion}) for ${HEAD_SHA}."
