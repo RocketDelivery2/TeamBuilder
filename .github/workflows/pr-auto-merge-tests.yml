@@ -1,0 +1,47 @@
+name: PR Auto Merge Tests
+
+# Deterministic, mocked-gh regression coverage for the pr-auto-merge.yml
+# merge-gate logic and the independent pr-reviewer-agent.yml policy checks
+# (see scripts/ci/test-pr-auto-merge.sh, scripts/ci/test-pr-reviewer-agent.sh,
+# and docs/reviewer-agent.md). Runs only when those workflows or their test
+# harnesses change, so it stays independent of the application CI pipeline.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/pr-auto-merge.yml"
+      - ".github/workflows/pr-reviewer-agent.yml"
+      - ".github/workflows/pr-auto-merge-tests.yml"
+      - "scripts/ci/test-pr-auto-merge.sh"
+      - "scripts/ci/test-pr-reviewer-agent.sh"
+      - "scripts/ci/fake_gh.sh"
+      - "scripts/ci/lib/extract_run_script.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/pr-auto-merge.yml"
+      - ".github/workflows/pr-reviewer-agent.yml"
+      - ".github/workflows/pr-auto-merge-tests.yml"
+      - "scripts/ci/test-pr-auto-merge.sh"
+      - "scripts/ci/test-pr-reviewer-agent.sh"
+      - "scripts/ci/fake_gh.sh"
+      - "scripts/ci/lib/extract_run_script.py"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Mocked-gh scenario tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run pr-auto-merge.yml scenario tests
+        run: scripts/ci/test-pr-auto-merge.sh
+
+      - name: Run pr-reviewer-agent.yml scenario tests
+        run: scripts/ci/test-pr-reviewer-agent.sh
