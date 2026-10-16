@@ -1,0 +1,37 @@
+name: PR Auto Merge Tests
+
+# Deterministic, mocked-gh regression coverage for the pr-auto-merge.yml
+# eligibility and merge-decision logic (see scripts/ci/test-pr-auto-merge.sh
+# and docs/branch-protection.md). Runs only when that workflow or its test
+# harness changes, so it stays independent of the application CI pipeline.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/pr-auto-merge.yml"
+      - ".github/workflows/pr-auto-merge-tests.yml"
+      - "scripts/ci/test-pr-auto-merge.sh"
+      - "scripts/ci/fake_gh.sh"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/pr-auto-merge.yml"
+      - ".github/workflows/pr-auto-merge-tests.yml"
+      - "scripts/ci/test-pr-auto-merge.sh"
+      - "scripts/ci/fake_gh.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Mocked-gh scenario tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run pr-auto-merge.yml scenario tests
+        run: scripts/ci/test-pr-auto-merge.sh
