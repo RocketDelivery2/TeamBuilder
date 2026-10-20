@@ -347,6 +347,26 @@ public sealed class IntegrationApiControllerIntegrationTests : IClassFixture<Tea
     }
 
     [Fact]
+    public async Task RejectedKeys_AreLimitedPerClient_BeforeAnyLookup_ButValidKeysAreNot()
+    {
+        using var factory = new ConfiguredFactory(new() { ["RateLimiting:IntegrationAuthFailures:PermitLimit"] = "2" });
+        using var client = factory.CreateClient();
+        var (_, token) = await NewPlayerAsync(factory);
+        var valid = await CreateKeyAsync(token, "valid", client);
+
+        for (var i = 0; i < 3; i++)
+            (await CallAsync(valid.Key, $"{ApiUrl}/me", client)).StatusCode.Should().Be(HttpStatusCode.OK, "a valid key spends nothing");
+        (await CallAsync(IntegrationApiKeyFormat.Generate().Key, $"{ApiUrl}/me", client)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await CallAsync("nonsense", $"{ApiUrl}/me", client)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var throttled = await CallAsync(IntegrationApiKeyFormat.Generate().Key, $"{ApiUrl}/me", client);
+        throttled.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        throttled.Headers.RetryAfter.Should().NotBeNull();
+        (await CallAsync(valid.Key, $"{ApiUrl}/me", client)).StatusCode.Should().Be(HttpStatusCode.TooManyRequests, "the client is throttled until the window ends");
+        (await CallAsync(apiKey: null, $"{ApiUrl}/me", client)).StatusCode.Should().Be(HttpStatusCode.Unauthorized, "no key means no lookup to protect");
+    }
+
+    [Fact]
     public async Task KeyChanges_AreRateLimitedPerCaller()
     {
         using var factory = new ConfiguredFactory(new() { ["RateLimiting:ApiKeys:PermitLimit"] = "2" });
@@ -359,37 +379,6 @@ public sealed class IntegrationApiControllerIntegrationTests : IClassFixture<Tea
 
         limited.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
         (await SendAsync(HttpMethod.Get, KeysUrl, token, client: client)).StatusCode.Should().Be(HttpStatusCode.OK, "listing is not limited");
-    }
-
-    // ── published OpenAPI ────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task OpenApiDocument_IsAnonymous_AndHoldsOnlyTheIntegrationApi()
-    {
-        var response = await _client.GetAsync($"{ApiUrl}/openapi.json");
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
-        var document = await response.Content.ReadFromJsonAsync<JsonElement>();
-        document.GetProperty("openapi").GetString().Should().StartWith("3.0");
-        document.GetProperty("info").GetProperty("title").GetString().Should().Be("TeamBuilder Integration API");
-        var paths = document.GetProperty("paths").EnumerateObject().Select(p => p.Name).ToList();
-        paths.Should().BeEquivalentTo(
-            "/api/integration/v1/me",
-            "/api/integration/v1/occurrences",
-            "/api/integration/v1/occurrences/{occurrenceId}/roster");
-        var scheme = document.GetProperty("components").GetProperty("securitySchemes").GetProperty("ApiKey");
-        scheme.GetProperty("type").GetString().Should().Be("apiKey");
-        scheme.GetProperty("in").GetString().Should().Be("header");
-        scheme.GetProperty("name").GetString().Should().Be("X-Api-Key");
-        document.GetProperty("security")[0].TryGetProperty("ApiKey", out _).Should().BeTrue();
-        document.GetProperty("components").GetProperty("schemas").TryGetProperty("IntegrationRosterDto", out _).Should().BeTrue();
-
-        // The app's own (Development) document keeps every other operation and none of these.
-        var appDocument = await _client.GetFromJsonAsync<JsonElement>("/swagger/v1/swagger.json");
-        var appPaths = appDocument.GetProperty("paths").EnumerateObject().Select(p => p.Name).ToList();
-        appPaths.Should().Contain(["/api/v1/players/me/api-keys", "/api/v1/events/{occurrenceId}/roster"]);
-        appPaths.Should().NotContain(p => p.StartsWith("/api/integration/", StringComparison.Ordinal));
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

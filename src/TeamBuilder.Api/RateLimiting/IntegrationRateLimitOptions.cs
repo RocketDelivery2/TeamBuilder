@@ -35,3 +35,20 @@ public sealed class ApiKeyChangeRateLimitOptions
     [Range(1, 3600)]
     public int WindowSeconds { get; set; } = 3600;
 }
+
+/// <summary>
+/// Per-client-IP fixed-window limit on rejected integration API keys
+/// (<c>RateLimiting:IntegrationAuthFailures</c>). Checked by the API key scheme before its
+/// database lookup, so guessing keys cannot drive unbounded lookups; valid keys never spend it.
+/// Once spent, further key attempts from that IP get 429 with Retry-After. In-memory per instance.
+/// </summary>
+public sealed class IntegrationAuthFailureRateLimitOptions
+{
+    public const string SectionName = "RateLimiting:IntegrationAuthFailures";
+
+    [Range(1, 100000)]
+    public int PermitLimit { get; set; } = 30;
+
+    [Range(1, 3600)]
+    public int WindowSeconds { get; set; } = 60;
+}

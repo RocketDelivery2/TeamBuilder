@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using TeamBuilder.Api.Auth;
-using TeamBuilder.Api.Hosting;
 using TeamBuilder.Api.RateLimiting;
 using TeamBuilder.Application.DTOs;
 using TeamBuilder.Application.Interfaces;
@@ -15,17 +14,18 @@ namespace TeamBuilder.Api.Controllers;
 /// other applications to the games an API key's owner hosts. Authenticated by an integration API
 /// key in <c>X-Api-Key</c> only (401 without a valid, active key; 403 without the
 /// <c>rosters:read</c> scope); rate limited per key (429 with Retry-After). A game hosted by
-/// anyone else is 404, exactly like a missing one. Documented in docs/integration-api.md and
-/// published as OpenAPI at <c>/api/integration/v1/openapi.json</c> in every environment.
+/// anyone else is 404, exactly like a missing one. Its own API explorer group keeps it out of
+/// the app's Swagger document.
 /// </summary>
 [ApiController]
 [Route("api/integration/v1")]
 [Authorize(Policy = IntegrationApiKeyAuthentication.RostersReadPolicy)]
 [EnableRateLimiting(IntegrationRateLimitOptions.PolicyName)]
-[ApiExplorerSettings(GroupName = IntegrationOpenApi.DocumentName)]
+[ApiExplorerSettings(GroupName = ApiExplorerGroup)]
 [Produces("application/json")]
 public class IntegrationController : ControllerBase
 {
+    public const string ApiExplorerGroup = "integration-v1";
     internal const int DefaultPageSize = 50;
     internal const int MaxPageSize = 100;
     internal static readonly TimeSpan DefaultWindow = TimeSpan.FromDays(30);

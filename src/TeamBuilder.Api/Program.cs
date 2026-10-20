@@ -204,6 +204,10 @@ builder.Services.AddOptions<IntegrationRateLimitOptions>()
     .BindConfiguration(IntegrationRateLimitOptions.SectionName)
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<IntegrationAuthFailureRateLimitOptions>()
+    .BindConfiguration(IntegrationAuthFailureRateLimitOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<ApiKeyChangeRateLimitOptions>()
     .BindConfiguration(ApiKeyChangeRateLimitOptions.SectionName)
     .ValidateDataAnnotations()
@@ -254,7 +258,8 @@ builder.Services.AddRateLimiter(options =>
         return CallerFixedWindow(httpContext, limits.PermitLimit, limits.WindowSeconds);
     });
     // The integration API is partitioned by API key: authorization (which runs first) has put
-    // the key's principal on the request. A request without a valid key never gets here.
+    // the key's principal on the request. A request without a valid key never gets here; the
+    // key scheme bounds rejected keys per IP itself (IntegrationAuthFailureRateLimitOptions).
     options.AddPolicy(IntegrationRateLimitOptions.PolicyName, httpContext =>
     {
         var limits = httpContext.RequestServices.GetRequiredService<IOptions<IntegrationRateLimitOptions>>().Value;
@@ -295,7 +300,7 @@ builder.Services.AddControllers();
 
 // Add API versioning
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(IntegrationOpenApi.Configure);
+builder.Services.AddSwaggerGen();
 
 // CORS: exact origins from AllowedOrigins (comma-separated). The API authenticates with bearer
 // tokens, never cookies, so credentials are not allowed. '*' (anonymous, any origin) is only
@@ -358,7 +363,6 @@ if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment(
     app.UseSwaggerUI(options =>
     {
         options.SwaggerEndpoint("/swagger/v1/swagger.json", "TeamBuilder API v1");
-        options.SwaggerEndpoint(IntegrationOpenApi.DocumentPath, "TeamBuilder Integration API v1");
     });
 }
 
@@ -387,7 +391,6 @@ app.UseRateLimiter();
 
 app.MapGet("/", () => Results.Ok("TeamBuilder API Running"));
 app.MapControllers();
-app.MapIntegrationOpenApi();
 app.MapTeamBuilderHealthEndpoints();
 
 app.Run();
