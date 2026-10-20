@@ -11,7 +11,10 @@ on:
       - ready_for_review
 
 permissions:
-  contents: read
+  # enablePullRequestAutoMerge needs contents: write; with only
+  # contents: read it failed with "Resource not accessible by integration".
+  # This job never checks out or runs code from the pull request.
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -20,7 +23,7 @@ concurrency:
 
 jobs:
   approve-and-enable:
-    name: Approve and enable auto-merge
+    name: Enable Dependabot auto-merge
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
 
@@ -92,11 +95,23 @@ jobs:
             exit 0
           fi
 
-          if [[ "$UPDATE_TYPE" == "version-update:semver-minor" || "$UPDATE_TYPE" == "version-update:semver-patch" ]]; then
-            gh pr review "$PR_NUMBER" --repo "$REPO" --approve
-            echo "Approved patch/minor Dependabot update." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Skipped approval: update type '${UPDATE_TYPE}' is not patch or minor." >> "$GITHUB_STEP_SUMMARY"
+          # No bot approval: github-actions[bot] approving a PR with this
+          # repository's own token is self-approval presented as a review,
+          # and the main ruleset does not require an approving review.
+          if [[ "$UPDATE_TYPE" != "version-update:semver-minor" && "$UPDATE_TYPE" != "version-update:semver-patch" ]]; then
+            echo "Skipping: update type '${UPDATE_TYPE}' is not patch or minor; merge it by hand after review." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Native auto-merge only waits for the checks the main ruleset
+          # requires. Until the Reviewer Agent is one of them, arming it here
+          # would let a Dependabot PR merge without the Reviewer Agent gate
+          # that pr-auto-merge.yml applies to every other PR.
+          if ! gh api "repos/${REPO}/rules/branches/main" \
+            --jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | index("Reviewer Agent") != null' \
+            | grep -qx true; then
+            echo "Skipping: 'Reviewer Agent' is not a required status check on main, so auto-merge would bypass it. See docs/branch-protection.md." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
 
           if [[ -n "$auto_merge_enabled" ]]; then
@@ -109,4 +124,4 @@ jobs:
             -f query='mutation($pullRequestId:ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) { pullRequest { id } } }' \
             >/dev/null
 
-          echo "Enabled squash auto-merge." >> "$GITHUB_STEP_SUMMARY"
+          echo "Enabled squash auto-merge; GitHub merges once every required check, including the Reviewer Agent, passes." >> "$GITHUB_STEP_SUMMARY"

@@ -77,6 +77,8 @@ common_env=(
   HEAD_SHA="headsha1"
   AUTHOR="Copilot"
   PR_NUMBER="42"
+  RUN_URL="https://github.com/RocketDelivery2/TeamBuilder/actions/runs/1"
+  RETRY_DELAY_SECONDS="0"
 )
 
 compare_file() {
@@ -141,7 +143,28 @@ compare_file "$large_files" > "$mock_dir/compare.json"
 run_scenario "large_diff_inconclusive" "${common_env[@]}"
 assert_eq "$SCENARIO_STATUS" "0" "large_diff_inconclusive: exits 0"
 assert_contains "$SCENARIO_SUMMARY" "Result: **INCONCLUSIVE**" "large_diff_inconclusive: INCONCLUSIVE result"
-assert_contains "$SCENARIO_CHECKRUN_CALLS" "-f conclusion=neutral" "large_diff_inconclusive: posts neutral conclusion"
+# action_required, not neutral: a ruleset that requires this check treats
+# neutral as passing, which would let INCONCLUSIVE satisfy it.
+assert_contains "$SCENARIO_CHECKRUN_CALLS" "-f conclusion=action_required" "large_diff_inconclusive: posts action_required conclusion"
+
+### Scenario 6: GitHub answers 503 to the compare call and to the first
+### check-run post -> both are retried and the result is still published.
+### Without a posted check run the merge gate would see MISSING forever.
+mock_dir="$work_dir/mock_transient_503"; mkdir -p "$mock_dir"
+compare_file '[{"filename":"docs/readme.md","status":"modified","additions":1,"deletions":0,"patch":"+ text"}]' \
+  > "$mock_dir/compare.json"
+run_scenario "transient_503" "${common_env[@]}" MOCK_FAIL_FIRST_N="2" MOCK_POST_FAIL_FIRST_N="1"
+assert_eq "$SCENARIO_STATUS" "0" "transient_503: exits 0 after retrying"
+assert_contains "$SCENARIO_CHECKRUN_CALLS" "-f conclusion=success" "transient_503: PASS still posted"
+assert_contains "$SCENARIO_CHECKRUN_CALLS" "-f details_url=https://github.com/RocketDelivery2/TeamBuilder/actions/runs/1" "transient_503: check run links to the run that produced it"
+
+### Scenario 7: compare keeps failing -> the job fails visibly instead of
+### posting any result.
+mock_dir="$work_dir/mock_compare_down"; mkdir -p "$mock_dir"
+compare_file '[]' > "$mock_dir/compare.json"
+run_scenario "compare_down" "${common_env[@]}" MOCK_FAIL_FIRST_N="10"
+assert_eq "$SCENARIO_STATUS" "1" "compare_down: exits non-zero"
+assert_eq "$SCENARIO_CHECKRUN_CALLS" "" "compare_down: posts no check run"
 
 echo
 echo "Results: $pass passed, $fail failed"

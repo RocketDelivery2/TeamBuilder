@@ -21,8 +21,44 @@ jobs:
       - name: Assign PR to RocketDelivery2
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          gh pr edit "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --add-assignee "RocketDelivery2" \
-            --add-reviewer "RocketDelivery2"
+          set -euo pipefail
+
+          # Idempotent: something else (Dependabot, a reopened PR, a person)
+          # may already have assigned or requested RocketDelivery2, and GitHub
+          # rejects a duplicate assignee ("Assignee has already been taken"),
+          # which used to fail this job on Dependabot PRs.
+          wanted_state() {
+            gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '{
+              assigned: ([.assignees[]?.login] | index("RocketDelivery2") != null),
+              requested: ([.requested_reviewers[]?.login] | index("RocketDelivery2") != null),
+              is_author: (.user.login == "RocketDelivery2")
+            }'
+          }
+
+          state="$(wanted_state)"
+          args=()
+          if [[ "$(jq -r '.assigned' <<<"$state")" != "true" ]]; then
+            args+=(--add-assignee "RocketDelivery2")
+          fi
+          # GitHub cannot request a review from a PR's own author.
+          if [[ "$(jq -r '.requested' <<<"$state")" != "true" && "$(jq -r '.is_author' <<<"$state")" != "true" ]]; then
+            args+=(--add-reviewer "RocketDelivery2")
+          fi
+
+          if [[ "${#args[@]}" -eq 0 ]]; then
+            echo "RocketDelivery2 is already assigned and requested."
+            exit 0
+          fi
+
+          if ! gh pr edit "$PR_NUMBER" --repo "$REPO" "${args[@]}"; then
+            # Lost a race with another assigner: fine if the end state holds.
+            state="$(wanted_state)"
+            if jq -e '.assigned and (.requested or .is_author)' <<<"$state" >/dev/null; then
+              echo "RocketDelivery2 was assigned and requested concurrently; nothing left to do."
+              exit 0
+            fi
+            exit 1
+          fi

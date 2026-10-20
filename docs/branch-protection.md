@@ -31,7 +31,7 @@ enable, at minimum:
    published by `pr-reviewer-agent.yml`. Marking it required means GitHub
    itself will block a merge if that check is missing, pending, or not a
    `success`, as an independent, workflow-external backstop to the
-   in-workflow `require_reviewer_pass()` query.
+   in-workflow `reviewer_status_for_sha()` query.
 3. **Require branches to be up to date before merging**, if available,
    so a required check's result cannot be reused against a commit other
    than the one it actually evaluated.
@@ -60,7 +60,7 @@ audit.
   Reviewer Agent's result. GitHub's native auto-merge would then wait until
   branch protection's required-status-checks condition is satisfied before
   actually merging (if `Reviewer Agent` is configured as required), but the
-  workflow's own `require_reviewer_pass()` re-checks are what prevent an
+  workflow's own `reviewer_status_for_sha()` re-checks are what prevent an
   *immediate* `gh pr merge --squash` (no `--auto`) from happening the instant
   `mergeStateStatus` reads `CLEAN` for any other reason.
 - **The in-workflow gate alone**, without `Reviewer Agent` configured as a
@@ -73,21 +73,41 @@ audit.
 Both controls must be verified independently; `pr-auto-merge.yml` and
 `pr-reviewer-agent.yml` only change the workflow half.
 
+## Current state of `main` (read 2026-10-20)
+
+The active ruleset is **TeamBuilder - Main Protection** (id `25248011`,
+enforcement `active`, no bypass actors reported). It blocks deletion and
+force pushes, requires linear history, requires a pull request (0
+approving reviews, squash only), requests a Copilot code review on push,
+and requires these status checks from GitHub Actions:
+
+- `build` (`.NET` workflow)
+- `Markdown lint` (`Markdown` workflow)
+- `Reviewer Agent` (posted by `pr-reviewer-agent.yml`; added 2026-10-20)
+
+With `Reviewer Agent` required, GitHub itself blocks a merge while the
+Reviewer Agent result for the head commit is missing, `failure` or
+`action_required`, and `dependabot-auto-merge.yml` arms native auto-merge
+for patch and minor Dependabot updates. The Reviewer Agent fails any
+non-owner PR that changes `.github/workflows/` or `scripts/ci/`, which
+includes Dependabot's GitHub Actions updates; those need the owner to
+review and merge them.
+
+If `Reviewer Agent` is ever removed from the required checks, re-add it in
+**Settings → Rules → Rulesets → TeamBuilder - Main Protection → Require
+status checks to pass → Add checks** with source **GitHub Actions**.
+
 ## Verifying the configuration
 
-Repository admins can confirm the current state with:
+Anyone with read access can see the rules that apply to `main`:
 
 ```sh
-gh api repos/RocketDelivery2/TeamBuilder/branches/main/protection \
-  --jq '{required_status_checks: .required_status_checks.contexts, strict: .required_status_checks.strict, enforce_admins: .enforce_admins.enabled}'
+gh api repos/RocketDelivery2/TeamBuilder/rules/branches/main \
+  --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'
 ```
 
-or, if the repository uses rulesets instead of classic branch protection:
+Listing rulesets with their bypass actors needs administrator access:
 
 ```sh
-gh api repos/RocketDelivery2/TeamBuilder/rulesets --jq '.[] | {name, enforcement, target}'
+gh api repos/RocketDelivery2/TeamBuilder/rulesets/25248011 --jq '{name, enforcement, bypass_actors}'
 ```
-
-This repository's automation does not have permission to read or change
-branch protection or rulesets; confirming and configuring them is a manual
-administrative step outside the scope of any PR.

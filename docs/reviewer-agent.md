@@ -25,7 +25,9 @@ partial mitigation, not a cryptographically tamper-proof one.
   below) and maps the result to `PASS`, `FAIL`, or `INCONCLUSIVE`.
 - It publishes the result as a GitHub Check Run named `Reviewer Agent`,
   scoped to the exact head SHA, with conclusion `success` / `failure` /
-  `neutral` respectively. The check run's summary text explicitly states:
+  `action_required` respectively. `INCONCLUSIVE` is deliberately not
+  `neutral`: GitHub counts `neutral` as passing when a ruleset requires the
+  check, so a diff routed to a human would satisfy the requirement. The check run's summary text explicitly states:
   **"NOT a GitHub-approved human review."** This is deliberate: an AI-
   generated automated check must never be presented or interpreted as an
   "approved" GitHub pull request review, and nothing in this design creates
@@ -48,6 +50,10 @@ partial mitigation, not a cryptographically tamper-proof one.
    so it is routed to `INCONCLUSIVE` (which the merge gate treats the same as
    `FAIL` — never merge) rather than a blind `PASS`.
 
+It is a deterministic policy checker. It does not read or judge what the
+code does, it is not a model-based or human code review, and a `PASS`
+means only that none of the three rules above tripped.
+
 These checks are intentionally simple and auditable. No model or external
 service is called, and no code from the PR is ever executed — both choices
 avoid introducing a prompt-injection or arbitrary-code-execution surface
@@ -59,11 +65,12 @@ driven by attacker-controlled diff content.
 check that queries `GET repos/{repo}/commits/{head_sha}/check-runs`, filters
 for runs where `name == "Reviewer Agent"` **and** `app.slug == "github-actions"`
 **and** `external_id == "teambuilder-pr-reviewer-agent"`, takes the most
-recently completed matching run, and requires
+recently created matching run, and requires
 `status == "completed" && conclusion == "success"`. Anything else —
 no matching check run (`MISSING`), a check run with a matching name but the
 wrong app/external_id (also treated as `MISSING` — see below), still running
-(`PENDING`), `failure` (`FAIL`), or `neutral` (`INCONCLUSIVE`) — is treated
+(`PENDING`), `failure` (`FAIL`), or any other conclusion such as
+`action_required` (`INCONCLUSIVE`) — is treated
 identically: refuse to merge or enable auto-merge, and disable any auto-merge
 that was previously armed, since its passing result no longer applies to the
 current state.
@@ -89,22 +96,34 @@ older commit is simply never returned when the query is made for a newer
 one. There is no separate "is this review stale" timestamp check needed,
 because "stale" and "wrong SHA" are the same condition here.
 
-Because `pull_request_target` events don't fire again once the Reviewer
-Agent finishes (that's a `check_run` event, a different trigger type),
-`pr-auto-merge.yml` also listens for `check_run: types: [completed]` so the
-merge gate re-evaluates once a passing (or failing) Reviewer Agent result is
-available. That event's `check_run.pull_requests[0].number` field is used
-**only** to resolve which PR to re-evaluate — every other fact needed to
-make the merge decision (base ref, head repo, author, draft state, and
-critically the *current* head SHA) is re-resolved fresh via
-`gh pr view $PR_NUMBER --json ...` rather than trusted from the triggering
-payload, and the Reviewer Agent status itself is independently re-queried by
-that freshly-resolved head SHA (never from the `check_run` payload's own
-`head_sha` field). If that PR number is absent (the check run is not
-associated with any open PR) or cannot be resolved (`gh pr view` fails,
-e.g. the PR was closed between the check run completing and this workflow
-running), the event is skipped with no merge calls made — fail closed, not
-fail open.
+Because `pull_request_target` events fire before the Reviewer Agent has
+posted anything, `pr-auto-merge.yml` also runs on `workflow_run` when the
+`PR Reviewer Agent` workflow completes. It does not use a `check_run`
+trigger: the Reviewer Agent posts its check run with the default
+`GITHUB_TOKEN`, and GitHub never starts workflows for events caused by that
+token, so a `check_run` trigger only ever fired for other apps' checks
+(CodeQL, dependency submission). Those runs shared the per-PR concurrency
+group and cancelled the real evaluation, which is how PR #191's auto-merge
+run ended up cancelled.
+
+The `workflow_run` payload is used **only** to find the PR (its
+`pull_requests[0].number`, or else the single open PR whose head is the
+reviewed commit) and the commit that was reviewed. Everything the decision
+needs (state, base ref, head repo, author, draft state and the *current*
+head SHA) is read fresh from `GET repos/{repo}/pulls/{number}`. If the
+current head is not the commit that was reviewed, the run skips: that
+head's own review will trigger another evaluation. If the PR cannot be
+resolved, is closed, or is ambiguous, the run skips with no merge calls
+made: fail closed, not fail open.
+
+Reads from the GitHub API are retried up to four times with backoff, so a
+transient 502/503 does not end a run. The Reviewer Agent check runs are
+queried with `check_name=Reviewer Agent` so a commit with more than one page
+of check runs cannot hide them, and when a review was re-run the newest run
+decides. If the Reviewer Agent result still cannot be read after retries,
+the run fails without merging and without disarming an auto-merge a valid
+review armed. A PR whose merge state is `DIRTY` (conflict with `main`) is
+skipped with a message instead of attempting auto-merge.
 
 Existing safeguards are unchanged and still enforced at the same decision
 points: draft PRs, forked PRs, untrusted authors, `fail_if_head_moved`
