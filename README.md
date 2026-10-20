@@ -217,6 +217,18 @@ game's host and current participants, and its distance is approximate (about
 1 km). There is no address geocoding, no H3 index and no worldwide search
 service; see [the API reference](docs/api.md#discovery--apiv1discover).
 
+### Integration API (other applications)
+- `POST /api/v1/players/me/api-keys` - Create an integration API key (shown once; stored hashed)
+- `GET /api/v1/players/me/api-keys` / `DELETE …/{id}` - The caller's keys (prefix only) / revoke one
+- `GET /api/integration/v1/occurrences?from=&to=` - Games the key's owner hosts, with roster totals (`X-Api-Key`)
+- `GET /api/integration/v1/occurrences/{id}/roster` - One hosted game's roster in the `teambuilder.roster.v1` contract
+- `GET /api/integration/v1/openapi.json` - The integration OpenAPI document (published in every environment)
+
+Another application (a league site, a scoreboard, a club portal) reads a host's
+games with an API key the host creates and can revoke. A key is read-only in v1,
+limited to its owner's hosted games, rate limited per key, and never works on
+`/api/v1`. See the [integration API guide](docs/integration-api.md).
+
 ### Players
 - `GET /api/v1/players/{id}` - Get player by ID
 - `GET /api/v1/players/username/{username}` - Get player by username
@@ -621,6 +633,8 @@ not verify their current ownership, availability, or operational status.
 | OIDC rollout plan | [docs/oidc-rollout.md](docs/oidc-rollout.md) |
 | Authentication plan | [docs/auth-plan.md](docs/auth-plan.md) |
 | API reference | [docs/api.md](docs/api.md) |
+| Integration API guide (API keys, `teambuilder.roster.v1`) | [docs/integration-api.md](docs/integration-api.md) |
+| `teambuilder.roster.v1` JSON Schema | [docs/schemas/teambuilder-roster-v1.schema.json](docs/schemas/teambuilder-roster-v1.schema.json) |
 | Private QA (basketball web client) | [docs/private-qa.md](docs/private-qa.md) |
 | Deployment guide | [docs/deployment.md](docs/deployment.md) |
 | Historical deployment recommendations | [docs/deployment-next-steps.md](docs/deployment-next-steps.md) |

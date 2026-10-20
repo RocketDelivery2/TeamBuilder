@@ -416,6 +416,12 @@ characteristics or as the sole basis for a high-impact decision.
 
 ## Interoperability and ingestion
 
+The first outbound interface exists: the read-only public integration API
+(`/api/integration/v1`, contract `teambuilder.roster.v1`), authenticated by
+player-owned, hashed, revocable API keys scoped to the owner's hosted games. See
+[`../integration-api.md`](../integration-api.md). Organisation-level keys, write
+scopes, webhooks and ingestion are not built yet.
+
 Use **TeamBuilder Roster Language (TBRL)** as a versioned, provider-neutral
 JSON interchange contract. The draft v0.1 architecture, schema, and example
 are in [`tbrl-v0.1.md`](tbrl-v0.1.md) and

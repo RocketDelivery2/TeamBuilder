@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teambuilder.example/schemas/teambuilder-roster-v1.schema.json",
+  "title": "TeamBuilder roster v1 (teambuilder.roster.v1)",
+  "description": "Response of GET /api/integration/v1/occurrences/{occurrenceId}/roster. Within v1, properties and code values may be added but are never renamed, removed or retyped, so additional properties are allowed and clients should treat unknown codes as 'other'.",
+  "type": "object",
+  "required": [
+    "schema",
+    "generatedAtUtc",
+    "occurrence",
+    "venue",
+    "requirements",
+    "participants"
+  ],
+  "properties": {
+    "schema": {
+      "const": "teambuilder.roster.v1"
+    },
+    "generatedAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "occurrence": {
+      "$ref": "#/$defs/occurrence"
+    },
+    "venue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/venue"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/requirement"
+      }
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/participant"
+      }
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "occurrence": {
+      "description": "One game the key's owner hosts. Also the item of GET /api/integration/v1/occurrences.",
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "activityCode",
+        "status",
+        "startsAtUtc",
+        "endsAtUtc",
+        "timeZoneId",
+        "seriesId",
+        "teamId",
+        "requiredCount",
+        "supplyCount",
+        "openQuantity",
+        "isRosterReady",
+        "createdAtUtc",
+        "updatedAtUtc"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activityCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "examples": [
+            "planned",
+            "open",
+            "in_progress",
+            "completed",
+            "cancelled",
+            "archived"
+          ]
+        },
+        "startsAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endsAtUtc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "timeZoneId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seriesId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "teamId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "requiredCount": {
+          "$ref": "#/$defs/count"
+        },
+        "supplyCount": {
+          "$ref": "#/$defs/count"
+        },
+        "openQuantity": {
+          "$ref": "#/$defs/count"
+        },
+        "isRosterReady": {
+          "type": "boolean"
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAtUtc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "venue": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "addressLine1",
+        "addressLine2",
+        "city",
+        "stateOrProvince",
+        "postalCode",
+        "countryCode",
+        "latitude",
+        "longitude",
+        "timeZoneId",
+        "type",
+        "privacy"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "addressLine1": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "addressLine2": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "city": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stateOrProvince": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "postalCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "countryCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeZoneId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latitude": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -180,
+          "maximum": 180
+        },
+        "type": {
+          "type": "string",
+          "examples": [
+            "indoor",
+            "outdoor",
+            "virtual"
+          ]
+        },
+        "privacy": {
+          "type": "string",
+          "examples": [
+            "public",
+            "private"
+          ],
+          "description": "A private venue's address is for the host and players only; do not republish it."
+        }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "required": [
+        "id",
+        "roleCode",
+        "displayPosition",
+        "sourceRoleLabel",
+        "requiredCount",
+        "supplyCount",
+        "openQuantity"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "roleCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayPosition": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceRoleLabel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requiredCount": {
+          "$ref": "#/$defs/count"
+        },
+        "supplyCount": {
+          "$ref": "#/$defs/count"
+        },
+        "openQuantity": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "participant": {
+      "description": "A player holding a spot. Public profile fields only; never an email or sign-in identity.",
+      "type": "object",
+      "required": [
+        "assignmentId",
+        "playerId",
+        "username",
+        "displayName",
+        "requirementId",
+        "roleCode",
+        "status",
+        "source",
+        "joinedAtUtc",
+        "confirmedAtUtc",
+        "checkedInAtUtc"
+      ],
+      "properties": {
+        "assignmentId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "playerId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "username": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requirementId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "roleCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "examples": [
+            "reserved",
+            "confirmed",
+            "checked_in",
+            "active"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "examples": [
+            "player",
+            "host",
+            "import",
+            "system"
+          ]
+        },
+        "joinedAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "confirmedAtUtc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "checkedInAtUtc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

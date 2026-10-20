@@ -5,6 +5,7 @@ export type Route =
   | { name: 'create' }
   | { name: 'discover' }
   | { name: 'notifications' }
+  | { name: 'api-keys' }
   | { name: 'game'; id: string; visit?: string }
   | { name: 'auth-callback' }
   | { name: 'not-found' };
@@ -14,6 +15,7 @@ export function parseRoute(pathname: string, search = ''): Route {
   if (pathname === '/new') return { name: 'create' };
   if (pathname === '/discover') return { name: 'discover' };
   if (pathname === '/notifications') return { name: 'notifications' };
+  if (pathname === '/settings/api-keys') return { name: 'api-keys' };
   if (pathname === '/auth/callback') return { name: 'auth-callback' };
   const game = /^\/games\/([0-9a-fA-F-]{36})\/?$/.exec(pathname);
   // A notification click (?n=…) into a game is its own visit, even when that game is already

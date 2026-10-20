@@ -382,6 +382,37 @@ public sealed class IntegrationApiControllerIntegrationTests : IClassFixture<Tea
         (await SendAsync(HttpMethod.Get, KeysUrl, token, client: client)).StatusCode.Should().Be(HttpStatusCode.OK, "listing is not limited");
     }
 
+    // ── published OpenAPI ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task OpenApiDocument_IsAnonymous_AndHoldsOnlyTheIntegrationApi()
+    {
+        var response = await _client.GetAsync($"{ApiUrl}/openapi.json");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
+        var document = await response.Content.ReadFromJsonAsync<JsonElement>();
+        document.GetProperty("openapi").GetString().Should().StartWith("3.0");
+        document.GetProperty("info").GetProperty("title").GetString().Should().Be("TeamBuilder Integration API");
+        var paths = document.GetProperty("paths").EnumerateObject().Select(p => p.Name).ToList();
+        paths.Should().BeEquivalentTo(
+            "/api/integration/v1/me",
+            "/api/integration/v1/occurrences",
+            "/api/integration/v1/occurrences/{occurrenceId}/roster");
+        var scheme = document.GetProperty("components").GetProperty("securitySchemes").GetProperty("ApiKey");
+        scheme.GetProperty("type").GetString().Should().Be("apiKey");
+        scheme.GetProperty("in").GetString().Should().Be("header");
+        scheme.GetProperty("name").GetString().Should().Be("X-Api-Key");
+        document.GetProperty("security")[0].TryGetProperty("ApiKey", out _).Should().BeTrue();
+        document.GetProperty("components").GetProperty("schemas").TryGetProperty("IntegrationRosterDto", out _).Should().BeTrue();
+
+        // The app's own (Development) document keeps every other operation and none of these.
+        var appDocument = await _client.GetFromJsonAsync<JsonElement>("/swagger/v1/swagger.json");
+        var appPaths = appDocument.GetProperty("paths").EnumerateObject().Select(p => p.Name).ToList();
+        appPaths.Should().Contain(["/api/v1/players/me/api-keys", "/api/v1/events/{occurrenceId}/roster"]);
+        appPaths.Should().NotContain(p => p.StartsWith("/api/integration/", StringComparison.Ordinal));
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private Task<(Guid PlayerId, string Token)> NewPlayerAsync(string? displayName = null) => NewPlayerAsync(_factory, displayName);
