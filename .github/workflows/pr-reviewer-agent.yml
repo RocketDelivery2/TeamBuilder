@@ -4,7 +4,8 @@ name: PR Reviewer Agent
 # run by a workflow that is separate from pr-auto-merge.yml and has no
 # ability to merge, approve, or write pull request state. Posts a Check Run
 # named "Reviewer Agent" scoped to the exact head commit SHA with a
-# PASS / FAIL / INCONCLUSIVE result.
+# PASS / FAIL / INCONCLUSIVE result (check conclusions success / failure /
+# action_required).
 #
 # This is an automated, deterministic policy check -- not a human code
 # review, and explicitly NOT represented as a GitHub "approved" pull request
@@ -54,8 +55,29 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          # Retries transient GitHub API failures (502/503, secondary rate
+          # limits). Without a posted check run the merge gate sees MISSING
+          # and the PR silently never merges, so one 503 must not end the
+          # review. RETRY_DELAY_SECONDS exists so the mocked tests don't sleep.
+          gh_retry() {
+            local attempt=1 delay="${RETRY_DELAY_SECONDS:-2}"
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$attempt" -ge 4 ]]; then
+                return 1
+              fi
+              echo "::warning::GitHub API call failed (attempt ${attempt} of 4); retrying in ${delay}s." >&2
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
 
           # The compare API pins this review to the two immutable commits
           # this run was triggered for ("current PR files" would instead
@@ -63,7 +85,7 @@ jobs:
           # race a later push). A later push produces a new HEAD_SHA and a
           # brand new, separate check run; this run can never be
           # reinterpreted as covering a different commit.
-          compare_json="$(gh api "repos/${BASE_REPO}/compare/${BASE_SHA}...${HEAD_SHA}")"
+          compare_json="$(gh_retry gh api "repos/${BASE_REPO}/compare/${BASE_SHA}...${HEAD_SHA}")"
 
           files_json="$(jq -c '[.files[]? | {filename, status, additions, deletions, patch: (.patch // "")}]' <<<"$compare_json")"
           file_count="$(jq 'length' <<<"$files_json")"
@@ -123,10 +145,13 @@ jobs:
             reasons+=("No control-plane path changes by a non-owner author, no secret-like patterns detected, diff size within automated-review bounds (${file_count} files, ${total_changes} changed lines).")
           fi
 
+          # INCONCLUSIVE is action_required, not neutral: GitHub counts a
+          # neutral conclusion as passing when a ruleset requires this check,
+          # which would let a diff routed to a human merge without one.
           case "$result" in
             PASS) conclusion="success" ;;
             FAIL) conclusion="failure" ;;
-            *) conclusion="neutral" ;;
+            *) conclusion="action_required" ;;
           esac
 
           {
@@ -160,9 +185,10 @@ jobs:
           # reviewer_status_for_sha() and docs/reviewer-agent.md) before
           # trusting a check run named "Reviewer Agent" -- raising the bar
           # above "any check run happens to be named the same thing".
-          gh api "repos/${BASE_REPO}/check-runs" \
+          gh_retry gh api "repos/${BASE_REPO}/check-runs" \
             -f name="Reviewer Agent" \
             -f head_sha="$HEAD_SHA" \
+            -f details_url="$RUN_URL" \
             -f status="completed" \
             -f conclusion="$conclusion" \
             -f external_id="teambuilder-pr-reviewer-agent" \

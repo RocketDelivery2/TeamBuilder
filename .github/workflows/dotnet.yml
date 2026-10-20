@@ -28,4 +28,25 @@ jobs:
     - name: Build
       run: dotnet build TeamBuilder.slnx --configuration Release --no-restore
     - name: Test
-      run: dotnet test TeamBuilder.slnx --configuration Release --no-build --verbosity normal
+      run: dotnet test TeamBuilder.slnx --configuration Release --no-build --verbosity normal --logger trx --results-directory TestResults
+    # The test log runs to hundreds of thousands of characters of application
+    # output, so a failing test's name and message are hard to find in it.
+    # Repeat them at the end of the log and in the job summary.
+    - name: List failed tests
+      if: failure()
+      shell: python3 {0}
+      run: |
+        import glob, os, xml.etree.ElementTree as ET
+        ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+        lines = []
+        for path in sorted(glob.glob("TestResults/**/*.trx", recursive=True)):
+            for result in ET.parse(path).getroot().iterfind(".//t:UnitTestResult", ns):
+                if result.get("outcome") != "Failed":
+                    continue
+                message = result.findtext("t:Output/t:ErrorInfo/t:Message", "", ns).strip()
+                lines.append(f"- `{result.get('testName')}` ({result.get('duration')})")
+                lines.extend(f"    {line}" for line in message.splitlines()[:15])
+        report = "\n".join(["## Failed tests", ""] + (lines or ["No failed tests were recorded in the TRX results."]))
+        print(report)
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+            summary.write(report + "\n")

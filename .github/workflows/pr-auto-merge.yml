@@ -9,11 +9,18 @@ on:
       - reopened
       - synchronize
       - ready_for_review
-  # Re-evaluate once the independent Reviewer Agent posts its result: the
-  # pull_request_target events above fire before that check run exists, so
-  # without this trigger a PR could sit "eligible but unreviewed" forever if
-  # no further push ever happens.
-  check_run:
+  # Re-evaluate once the independent Reviewer Agent finishes: the
+  # pull_request_target events above fire before its check run exists.
+  # This is a workflow_run trigger, not check_run, because the Reviewer
+  # Agent posts its check run with the default GITHUB_TOKEN, and GitHub
+  # never starts workflows for events caused by that token. A check_run
+  # trigger therefore only ever fired for other apps' checks (CodeQL,
+  # dependency submission), and those runs shared this workflow's
+  # concurrency group and cancelled the real evaluation. workflow_run fires
+  # only when the "PR Reviewer Agent" workflow itself completes.
+  workflow_run:
+    workflows:
+      - PR Reviewer Agent
     types:
       - completed
 
@@ -26,7 +33,7 @@ permissions:
   # own result. See pr-reviewer-agent.yml and docs/reviewer-agent.md.
 
 concurrency:
-  group: pr-auto-merge-${{ github.event.pull_request.number || github.event.check_run.pull_requests[0].number || github.sha }}
+  group: pr-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -41,8 +48,9 @@ jobs:
           BASE_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER_FROM_EVENT: ${{ github.event.pull_request.number }}
-          CHECK_RUN_NAME: ${{ github.event.check_run.name }}
-          CHECK_RUN_PR_NUMBER: ${{ github.event.check_run.pull_requests[0].number }}
+          WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_RUN_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -54,35 +62,81 @@ jobs:
           owner="${BASE_REPO%%/*}"
           repo="${BASE_REPO##*/}"
 
-          # check_run events don't carry PR context in the fields this script
-          # otherwise reads from `github.event.pull_request.*`; resolve it
-          # fresh from the API instead of trusting anything from the diff
-          # that triggered the check run.
-          if [[ "$EVENT_NAME" == "check_run" ]]; then
-            if [[ "$CHECK_RUN_NAME" != "Reviewer Agent" ]]; then
-              echo "Skipping: check_run event for '${CHECK_RUN_NAME:-<unknown>}', not Reviewer Agent." >> "$GITHUB_STEP_SUMMARY"
+          # Reads retry transient GitHub API failures (502/503, secondary rate
+          # limits) instead of failing the run on the first error.
+          # RETRY_DELAY_SECONDS exists so the mocked tests don't sleep.
+          gh_retry() {
+            local attempt=1 delay="${RETRY_DELAY_SECONDS:-2}"
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$attempt" -ge 4 ]]; then
+                return 1
+              fi
+              echo "::warning::GitHub API call failed (attempt ${attempt} of 4); retrying in ${delay}s." >&2
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          # workflow_run events don't carry the pull request fields this
+          # script otherwise reads from `github.event.pull_request.*`, so
+          # resolve them fresh from the API. The payload is only used to find
+          # which PR and which reviewed commit the event is about.
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$WORKFLOW_RUN_EVENT" != "pull_request_target" ]]; then
+              echo "Skipping: Reviewer Agent run was triggered by '${WORKFLOW_RUN_EVENT:-<unknown>}', not a pull request." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-            if [[ -z "$CHECK_RUN_PR_NUMBER" || "$CHECK_RUN_PR_NUMBER" == "null" ]]; then
-              echo "Skipping: Reviewer Agent check run is not associated with an open pull request." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
+            PR_NUMBER="$WORKFLOW_RUN_PR_NUMBER"
+            if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+              # workflow_run.pull_requests can be empty (for example for a
+              # fork head). Fall back to the open PRs whose head is exactly
+              # the reviewed commit, and act only when that is unambiguous.
+              PR_NUMBER=""
+              if pulls_json="$(gh_retry gh api "repos/${BASE_REPO}/commits/${WORKFLOW_RUN_HEAD_SHA}/pulls")"; then
+                PR_NUMBER="$(jq -r --arg sha "$WORKFLOW_RUN_HEAD_SHA" --arg base "$BASE_REPO" '
+                  [.[]? | select(.state == "open" and .head.sha == $sha and .base.repo.full_name == $base) | .number]
+                  | if length == 1 then .[0] else "" end
+                ' <<<"$pulls_json")"
+              fi
+              if [[ -z "$PR_NUMBER" ]]; then
+                echo "Skipping: Reviewer Agent run is not associated with exactly one open pull request." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
             fi
-            PR_NUMBER="$CHECK_RUN_PR_NUMBER"
-            pr_view_json="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json baseRefName,headRepositoryOwner,headRepository,headRefOid,isDraft,author 2>/dev/null)" || {
-              echo "Skipping: could not resolve pull request #${PR_NUMBER} for the check_run event (closed or inaccessible)." >> "$GITHUB_STEP_SUMMARY"
+            # REST, not `gh pr view`: the REST user.login matches the
+            # pull_request_target payload exactly (gh pr view reports bots
+            # as "app/<slug>"), so the trusted-author check means the same
+            # thing for both triggers.
+            pr_rest_json="$(gh_retry gh api "repos/${BASE_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || {
+              echo "Skipping: could not resolve pull request #${PR_NUMBER} for the workflow_run event (inaccessible)." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             }
-            BASE_REF="$(jq -r '.baseRefName' <<<"$pr_view_json")"
-            HEAD_REPO="$(jq -r '((.headRepositoryOwner.login // "") + "/" + (.headRepository.name // ""))' <<<"$pr_view_json")"
-            EVENT_HEAD_SHA="$(jq -r '.headRefOid' <<<"$pr_view_json")"
-            DRAFT="$(jq -r '.isDraft' <<<"$pr_view_json")"
-            AUTHOR="$(jq -r '.author.login' <<<"$pr_view_json")"
+            if [[ "$(jq -r '.state' <<<"$pr_rest_json")" != "open" ]]; then
+              echo "Skipping: pull request #${PR_NUMBER} is no longer open." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            BASE_REF="$(jq -r '.base.ref' <<<"$pr_rest_json")"
+            HEAD_REPO="$(jq -r '.head.repo.full_name // ""' <<<"$pr_rest_json")"
+            EVENT_HEAD_SHA="$(jq -r '.head.sha' <<<"$pr_rest_json")"
+            DRAFT="$(jq -r '.draft' <<<"$pr_rest_json")"
+            AUTHOR="$(jq -r '.user.login' <<<"$pr_rest_json")"
+            # A review that finished for an older commit says nothing about
+            # the current head; that head's own review run will trigger
+            # another evaluation when it completes.
+            if [[ "$EVENT_HEAD_SHA" != "$WORKFLOW_RUN_HEAD_SHA" ]]; then
+              echo "Skipping: Reviewer Agent run reviewed ${WORKFLOW_RUN_HEAD_SHA}, but the PR head is now ${EVENT_HEAD_SHA}." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
           else
             PR_NUMBER="$PR_NUMBER_FROM_EVENT"
           fi
 
           get_pr_state() {
-            gh api graphql \
+            gh_retry gh api graphql \
               -f owner="$owner" \
               -f repo="$repo" \
               -F number="$PR_NUMBER" \
@@ -111,11 +165,18 @@ jobs:
           # default token -- see docs/reviewer-agent.md for the full,
           # honest trust-boundary analysis and the recommended follow-up
           # (a dedicated credential) that would close that remaining gap.
+          #
+          # The query filters by check name server-side so a commit with more
+          # than one page of check runs cannot push the Reviewer Agent's run
+          # out of the response. If a review was re-run, the most recently
+          # created matching run decides. A read that still fails after
+          # retries reports UNAVAILABLE, which never merges and never
+          # disarms auto-merge, so a GitHub outage cannot undo a valid review.
           reviewer_status_for_sha() {
             local sha="$1"
             local checks_json
-            if ! checks_json="$(gh api "repos/${BASE_REPO}/commits/${sha}/check-runs" 2>/dev/null)"; then
-              echo "MISSING"
+            if ! checks_json="$(gh_retry gh api "repos/${BASE_REPO}/commits/${sha}/check-runs?check_name=Reviewer%20Agent&filter=all&per_page=100" 2>/dev/null)"; then
+              echo "UNAVAILABLE"
               return
             fi
             jq -r '
@@ -124,7 +185,7 @@ jobs:
                   and ((.app.slug // "") == "github-actions")
                   and ((.external_id // "") == "teambuilder-pr-reviewer-agent")
                 )]
-                | sort_by(.completed_at // .started_at // "")) as $runs
+                | sort_by([(.started_at // ""), (.id // 0)])) as $runs
               | if ($runs | length) == 0 then "MISSING"
                 else
                   ($runs[-1]) as $latest
@@ -135,6 +196,14 @@ jobs:
                     end
                 end
             ' <<<"$checks_json"
+          }
+
+          fail_if_reviewer_unavailable() {
+            if [[ "$1" == "UNAVAILABLE" ]]; then
+              echo "Could not read the Reviewer Agent result after retries; no merge decision was made." >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::Could not read the Reviewer Agent check run for the current head; refusing to merge."
+              exit 1
+            fi
           }
 
           write_pr_summary() {
@@ -198,6 +267,7 @@ jobs:
             # have changed, or never existed, between the job's first state
             # read and this one. Always queried fresh, for the current head.
             reviewer_status="$(reviewer_status_for_sha "$current_head")"
+            fail_if_reviewer_unavailable "$reviewer_status"
             if [[ "$reviewer_status" != "PASS" ]]; then
               maybe_disable_stale_auto_merge "$auto_merge_enabled"
               echo "::notice::Reviewer Agent status is '${reviewer_status}' for ${current_head}, not PASS; refusing to merge."
@@ -252,6 +322,8 @@ jobs:
             exit 0
           fi
 
+          fail_if_reviewer_unavailable "$reviewer_status"
+
           # Deterministic merge gate (requirements 5 and 6): never proceed
           # unless the independent Reviewer Agent's result for the *exact*
           # current head commit is PASS. MISSING, PENDING, FAIL, and
@@ -264,6 +336,14 @@ jobs:
             if [[ -n "$auto_merge_enabled" ]]; then
               echo "Disabled existing auto-merge because the Reviewer Agent requirement is no longer satisfied." >> "$GITHUB_STEP_SUMMARY"
             fi
+            exit 0
+          fi
+
+          # A conflicted PR can neither merge now nor ever satisfy native
+          # auto-merge until someone resolves it; say so instead of failing on
+          # a rejected auto-merge request.
+          if [[ "$merge_state" == "DIRTY" ]]; then
+            echo "Skipping: PR has a merge conflict with main." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -289,6 +369,7 @@ jobs:
           # taken time, and this is the point where we actually ask GitHub to
           # let the PR merge unattended once required checks finish.
           reviewer_status="$(reviewer_status_for_sha "$current_head")"
+          fail_if_reviewer_unavailable "$reviewer_status"
           if [[ "$reviewer_status" != "PASS" ]]; then
             echo "Skipping: Reviewer Agent status is '${reviewer_status}' at the enable-auto-merge decision point." >> "$GITHUB_STEP_SUMMARY"
             exit 0
