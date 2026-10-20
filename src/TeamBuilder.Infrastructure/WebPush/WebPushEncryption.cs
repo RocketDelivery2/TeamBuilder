@@ -40,6 +40,13 @@ public static class WebPushEncryption
         {
             return false;
         }
+        catch (PlatformNotSupportedException)
+        {
+            // Some platform cryptography providers report malformed curve parameters as
+            // unsupported instead of using CryptographicException. Treat them as invalid
+            // client input rather than allowing the exception to escape validation.
+            return false;
+        }
     }
 
     /// <summary>Encrypts with a fresh ephemeral key and random salt.</summary>
