@@ -72,6 +72,48 @@ public class JoinRequestPendingUniqueIndexIntegrationTests : IAsyncLifetime
         JoinRequestConflictClassifier.IsDuplicatePendingJoinRequest(dbUpdateException).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task ConcurrentPendingRequestInserts_ForSamePair_AllowExactlyOneAtSqlServer()
+    {
+        var (teamId, playerId) = await SeedTeamAndPlayerAsync();
+        var start = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<DbUpdateException?> InsertAsync()
+        {
+            await using var context = _db.CreateContext();
+            context.JoinRequests.Add(NewRequest(teamId, playerId, RequestStatus.Pending));
+            await start.Task;
+
+            try
+            {
+                await context.SaveChangesAsync();
+                return null;
+            }
+            catch (DbUpdateException ex)
+            {
+                return ex;
+            }
+        }
+
+        // Both independent contexts reach the gate before either writes, so the database
+        // unique index is exercised under competing inserts rather than sequential retries.
+        var inserts = new[] { InsertAsync(), InsertAsync() };
+        start.SetResult(true);
+        var results = await Task.WhenAll(inserts);
+
+        results.Count(exception => exception is null).Should().Be(1);
+        var conflict = results.Single(exception => exception is not null)!;
+        var sqlException = conflict.InnerException as SqlException;
+        sqlException.Should().NotBeNull("the losing insert must be rejected by SQL Server");
+        sqlException!.Number.Should().BeOneOf(2601, 2627);
+        sqlException.Message.Should().Contain("UX_JoinRequests_TeamId_PlayerId_Pending");
+        JoinRequestConflictClassifier.IsDuplicatePendingJoinRequest(conflict).Should().BeTrue();
+
+        await using var verify = _db.CreateContext();
+        (await verify.JoinRequests.CountAsync(jr => jr.TeamId == teamId && jr.PlayerId == playerId && jr.Status == RequestStatus.Pending))
+            .Should().Be(1);
+    }
+
     [Theory]
     [InlineData(RequestStatus.Approved)]
     [InlineData(RequestStatus.Rejected)]

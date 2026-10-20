@@ -73,6 +73,48 @@ public class TeamMembershipUniqueIndexIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConcurrentActiveMembershipInserts_ForSamePair_AllowExactlyOneAtSqlServer()
+    {
+        var (teamId, playerId) = await SeedTeamAndPlayerAsync();
+        var start = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<DbUpdateException?> InsertAsync()
+        {
+            await using var context = _db.CreateContext();
+            context.TeamMembers.Add(NewMember(teamId, playerId, isActive: true));
+            await start.Task;
+
+            try
+            {
+                await context.SaveChangesAsync();
+                return null;
+            }
+            catch (DbUpdateException ex)
+            {
+                return ex;
+            }
+        }
+
+        // Both independent contexts reach the gate before either writes, so the database
+        // unique index is exercised under competing inserts rather than sequential retries.
+        var inserts = new[] { InsertAsync(), InsertAsync() };
+        start.SetResult(true);
+        var results = await Task.WhenAll(inserts);
+
+        results.Count(exception => exception is null).Should().Be(1);
+        var conflict = results.Single(exception => exception is not null)!;
+        var sqlException = conflict.InnerException as SqlException;
+        sqlException.Should().NotBeNull("the losing insert must be rejected by SQL Server");
+        sqlException!.Number.Should().BeOneOf(2601, 2627);
+        sqlException.Message.Should().Contain("UX_TeamMembers_TeamId_PlayerId");
+        TeamMembershipConflictClassifier.IsDuplicateTeamMembership(conflict).Should().BeTrue();
+
+        await using var verify = _db.CreateContext();
+        (await verify.TeamMembers.CountAsync(tm => tm.TeamId == teamId && tm.PlayerId == playerId && tm.IsActive))
+            .Should().Be(1);
+    }
+
+    [Fact]
     public async Task InactiveHistoricalRow_PlusOneActiveRow_ForSamePair_Succeeds()
     {
         var (teamId, playerId) = await SeedTeamAndPlayerAsync();
