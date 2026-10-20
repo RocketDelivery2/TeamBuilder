@@ -26,6 +26,7 @@ public class TeamBuilderDbContext : DbContext
     public DbSet<InAppNotification> InAppNotifications => Set<InAppNotification>();
     public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
     public DbSet<PushDelivery> PushDeliveries => Set<PushDelivery>();
+    public DbSet<IntegrationApiKey> IntegrationApiKeys => Set<IntegrationApiKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

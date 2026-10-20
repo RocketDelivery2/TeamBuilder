@@ -99,6 +99,8 @@ public class TeamBuilderWebApplicationFactory : WebApplicationFactory<Program>
                 ["RateLimiting:Discovery:PermitLimit"] = "100000",
                 ["RateLimiting:Subscriptions:PermitLimit"] = "100000",
                 ["RateLimiting:PushSubscriptions:PermitLimit"] = "100000",
+                ["RateLimiting:Integration:PermitLimit"] = "100000",
+                ["RateLimiting:ApiKeys:PermitLimit"] = "100000",
                 // Outbox processing is driven explicitly through OutboxProcessor.ProcessBatchAsync,
                 // so tests are deterministic and never wait on the poll interval.
                 ["Outbox:Enabled"] = "false",

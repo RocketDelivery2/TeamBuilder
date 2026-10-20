@@ -145,6 +145,10 @@ grep -qi "^x-content-type-options: nosniff" <<<"$api_headers" && grep -qi "^cont
   && pass "API security headers present" || fail "API security headers missing"
 [[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' https://localhost/api/v1/players/me)" == "401" ]] \
   && pass "API requires a bearer token through the proxy" || fail "unauthenticated /players/me was not 401"
+[[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' https://localhost/api/integration/v1/openapi.json)" == "200" ]] \
+  && pass "integration OpenAPI document is published" || fail "integration OpenAPI document not served in QA"
+[[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' https://localhost/api/integration/v1/me)" == "401" ]] \
+  && pass "integration API requires an API key" || fail "integration API without a key was not 401"
 
 TB_API_URL=https://localhost TB_WEB_URL=https://localhost TB_HEALTH_URL=skip NODE_EXTRA_CA_CERTS="$work/caddy-root.crt" \
   node scripts/qa/release-smoke.mjs
@@ -155,14 +159,18 @@ search='/api/v1/discover/occurrences?lat=0.0223&lon=150.0456&radiusMiles=15'
 [[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' "https://localhost$search")" == "200" ]] || fail "discovery through the proxy failed"
 "${rel[@]}" stop api >/dev/null
 [[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' "https://localhost$search")" == "502" ]] || fail "proxy did not answer 502 with the API stopped"
+# An integration API key is a credential: Caddy's error entry must not carry the X-Api-Key header.
+smoke_key='tbk_5m0ke0000000_SmokeKeySmokeKeySmokeKeySmokeKeySmokeKey1234'
+[[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' -H "X-Api-Key: $smoke_key" https://localhost/api/integration/v1/me)" == "502" ]] \
+  || fail "proxy did not answer 502 for the integration API with the API stopped"
 "${rel[@]}" up -d --no-build --no-deps --wait --wait-timeout 180 api
 "${rel[@]}" logs proxy api web > "$work/release-logs.txt" 2>&1
 grep -q '"uri":"/api/v1/discover/occurrences?REDACTED"' "$work/release-logs.txt" || fail "proxy logged no redacted error entry for the failed search"
-if grep -Eq 'eyJ[A-Za-z0-9_-]{10,}|lat=|lon=|0\.0223|150\.0456' "$work/release-logs.txt"; then
-  grep -En 'eyJ|lat=|lon=|0\.0223|150\.0456' "$work/release-logs.txt" | head -5 >&2
-  fail "release logs contain a token or search coordinates"
+if grep -Eq 'eyJ[A-Za-z0-9_-]{10,}|lat=|lon=|0\.0223|150\.0456|SmokeKeySmokeKey' "$work/release-logs.txt"; then
+  grep -En 'eyJ|lat=|lon=|0\.0223|150\.0456|SmokeKeySmokeKey' "$work/release-logs.txt" | head -5 >&2
+  fail "release logs contain a token, an API key or search coordinates"
 fi
-pass "proxy, API and web logs carry no search coordinates or token, even for a failed upstream request"
+pass "proxy, API and web logs carry no search coordinates, token or API key, even for a failed upstream request"
 
 api_image="$("${rel[@]}" config --images api 2>/dev/null | head -n 1)"
 api_image="${api_image:-teambuilder-api:local}"

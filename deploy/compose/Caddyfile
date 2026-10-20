@@ -8,7 +8,8 @@
 # Logs: access logging stays off. Errors (for example a 502 while the API restarts) are logged
 # with the request, so every log entry drops the query string, which carries discovery search
 # coordinates, and the Referer. Path, method, status, err_id and headers such as X-Request-Id stay
-# for correlation; Caddy already redacts Authorization and Cookie. A site-level `log` directive
+# for correlation; Caddy already redacts Authorization and Cookie, and the filter also deletes
+# X-Api-Key (integration API keys). A site-level `log` directive
 # would bypass this filter, so give any access log the same `format filter`.
 {
 	log default {
@@ -18,6 +19,7 @@
 			fields {
 				request>uri regexp \?.*$ ?REDACTED
 				request>headers>Referer delete
+				request>headers>X-Api-Key delete
 			}
 		}
 	}
