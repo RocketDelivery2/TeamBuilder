@@ -119,9 +119,38 @@ jobs:
             exit 0
           fi
 
-          gh api graphql \
+          mutation_json="$(gh api graphql \
             -f pullRequestId="$pr_id" \
-            -f query='mutation($pullRequestId:ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) { pullRequest { id } } }' \
-            >/dev/null
+            -f query='mutation($pullRequestId:ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) { pullRequest { id } } }')"
+
+          if ! jq -e '((.errors // []) | length == 0) and ((.data.enablePullRequestAutoMerge.pullRequest.id // "") | length > 0)' <<<"$mutation_json" >/dev/null; then
+            echo "Auto-merge mutation response was missing or contained GraphQL errors; the job failed closed." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::GraphQL did not confirm enabling Dependabot auto-merge; no success was reported."
+            exit 1
+          fi
+
+          auto_merge_confirmed=false
+          for attempt in 1 2 3 4; do
+            verification_json="$(gh api graphql \
+              -f owner="$owner" \
+              -f name="$name" \
+              -F number="$PR_NUMBER" \
+              -f query='query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { autoMergeRequest { enabledAt } } } }')"
+
+            if jq -e '((.errors // []) | length == 0) and (.data.repository.pullRequest.autoMergeRequest.enabledAt != null)' <<<"$verification_json" >/dev/null; then
+              auto_merge_confirmed=true
+              break
+            fi
+
+            if [[ "$attempt" -lt 4 ]]; then
+              sleep "$attempt"
+            fi
+          done
+
+          if [[ "$auto_merge_confirmed" != "true" ]]; then
+            echo "Auto-merge read-back did not confirm enabled state after four attempts; the job failed closed." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Dependabot auto-merge was not enabled after the GraphQL mutation; refusing to report success."
+            exit 1
+          fi
 
           echo "Enabled squash auto-merge; GitHub merges once every required check, including the Reviewer Agent, passes." >> "$GITHUB_STEP_SUMMARY"
