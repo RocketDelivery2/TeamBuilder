@@ -106,6 +106,28 @@ If a reviewed SQL script is required instead, generate it with
 `dotnet ef migrations script --idempotent --output migration.sql` and apply it with your DBA
 process; the API's readiness reports Unhealthy until every migration in the build is applied.
 
+### Duplicate membership and join-request preflight
+
+`EnforceUniqueTeamMembership` requires at most one active `TeamMembers` row per
+`(TeamId, PlayerId)`. `EnforceUniquePendingJoinRequest` requires at most one pending
+`JoinRequests` row per pair. Both migrations check for duplicates before replacing the existing
+non-unique index. If duplicates exist, the migration fails with a targeted message and leaves
+the rows unchanged; it does not choose or delete historical records automatically.
+
+Before retrying a failed migration, stop the release, take or confirm a restorable database
+backup, and review the reported duplicate pairs with the data owner. For each active-membership
+pair, determine which row remains active and mark the other duplicate active rows inactive while
+preserving their history. For each pending-request pair, determine which request remains pending
+and transition the others according to the product's request-history policy; do not delete them
+as an automatic cleanup. Record the decision and verify no active or pending duplicates remain
+before rerunning the migration bundle. Inactive memberships and approved, rejected, or cancelled
+requests are historical rows and are intentionally outside their respective filtered indexes.
+
+The `Down` methods drop the filtered unique index and restore the prior non-unique pair index;
+they do not modify data. That rollback removes the database-enforced invariant. For deployed QA
+or Production databases, follow the runbook's backup and fix-forward/restore guidance rather
+than rolling schema backward in place.
+
 ---
 
 ## Refill delivery operations
