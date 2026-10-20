@@ -14,6 +14,7 @@ public class EventOccurrenceConfiguration : IEntityTypeConfiguration<EventOccurr
     public const string TableName = "Events";
     public const string SeriesStartUniqueIndexName = "UX_Events_SeriesId_ScheduledStartUtc";
     public const string VenueStatusStartIndexName = "IX_Events_VenueId_Status_ScheduledStartUtc";
+    public const string HostStartIndexName = "IX_Events_HostId_ScheduledStartUtc";
 
     public void Configure(EntityTypeBuilder<EventOccurrence> builder)
     {
@@ -96,6 +97,10 @@ public class EventOccurrenceConfiguration : IEntityTypeConfiguration<EventOccurr
         builder.HasIndex(e => new { e.VenueId, e.Status, e.ScheduledStartUtc })
             .HasDatabaseName(VenueStatusStartIndexName)
             .IncludeProperties(e => e.Category);
+        // The integration API lists one host's games in a start window. Leading HostId, it also
+        // serves the host foreign key, so it replaces the former single-column IX_Events_HostId.
+        builder.HasIndex(e => new { e.HostId, e.ScheduledStartUtc })
+            .HasDatabaseName(HostStartIndexName);
         builder.HasIndex(e => e.Status);
         builder.HasIndex(e => e.Category);
         builder.HasIndex(e => e.Region);

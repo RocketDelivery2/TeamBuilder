@@ -104,8 +104,6 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CreatedAtUtc");
 
-                    b.HasIndex("HostId");
-
                     b.HasIndex("Region");
 
                     b.HasIndex("ScheduledStartUtc");
@@ -115,6 +113,9 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                     b.HasIndex("Status");
 
                     b.HasIndex("TeamId");
+
+                    b.HasIndex("HostId", "ScheduledStartUtc")
+                        .HasDatabaseName("IX_Events_HostId_ScheduledStartUtc");
 
                     b.HasIndex("SeriesId", "ScheduledStartUtc")
                         .IsUnique()
@@ -292,6 +293,73 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                         .HasFilter("[ReadAtUtc] IS NULL");
 
                     b.ToTable("InAppNotifications", (string)null);
+                });
+
+            modelBuilder.Entity("TeamBuilder.Domain.Entities.IntegrationApiKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("KeyPrefix")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .IsUnicode(false)
+                        .HasColumnType("char(12)")
+                        .IsFixedLength()
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<DateTime?>("LastUsedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<Guid>("PlayerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<string>("Scopes")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<byte[]>("SecretHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("binary(32)")
+                        .IsFixedLength();
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KeyPrefix")
+                        .IsUnique()
+                        .HasDatabaseName("UX_IntegrationApiKeys_KeyPrefix");
+
+                    b.HasIndex("PlayerId", "CreatedAtUtc")
+                        .HasDatabaseName("IX_IntegrationApiKeys_PlayerId");
+
+                    b.ToTable("IntegrationApiKeys", (string)null);
                 });
 
             modelBuilder.Entity("TeamBuilder.Domain.Entities.JoinRequest", b =>
@@ -1277,6 +1345,18 @@ namespace TeamBuilder.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("FK_InAppNotifications_Players_PlayerId");
+
+                    b.Navigation("Player");
+                });
+
+            modelBuilder.Entity("TeamBuilder.Domain.Entities.IntegrationApiKey", b =>
+                {
+                    b.HasOne("TeamBuilder.Domain.Entities.Player", "Player")
+                        .WithMany()
+                        .HasForeignKey("PlayerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_IntegrationApiKeys_Players_PlayerId");
 
                     b.Navigation("Player");
                 });

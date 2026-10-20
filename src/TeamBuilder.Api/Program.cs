@@ -134,6 +134,11 @@ builder.Services.AddHostedService<PushDeliveryWorker>();
 builder.Services.AddScoped<IJoinRequestService, JoinRequestService>();
 builder.Services.AddScoped<IRosterImportService, RosterImportService>();
 
+// Public integration API (/api/integration/v1): API keys owned by players, and the read-only
+// teambuilder.roster.v1 projection of the games a key's owner hosts.
+builder.Services.AddScoped<IIntegrationApiKeyService, IntegrationApiKeyService>();
+builder.Services.AddScoped<IIntegrationRosterService, IntegrationRosterService>();
+
 builder.Services.AddHttpContextAccessor();
 
 // External identity (Issuer + Subject, exact keys) and its resolution to a Player.Id,
@@ -153,8 +158,10 @@ builder.Services.AddAuthentication(options =>
         options.DefaultChallengeScheme = ExternalIdentityAuthentication.SchemeName;
         options.DefaultScheme = ExternalIdentityAuthentication.SchemeName;
     })
-    .AddJwtBearer(ExternalIdentityAuthentication.SchemeName);
-builder.Services.AddAuthorization();
+    .AddJwtBearer(ExternalIdentityAuthentication.SchemeName)
+    // Integration API keys (X-Api-Key). Never a default scheme: only the integration routes ask for it.
+    .AddIntegrationApiKey();
+builder.Services.AddAuthorizationBuilder().AddIntegrationPolicies();
 
 // Configure JWT Bearer options via IConfigureOptions so that test overrides via
 // ConfigureAppConfiguration are read at options resolution time, not registration time.
@@ -193,6 +200,18 @@ builder.Services.AddOptions<PushSubscriptionRateLimitOptions>()
     .BindConfiguration(PushSubscriptionRateLimitOptions.SectionName)
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<IntegrationRateLimitOptions>()
+    .BindConfiguration(IntegrationRateLimitOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddOptions<IntegrationAuthFailureRateLimitOptions>()
+    .BindConfiguration(IntegrationAuthFailureRateLimitOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddOptions<ApiKeyChangeRateLimitOptions>()
+    .BindConfiguration(ApiKeyChangeRateLimitOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 // Client address behind a reverse proxy: only listed proxies may set X-Forwarded-For (see
 // ForwardedHeadersSettings). Off by default, so a direct client's header is ignored.
@@ -211,9 +230,14 @@ builder.Services.AddRateLimiter(options =>
         {
             Status = StatusCodes.Status429TooManyRequests,
             Title = "Too Many Requests",
-            Detail = policy is SubscriptionRateLimitOptions.PolicyName or PushSubscriptionRateLimitOptions.PolicyName
-                ? "Too many notification changes. Wait a moment and try again."
-                : "Too many searches. Wait a moment and try again."
+            Detail = policy switch
+            {
+                SubscriptionRateLimitOptions.PolicyName or PushSubscriptionRateLimitOptions.PolicyName =>
+                    "Too many notification changes. Wait a moment and try again.",
+                IntegrationRateLimitOptions.PolicyName => "Too many requests for this API key. Wait for Retry-After and try again.",
+                ApiKeyChangeRateLimitOptions.PolicyName => "Too many API key changes. Wait a while and try again.",
+                _ => "Too many searches. Wait a moment and try again."
+            }
         }, cancellationToken);
     };
     // Authenticated mutation routes partition by issuer|subject (preferred), the client IP only
@@ -227,6 +251,30 @@ builder.Services.AddRateLimiter(options =>
     {
         var limits = httpContext.RequestServices.GetRequiredService<IOptions<PushSubscriptionRateLimitOptions>>().Value;
         return CallerFixedWindow(httpContext, limits.PermitLimit, limits.WindowSeconds);
+    });
+    options.AddPolicy(ApiKeyChangeRateLimitOptions.PolicyName, httpContext =>
+    {
+        var limits = httpContext.RequestServices.GetRequiredService<IOptions<ApiKeyChangeRateLimitOptions>>().Value;
+        return CallerFixedWindow(httpContext, limits.PermitLimit, limits.WindowSeconds);
+    });
+    // The integration API is partitioned by API key: authorization (which runs first) has put
+    // the key's principal on the request. A request without a valid key never gets here; the
+    // key scheme bounds rejected keys per IP itself (IntegrationAuthFailureRateLimitOptions).
+    options.AddPolicy(IntegrationRateLimitOptions.PolicyName, httpContext =>
+    {
+        var limits = httpContext.RequestServices.GetRequiredService<IOptions<IntegrationRateLimitOptions>>().Value;
+        var partition = IntegrationApiKeyAuthentication.TryGetCaller(httpContext.User, out var keyId, out _)
+            ? $"key:{keyId}"
+            : $"ip:{httpContext.Connection.RemoteIpAddress}";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partition,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = limits.PermitLimit,
+                Window = TimeSpan.FromSeconds(limits.WindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
     });
     options.AddPolicy(DiscoveryRateLimitOptions.PolicyName, httpContext =>
     {
@@ -254,9 +302,11 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// CORS: exact origins from AllowedOrigins (comma-separated). The API authenticates with bearer
-// tokens, never cookies, so credentials are not allowed. '*' (anonymous, any origin) is only
-// accepted in Development; deployed environments require exact https origins (validated below).
+// CORS: exact origins from AllowedOrigins (comma-separated). Browser-facing management endpoints
+// use bearer tokens, never cookies, so credentials are not allowed. Integration API keys are for
+// server-to-server use; X-Api-Key is intentionally not an allowed browser request header. '*'
+// (anonymous, any origin) is only accepted in Development; deployed environments require exact
+// https origins (validated below).
 const string CorsPolicyName = "WebClients";
 var allowedOrigins = DeploymentConfigurationValidator.ParseOrigins(builder.Configuration["AllowedOrigins"]);
 builder.Services.AddCors(options =>

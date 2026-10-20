@@ -21,4 +21,5 @@ internal static class MigrationIds
     public const string AddVenueOwnershipPrivacyAndSearchLocation = "20261008044353_AddVenueOwnershipPrivacyAndSearchLocation";
     public const string AddVacancyOutboxSubscriptionsAndNotifications = "20261009024932_AddVacancyOutboxSubscriptionsAndNotifications";
     public const string AddWebPushAndOutboxOperations = "20261009154418_AddWebPushAndOutboxOperations";
+    public const string AddIntegrationApiKeys = "20261020073209_AddIntegrationApiKeys";
 }
