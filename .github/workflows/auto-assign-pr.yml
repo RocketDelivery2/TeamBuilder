@@ -56,8 +56,8 @@ jobs:
           if ! gh pr edit "$PR_NUMBER" --repo "$REPO" "${args[@]}"; then
             # Lost a race with another assigner: fine if the end state holds.
             state="$(wanted_state)"
-            if [[ "$(jq -r '.assigned' <<<"$state")" == "true" ]]; then
-              echo "RocketDelivery2 was assigned concurrently; nothing left to do."
+            if jq -e '.assigned and (.requested or .is_author)' <<<"$state" >/dev/null; then
+              echo "RocketDelivery2 was assigned and requested concurrently; nothing left to do."
               exit 0
             fi
             exit 1

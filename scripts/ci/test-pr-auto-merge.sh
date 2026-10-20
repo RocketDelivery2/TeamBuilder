@@ -486,7 +486,7 @@ reviewer_name="$(sed -n 's/^name: //p' "$repo_root/.github/workflows/pr-reviewer
 auto_merge_yaml="$(cat "$workflow")"
 assert_not_contains "$auto_merge_yaml" $'\n  check_run:' "pr-auto-merge.yml does not trigger on check_run"
 assert_contains "$auto_merge_yaml" $'  workflow_run:\n    workflows:\n      - '"$reviewer_name"$'\n' "pr-auto-merge.yml triggers on completion of '$reviewer_name'"
-assert_contains "$auto_merge_yaml" "github.event.workflow_run.pull_requests[0].number" "concurrency group keys workflow_run events by PR number"
+assert_contains "$auto_merge_yaml" "github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha" "concurrency group keys workflow_run events by PR number, else by reviewed commit"
 
 echo
 echo "Results: $pass passed, $fail failed"

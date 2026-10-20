@@ -33,7 +33,7 @@ permissions:
   # own result. See pr-reviewer-agent.yml and docs/reviewer-agent.md.
 
 concurrency:
-  group: pr-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: pr-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || github.run_id }}
   cancel-in-progress: true
 
 jobs:
