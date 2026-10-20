@@ -19,6 +19,7 @@ describe('parseRoute', () => {
   it('keeps the other routes', () => {
     expect(parseRoute('/')).toEqual({ name: 'my-games' });
     expect(parseRoute('/notifications')).toEqual({ name: 'notifications' });
+    expect(parseRoute('/settings/api-keys')).toEqual({ name: 'api-keys' });
     expect(parseRoute('/games/not-a-guid')).toEqual({ name: 'not-found' });
   });
 });

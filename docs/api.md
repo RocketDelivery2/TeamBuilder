@@ -2054,6 +2054,25 @@ Deletes a roster import record.
 
 ---
 
+### Integration API keys — `api/v1/players/me/api-keys`
+
+Linked players create, list and revoke the API keys other applications use for the public
+integration API (`/api/integration/v1`, read-only in v1, limited to the key owner's hosted
+games). The integration API, its `teambuilder.roster.v1` contract, errors and limits are
+documented in [integration-api.md](integration-api.md), and its OpenAPI document is served at
+`GET /api/integration/v1/openapi.json` in every environment.
+
+| Endpoint | Result |
+|---|---|
+| `POST api/v1/players/me/api-keys` | `201` with the key in `key`, once (`Cache-Control: no-store`). `400` invalid name, scope or expiry; `409 ApiKeyLimitReached` at 10 active keys; `429` too many changes. |
+| `GET api/v1/players/me/api-keys` | `200`, active first. Prefix only, never the key. |
+| `DELETE api/v1/players/me/api-keys/{id}` | `204` (idempotent); `404` for a key that is not the caller's. |
+
+All three: `401` without a token, `403` before onboarding. A key never authenticates
+`/api/v1`, and a user token never authenticates `/api/integration/v1`.
+
+---
+
 ### Health — `/healthz/live` and `/healthz/ready`
 
 Anonymous, not rate limited, and meant for orchestrators and load balancers. Both answer JSON

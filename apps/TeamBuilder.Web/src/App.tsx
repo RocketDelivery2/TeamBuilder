@@ -14,6 +14,7 @@ import { CreateGame } from './pages/CreateGame';
 import { GameDetail } from './pages/GameDetail';
 import { Discover } from './pages/Discover';
 import { Notifications } from './pages/Notifications';
+import { ApiKeys } from './pages/ApiKeys';
 import { NotificationBell } from './components/NotificationBell';
 import { navigationFromWorker, SW_PUSH_CHANGED, syncBrowserPush } from './lib/webPush';
 
@@ -133,6 +134,7 @@ export function App() {
         route.name === 'create' ? <CreateGame /> :
         route.name === 'discover' ? <Discover /> :
         route.name === 'notifications' ? <Notifications /> :
+        route.name === 'api-keys' ? <ApiKeys /> :
         route.name === 'game' ? <GameDetail key={`${route.id}${route.visit ?? ''}`} occurrenceId={route.id} /> :
         route.name === 'not-found' ? <p className="notice">Page not found.</p> :
         <MyGames />;

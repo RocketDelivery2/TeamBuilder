@@ -51,6 +51,12 @@ export function MyGames() {
         </ul>
       )}
       {nextCursor && <button onClick={() => void load(nextCursor)}>Load more</button>}
+      <p className="muted small">
+        Run a league site or scoreboard?{' '}
+        <a href="/settings/api-keys" onClick={(e) => { e.preventDefault(); navigate('/settings/api-keys'); }}>
+          Connect another app with an API key
+        </a>
+      </p>
     </section>
   );
 }

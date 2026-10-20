@@ -1,5 +1,7 @@
 import { HttpClient, type ApiResponse } from './http';
 import type {
+  ApiKey,
+  CreatedApiKey,
   CreateEventRequest,
   CreateVenueRequest,
   DiscoveredOccurrencePage,
@@ -128,6 +130,21 @@ export class TeamBuilderApi {
 
   async pushDevices(): Promise<PushDevice[]> {
     return (await this.http.request<PushDevice[]>('GET', '/api/v1/players/me/push-subscriptions')).data;
+  }
+
+  /** The caller's integration API keys, active first. */
+  async apiKeys(): Promise<ApiKey[]> {
+    return (await this.http.request<ApiKey[]>('GET', '/api/v1/players/me/api-keys')).data;
+  }
+
+  /** Creates an integration API key. The response holds the key once; it cannot be read again. */
+  async createApiKey(name: string, expiresInDays?: number): Promise<CreatedApiKey> {
+    return (await this.http.request<CreatedApiKey>('POST', '/api/v1/players/me/api-keys', { name, expiresInDays })).data;
+  }
+
+  /** Revokes one of the caller's keys. Idempotent. */
+  async revokeApiKey(id: string): Promise<void> {
+    await this.http.request<void>('DELETE', `/api/v1/players/me/api-keys/${id}`);
   }
 
   async transferHost(occurrenceId: string, newHostPlayerId: string): Promise<EventSummary> {

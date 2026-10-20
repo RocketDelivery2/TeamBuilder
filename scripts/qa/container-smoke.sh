@@ -145,6 +145,8 @@ grep -qi "^x-content-type-options: nosniff" <<<"$api_headers" && grep -qi "^cont
   && pass "API security headers present" || fail "API security headers missing"
 [[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' https://localhost/api/v1/players/me)" == "401" ]] \
   && pass "API requires a bearer token through the proxy" || fail "unauthenticated /players/me was not 401"
+[[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' https://localhost/api/integration/v1/openapi.json)" == "200" ]] \
+  && pass "integration OpenAPI document is published" || fail "integration OpenAPI document not served in QA"
 [[ "$("${curl_tls[@]}" -o /dev/null -w '%{http_code}' https://localhost/api/integration/v1/me)" == "401" ]] \
   && pass "integration API requires an API key" || fail "integration API without a key was not 401"
 

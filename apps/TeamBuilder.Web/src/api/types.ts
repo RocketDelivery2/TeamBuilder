@@ -321,3 +321,22 @@ export interface ProblemDetails {
   code?: string;
   errors?: Record<string, string[]>;
 }
+
+/** An integration API key as its owner sees it (GET /api/v1/players/me/api-keys). Never the key itself. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** The non-secret start of the key, e.g. tbk_3f9a0c1d2e4b. */
+  keyPrefix: string;
+  scopes: string[];
+  createdAtUtc: string;
+  expiresAtUtc?: string | null;
+  lastUsedAtUtc?: string | null;
+  revokedAtUtc?: string | null;
+  isActive: boolean;
+}
+
+/** The creation response: the key, shown exactly once. */
+export interface CreatedApiKey extends ApiKey {
+  key: string;
+}

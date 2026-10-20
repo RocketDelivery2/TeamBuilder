@@ -300,7 +300,7 @@ builder.Services.AddControllers();
 
 // Add API versioning
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(IntegrationOpenApi.Configure);
 
 // CORS: exact origins from AllowedOrigins (comma-separated). Browser-facing management endpoints
 // use bearer tokens, never cookies, so credentials are not allowed. Integration API keys are for
@@ -365,6 +365,7 @@ if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment(
     app.UseSwaggerUI(options =>
     {
         options.SwaggerEndpoint("/swagger/v1/swagger.json", "TeamBuilder API v1");
+        options.SwaggerEndpoint(IntegrationOpenApi.DocumentPath, "TeamBuilder Integration API v1");
     });
 }
 
@@ -393,6 +394,7 @@ app.UseRateLimiter();
 
 app.MapGet("/", () => Results.Ok("TeamBuilder API Running"));
 app.MapControllers();
+app.MapIntegrationOpenApi();
 app.MapTeamBuilderHealthEndpoints();
 
 app.Run();
