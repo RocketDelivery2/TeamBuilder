@@ -37,10 +37,10 @@ public sealed class ApiKeyChangeRateLimitOptions
 }
 
 /// <summary>
-/// Per-client-IP fixed-window limit on rejected integration API keys
-/// (<c>RateLimiting:IntegrationAuthFailures</c>). Checked by the API key scheme before its
-/// database lookup, so guessing keys cannot drive unbounded lookups; valid keys never spend it.
-/// Once spent, further key attempts from that IP get 429 with Retry-After. In-memory per instance.
+/// Per-client-IP fixed-window admission budget for integration API key lookups
+/// (<c>RateLimiting:IntegrationAuthFailures</c>). A request reserves a slot before the database
+/// lookup; invalid keys commit the slot, while valid keys release it. Once committed failures
+/// consume the budget, attempts from that IP get 429 with Retry-After. In-memory per instance.
 /// </summary>
 public sealed class IntegrationAuthFailureRateLimitOptions
 {
@@ -51,4 +51,8 @@ public sealed class IntegrationAuthFailureRateLimitOptions
 
     [Range(1, 3600)]
     public int WindowSeconds { get; set; } = 60;
+
+    /// <summary>Maximum number of client-IP partitions retained by one API process.</summary>
+    [Range(1, 100000)]
+    public int MaxTrackedClients { get; set; } = 10000;
 }
