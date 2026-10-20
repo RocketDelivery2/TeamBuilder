@@ -1068,7 +1068,7 @@ public class EventRosterSqlServerIntegrationTests : IAsyncLifetime
             hostId);
 
         var summary = (await new EventRosterService(_db.CreateContext(), TimeProvider.System).GetSummaryAsync(created.Id))!;
-        summary.Requirements.Select(r => (r.RoleCode, r.RequiredCount, r.SupplyCount)).Should().Equal(("guard", 4, 0), ("forward", 6, 1));
+        summary.Requirements.Select(r => (r.RoleCode, r.RequiredCount, r.SupplyCount)).Should().BeEquivalentTo([("guard", 4, 0), ("forward", 6, 1)]);
         (summary.RequiredCount, summary.SupplyCount, summary.OpenQuantity, summary.IsRosterReady).Should().Be((10, 1, 9, false));
         var hostRow = summary.Assignments.Should().ContainSingle().Subject;
         (hostRow.PlayerId, hostRow.Status, hostRow.Source).Should().Be((hostId, RosterAssignmentStatus.Confirmed, RosterAssignmentSource.Player));

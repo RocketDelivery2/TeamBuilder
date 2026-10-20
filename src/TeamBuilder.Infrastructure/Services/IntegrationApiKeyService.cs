@@ -12,8 +12,8 @@ namespace TeamBuilder.Infrastructure.Services;
 /// <summary>
 /// Integration API keys (see <see cref="IntegrationApiKeyFormat"/>). The plaintext key leaves
 /// this service exactly once, in the creation response, and is never logged. The active key
-/// limit is checked before insert, so two simultaneous creates can briefly exceed it by one;
-/// a key's power is bounded by its owner's own games, so that is not a privilege boundary.
+/// limit is enforced while holding an update lock on the owning player row, so concurrent
+/// creates for one player cannot exceed it.
 /// </summary>
 public class IntegrationApiKeyService : IIntegrationApiKeyService
 {
@@ -33,6 +33,26 @@ public class IntegrationApiKeyService : IIntegrationApiKeyService
 
     public async Task<CreatedIntegrationApiKeyDto> CreateAsync(Guid playerId, CreateIntegrationApiKeyDto request, CancellationToken cancellationToken = default)
     {
+        // Production uses SQL Server. Lock the existing owner row for this transaction so
+        // key creation for this player is serialized without blocking other players. The
+        // in-memory provider used by non-concurrency tests does not support transactions.
+        var isSqlServer = _context.Database.IsSqlServer();
+        await using var transaction = isSqlServer
+            ? await _context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
+        if (isSqlServer)
+        {
+            _ = await _context.Players
+                .FromSqlInterpolated($"SELECT * FROM [Players] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {playerId}")
+                .AsNoTracking()
+                .SingleAsync(cancellationToken);
+        }
+        else if (_context.Database.IsRelational())
+        {
+            throw new NotSupportedException("Integration API key creation requires the SQL Server per-player lock.");
+        }
+
         var now = UtcNow();
         var active = await _context.IntegrationApiKeys.CountAsync(
             k => k.PlayerId == playerId && k.RevokedAtUtc == null && (k.ExpiresAtUtc == null || k.ExpiresAtUtc > now),
@@ -55,6 +75,8 @@ public class IntegrationApiKeyService : IIntegrationApiKeyService
         };
         _context.IntegrationApiKeys.Add(entity);
         await _context.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
 
         _logger.LogInformation("Player {PlayerId} created integration API key {KeyId}.", playerId, entity.Id);
 

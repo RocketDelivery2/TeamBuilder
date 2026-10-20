@@ -87,6 +87,8 @@ public class IntegrationController : ControllerBase
             ModelState.AddModelError(nameof(page), "page must be 1 or more.");
         if (pageSize is < 1 or > MaxPageSize)
             ModelState.AddModelError(nameof(pageSize), $"pageSize must be between 1 and {MaxPageSize}.");
+        else if (page >= 1 && (long)(page - 1) * pageSize > int.MaxValue)
+            ModelState.AddModelError(nameof(page), "page is too large for the selected pageSize.");
         if (toUtc <= fromUtc)
             ModelState.AddModelError(nameof(to), "to must be after from.");
         else if (toUtc - fromUtc > IIntegrationRosterService.MaxWindow)

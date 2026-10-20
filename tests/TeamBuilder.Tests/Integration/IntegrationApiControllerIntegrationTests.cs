@@ -316,6 +316,7 @@ public sealed class IntegrationApiControllerIntegrationTests : IClassFixture<Tea
     [InlineData("pageSize=101", "pageSize")]
     [InlineData("pageSize=0", "pageSize")]
     [InlineData("page=0", "page")]
+    [InlineData("page=2147483647&pageSize=100", "page")]
     public async Task Occurrences_RejectsAnInvalidWindowOrPage(string query, string field)
     {
         var (_, token) = await NewPlayerAsync();

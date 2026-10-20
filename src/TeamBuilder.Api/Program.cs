@@ -302,9 +302,11 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// CORS: exact origins from AllowedOrigins (comma-separated). The API authenticates with bearer
-// tokens, never cookies, so credentials are not allowed. '*' (anonymous, any origin) is only
-// accepted in Development; deployed environments require exact https origins (validated below).
+// CORS: exact origins from AllowedOrigins (comma-separated). Browser-facing management endpoints
+// use bearer tokens, never cookies, so credentials are not allowed. Integration API keys are for
+// server-to-server use; X-Api-Key is intentionally not an allowed browser request header. '*'
+// (anonymous, any origin) is only accepted in Development; deployed environments require exact
+// https origins (validated below).
 const string CorsPolicyName = "WebClients";
 var allowedOrigins = DeploymentConfigurationValidator.ParseOrigins(builder.Configuration["AllowedOrigins"]);
 builder.Services.AddCors(options =>
