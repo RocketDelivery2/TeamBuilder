@@ -200,6 +200,21 @@ Signed-in rate limits (claims, subscriptions, push registration) partition by
 token issuer and subject and do not depend on this setting; only anonymous
 discovery is limited per IP.
 
+Integration API key authentication is limited per effective client IP and API
+process. `RateLimiting__IntegrationAuthFailures__PermitLimit` (default 30),
+`WindowSeconds` (default 60), and `MaxTrackedClients` (default 10000) define
+the fixed-window rejected-key budget and partition bound.
+Authentication reserves a slot before looking up a key; a valid key releases
+the reservation, while an invalid key commits it. Concurrent lookups are
+bounded by the same budget. Valid requests sharing an IP can receive a
+temporary `429` while all remaining slots are reserved; this is the explicit
+tradeoff needed to reject guesses before their database lookups. State is
+process-local, not shared across API instances.
+`RateLimiting__IntegrationAuthFailures__MaxTrackedClients` bounds retained IP
+partitions; expired idle partitions are cleaned up,
+and new client partitions are denied with `429` while the cap is reached.
+Forwarded addresses are used only from the trusted proxies configured above.
+
 ### Outbox retention
 
 `OutboxMaintenanceWorker` purges finished history every

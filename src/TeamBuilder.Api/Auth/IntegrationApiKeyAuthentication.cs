@@ -1,8 +1,9 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
-using System.Threading.RateLimiting;
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using TeamBuilder.Api.RateLimiting;
 using TeamBuilder.Application.Interfaces;
@@ -31,6 +32,7 @@ public static class IntegrationApiKeyAuthentication
     public static AuthenticationBuilder AddIntegrationApiKey(this AuthenticationBuilder builder)
     {
         builder.Services.AddSingleton<IntegrationAuthFailureLimiter>();
+        builder.Services.TryAddSingleton(TimeProvider.System);
         return builder.AddScheme<AuthenticationSchemeOptions, IntegrationApiKeyAuthenticationHandler>(SchemeName, _ => { });
     }
 
@@ -65,32 +67,36 @@ internal sealed class IntegrationApiKeyAuthenticationHandler(
             return AuthenticateResult.NoResult();
 
         var client = Context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        if (failures.IsExhausted(client, out var retryAfter))
+        if (!failures.TryReserve(client, out var reservation, out var retryAfter))
         {
             _throttledFor = retryAfter;
             return AuthenticateResult.Fail("Too many rejected API keys from this client.");
         }
-        if (values.Count > 1)
-        {
-            failures.Record(client);
-            return AuthenticateResult.Fail("More than one API key was sent.");
-        }
 
-        var identity = await keys.AuthenticateAsync(values[0]?.Trim() ?? string.Empty, Context.RequestAborted);
-        if (identity is null)
+        using (var authenticationReservation = reservation!)
         {
-            failures.Record(client);
-            return AuthenticateResult.Fail("The API key was not accepted.");
-        }
+            if (values.Count > 1)
+            {
+                authenticationReservation.CommitFailure();
+                return AuthenticateResult.Fail("More than one API key was sent.");
+            }
 
-        var claims = new List<Claim>
-        {
-            new(IntegrationApiKeyAuthentication.KeyIdClaim, identity.KeyId.ToString()),
-            new(IntegrationApiKeyAuthentication.PlayerIdClaim, identity.PlayerId.ToString())
-        };
-        claims.AddRange(identity.Scopes.Select(s => new Claim(IntegrationApiKeyAuthentication.ScopeClaim, s)));
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
-        return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+            var identity = await keys.AuthenticateAsync(values[0]?.Trim() ?? string.Empty, Context.RequestAborted);
+            if (identity is null)
+            {
+                authenticationReservation.CommitFailure();
+                return AuthenticateResult.Fail("The API key was not accepted.");
+            }
+
+            var claims = new List<Claim>
+            {
+                new(IntegrationApiKeyAuthentication.KeyIdClaim, identity.KeyId.ToString()),
+                new(IntegrationApiKeyAuthentication.PlayerIdClaim, identity.PlayerId.ToString())
+            };
+            claims.AddRange(identity.Scopes.Select(s => new Claim(IntegrationApiKeyAuthentication.ScopeClaim, s)));
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
+            return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+        }
     }
 
     protected override async Task HandleChallengeAsync(AuthenticationProperties properties)
@@ -131,40 +137,207 @@ internal sealed class IntegrationApiKeyAuthenticationHandler(
 }
 
 /// <summary>
-/// Counts rejected integration API keys per client IP (see
-/// <see cref="IntegrationAuthFailureRateLimitOptions"/>). A request is checked before the key
-/// lookup and only a rejection spends a permit, so key guessing is bounded per IP while
-/// clients with valid keys are never throttled by it.
+/// Reserves per-client admission before an integration-key lookup. A reservation becomes a
+/// committed failure only when lookup returns no identity; success, cancellation and exceptions
+/// release it. State is process-local and bounded by MaxTrackedClients.
 /// </summary>
 internal sealed class IntegrationAuthFailureLimiter : IDisposable
 {
-    private readonly PartitionedRateLimiter<string> _limiter;
+    private const int CleanupIntervalSeconds = 60;
+    private static readonly TimeSpan CapacitySweepInterval = TimeSpan.FromSeconds(1);
+    private readonly ConcurrentDictionary<string, ClientState> _clients = new(StringComparer.Ordinal);
+    private readonly object _partitionGate = new();
+    private readonly Timer _cleanupTimer;
+    private readonly TimeProvider _timeProvider;
+    private readonly int _permitLimit;
+    private readonly int _maxTrackedClients;
     private readonly TimeSpan _window;
+    private DateTimeOffset _lastCapacitySweepAt = DateTimeOffset.MinValue;
+    private bool _disposed;
 
-    public IntegrationAuthFailureLimiter(IOptions<IntegrationAuthFailureRateLimitOptions> options)
+    public IntegrationAuthFailureLimiter(IOptions<IntegrationAuthFailureRateLimitOptions> options, TimeProvider timeProvider)
     {
         var limits = options.Value;
+        _permitLimit = limits.PermitLimit;
+        _maxTrackedClients = limits.MaxTrackedClients;
         _window = TimeSpan.FromSeconds(limits.WindowSeconds);
-        _limiter = PartitionedRateLimiter.Create<string, string>(client => RateLimitPartition.GetFixedWindowLimiter(
-            client,
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = limits.PermitLimit,
-                Window = _window,
-                QueueLimit = 0,
-                AutoReplenishment = true
-            }));
+        _timeProvider = timeProvider;
+        _cleanupTimer = new Timer(_ => CleanupExpiredClients(), null,
+            TimeSpan.FromSeconds(CleanupIntervalSeconds), TimeSpan.FromSeconds(CleanupIntervalSeconds));
     }
 
-    /// <summary>True when the client has no rejections left in this window (a zero-permit probe spends nothing).</summary>
-    public bool IsExhausted(string client, out TimeSpan retryAfter)
+    /// <summary>Try to reserve one of the client's remaining fixed-window authentication slots.</summary>
+    public bool TryReserve(string client, out Reservation? reservation, out TimeSpan retryAfter)
     {
-        using var probe = _limiter.AttemptAcquire(client, permitCount: 0);
-        retryAfter = probe.TryGetMetadata(MetadataName.RetryAfter, out var wait) ? wait : _window;
-        return !probe.IsAcquired;
+        reservation = null;
+        while (true)
+        {
+            var state = GetOrCreateState(client);
+            if (state is null)
+            {
+                retryAfter = TimeSpan.FromSeconds(1);
+                return false;
+            }
+
+            var now = _timeProvider.GetUtcNow();
+            var result = state.TryReserve(now, _window, _permitLimit, out retryAfter);
+            if (result == ReservationResult.Retired)
+                continue;
+            if (result == ReservationResult.Denied)
+                return false;
+
+            reservation = new Reservation(state);
+            return true;
+        }
     }
 
-    public void Record(string client) => _limiter.AttemptAcquire(client).Dispose();
+    internal int TrackedClientCount => _clients.Count;
 
-    public void Dispose() => _limiter.Dispose();
+    internal void CleanupExpiredClients()
+    {
+        lock (_partitionGate)
+        {
+            if (_disposed)
+                return;
+
+            var now = _timeProvider.GetUtcNow();
+            foreach (var pair in _clients)
+            {
+                if (pair.Value.TryRetire(now, _window))
+                    _clients.TryRemove(new KeyValuePair<string, ClientState>(pair.Key, pair.Value));
+            }
+        }
+    }
+
+    private ClientState? GetOrCreateState(string client)
+    {
+        if (_clients.TryGetValue(client, out var existing))
+            return existing;
+
+        lock (_partitionGate)
+        {
+            if (_disposed)
+                return null;
+            if (_clients.TryGetValue(client, out existing))
+                return existing;
+
+            var now = _timeProvider.GetUtcNow();
+            if (_clients.Count >= _maxTrackedClients && now - _lastCapacitySweepAt >= CapacitySweepInterval)
+            {
+                CleanupExpiredClientsUnderLock(now);
+                _lastCapacitySweepAt = now;
+            }
+            if (_clients.Count >= _maxTrackedClients)
+                return null;
+
+            var state = new ClientState(now);
+            return _clients.TryAdd(client, state) ? state : _clients.GetValueOrDefault(client);
+        }
+    }
+
+    private void CleanupExpiredClientsUnderLock(DateTimeOffset now)
+    {
+        foreach (var pair in _clients)
+        {
+            if (pair.Value.TryRetire(now, _window))
+                _clients.TryRemove(new KeyValuePair<string, ClientState>(pair.Key, pair.Value));
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_partitionGate)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            _cleanupTimer.Dispose();
+            _clients.Clear();
+        }
+    }
+
+    internal sealed class Reservation : IDisposable
+    {
+        private ClientState? _state;
+
+        internal Reservation(ClientState state) => _state = state;
+
+        public void CommitFailure() => Resolve(failed: true);
+
+        public void Dispose() => Resolve(failed: false);
+
+        private void Resolve(bool failed)
+        {
+            var state = Interlocked.Exchange(ref _state, null);
+            state?.Resolve(failed);
+        }
+    }
+
+    internal enum ReservationResult { Reserved, Denied, Retired }
+
+    internal sealed class ClientState(DateTimeOffset windowStartedAt)
+    {
+        private readonly object _gate = new();
+        private DateTimeOffset _windowStartedAt = windowStartedAt;
+        private int _committedFailures;
+        private int _reservations;
+        private bool _retired;
+
+        public ReservationResult TryReserve(DateTimeOffset now, TimeSpan window, int permitLimit, out TimeSpan retryAfter)
+        {
+            lock (_gate)
+            {
+                if (_retired)
+                {
+                    retryAfter = TimeSpan.Zero;
+                    return ReservationResult.Retired;
+                }
+
+                var windowEnd = _windowStartedAt + window;
+                if (now >= windowEnd && _reservations == 0)
+                {
+                    _windowStartedAt = now;
+                    _committedFailures = 0;
+                    windowEnd = now + window;
+                }
+
+                if (_committedFailures + _reservations >= permitLimit || now >= windowEnd)
+                {
+                    retryAfter = _committedFailures >= permitLimit
+                        ? windowEnd - now
+                        : TimeSpan.FromSeconds(1);
+                    if (retryAfter < TimeSpan.FromSeconds(1))
+                        retryAfter = TimeSpan.FromSeconds(1);
+                    return ReservationResult.Denied;
+                }
+
+                _reservations++;
+                retryAfter = TimeSpan.Zero;
+                return ReservationResult.Reserved;
+            }
+        }
+
+        public void Resolve(bool failed)
+        {
+            lock (_gate)
+            {
+                if (_reservations <= 0)
+                    throw new InvalidOperationException("Integration authentication reservation accounting underflowed.");
+                _reservations--;
+                if (failed)
+                    _committedFailures++;
+            }
+        }
+
+        public bool TryRetire(DateTimeOffset now, TimeSpan window)
+        {
+            lock (_gate)
+            {
+                if (_retired || _reservations != 0 || now < _windowStartedAt + window)
+                    return false;
+                _retired = true;
+                return true;
+            }
+        }
+    }
 }

@@ -1726,6 +1726,19 @@ own partition. Signed-in routes partition by token issuer and subject instead,
 which no header can change. The limiter never decides roster claims, which the database
 guards.
 
+**Integration API key authentication.** Rejected key attempts are limited per
+effective client IP and API process (`RateLimiting:IntegrationAuthFailures`,
+default 30 attempts per 60-second fixed window). A lookup reserves one slot
+before database access. An invalid/revoked/expired key commits the slot; a
+valid key, cancellation, or service exception releases it. Under concurrent
+load, valid requests from the same IP can be temporarily throttled when all
+remaining slots are reserved. This avoids serializing lookups and keeps the
+failure budget bounded before SQL access. The limiter is in-memory per API
+instance; it does not provide a distributed IP budget. Its retained client
+partition count is capped by `MaxTrackedClients` (default 10000). The effective
+IP follows the trusted-proxy rules above. A denied key attempt returns `429`
+with `Retry-After`; missing-key requests return `401` without a lookup.
+
 **Response `400`:** invalid parameters (`errors` names the field: `lat`,
 `lon`, `radiusMiles`, `activity`, `toUtc`, `pageSize` or `cursor`).
 **Response `429`:** too many searches.
