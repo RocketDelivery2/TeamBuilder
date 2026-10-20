@@ -83,28 +83,19 @@ and requires these status checks from GitHub Actions:
 
 - `build` (`.NET` workflow)
 - `Markdown lint` (`Markdown` workflow)
+- `Reviewer Agent` (posted by `pr-reviewer-agent.yml`; added 2026-10-20)
 
-**`Reviewer Agent` is not a required check.** Two consequences:
+With `Reviewer Agent` required, GitHub itself blocks a merge while the
+Reviewer Agent result for the head commit is missing, `failure` or
+`action_required`, and `dependabot-auto-merge.yml` arms native auto-merge
+for patch and minor Dependabot updates. The Reviewer Agent fails any
+non-owner PR that changes `.github/workflows/` or `scripts/ci/`, which
+includes Dependabot's GitHub Actions updates; those need the owner to
+review and merge them.
 
-- `pr-auto-merge.yml` still refuses to merge or arm auto-merge without a
-  `PASS` for the current head, but nothing outside that workflow enforces
-  the Reviewer Agent. A person can merge a `FAIL` or `INCONCLUSIVE` PR.
-- `dependabot-auto-merge.yml` only arms native auto-merge once
-  `Reviewer Agent` is required (it reads the ruleset first), because native
-  auto-merge only waits for required checks. Until then Dependabot PRs are
-  merged by hand.
-
-### Administrator action to close the gap
-
-In **Settings → Rules → Rulesets → TeamBuilder - Main Protection → Require
-status checks to pass → Add checks**, add `Reviewer Agent` with source
-**GitHub Actions**, then save. Leave `build` and `Markdown lint` in place.
-
-After that, GitHub itself blocks a merge while the Reviewer Agent result
-for the head commit is missing, `failure` or `action_required`. Note that
-the Reviewer Agent fails any non-owner PR that changes `.github/workflows/`
-or `scripts/ci/`, which includes Dependabot's GitHub Actions updates; those
-need the owner to review and merge them.
+If `Reviewer Agent` is ever removed from the required checks, re-add it in
+**Settings → Rules → Rulesets → TeamBuilder - Main Protection → Require
+status checks to pass → Add checks** with source **GitHub Actions**.
 
 ## Verifying the configuration
 
