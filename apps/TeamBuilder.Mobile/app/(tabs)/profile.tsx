@@ -1,8 +1,8 @@
 import { Redirect } from 'expo-router';
 import { useMutation } from '@tanstack/react-query';
-import { usePlayer, useServices, useSession } from '../src/Providers';
-import { Button, Card, ErrorNotice, Label, Loading, Screen } from '../src/components/ui';
-import { useTheme, type ThemeChoice } from '../src/theme/Theme';
+import { usePlayer, useServices, useSession } from '../../src/Providers';
+import { Button, Card, ErrorNotice, Label, Loading, Screen } from '../../src/components/ui';
+import { useTheme, type ThemeChoice } from '../../src/theme/Theme';
 export default function Profile() {
   const state = useSession(), player = usePlayer(), { session } = useServices(), theme = useTheme();
   const logout = useMutation({ mutationFn: () => session.logout() });

@@ -6,6 +6,7 @@ import type { MobileConfig } from './config';
 import { createSession } from './auth/oidc';
 import { ApiError, HttpClient, NetworkError } from './api/http';
 import { PlayerApi } from './api/players';
+import { GameApi } from './api/games';
 import { Label } from './components/ui';
 const createServices = (config: MobileConfig) => {
   const session = createSession(config);
@@ -15,7 +16,7 @@ const createServices = (config: MobileConfig) => {
   } });
   const http = new HttpClient({ baseUrl: config.apiBaseUrl, getToken: refresh => session.token(refresh),
     onUnauthorized: token => session.invalidate(token), isOnline: async () => (await Network.getNetworkStateAsync()).isConnected !== false });
-  return { session, queryClient, http, players: new PlayerApi(http) };
+  return { config, session, queryClient, http, players: new PlayerApi(http), games: new GameApi(http) };
 };
 type Services = ReturnType<typeof createServices>;
 const Context = createContext<Services | null>(null);

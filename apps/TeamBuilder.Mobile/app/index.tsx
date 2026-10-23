@@ -9,5 +9,5 @@ export default function Index() {
   if (player.isPending) return <Loading />;
   if (player.error instanceof ApiError && player.error.status === 404) return <Redirect href="/onboarding" />;
   if (player.error) return <Screen><ErrorNotice error={player.error} retry={() => void player.refetch()} /></Screen>;
-  return <Redirect href="/profile" />;
+  return <Redirect href="/discover" />;
 }
