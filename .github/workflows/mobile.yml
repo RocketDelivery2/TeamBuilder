@@ -1,0 +1,51 @@
+name: Mobile
+
+on:
+  pull_request:
+    paths:
+      - "apps/TeamBuilder.Mobile/**"
+      - ".github/workflows/mobile.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/TeamBuilder.Mobile/**"
+      - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mobile:
+    name: Mobile types, tests, and bundles
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/TeamBuilder.Mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npx expo install --check
+      - run: npm run config:check
+      - run: npm run bundle:check
+  audit:
+    name: Mobile dependency audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/TeamBuilder.Mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
